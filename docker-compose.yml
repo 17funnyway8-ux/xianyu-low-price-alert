@@ -1,7 +1,7 @@
 # ===========================================================
-# 闲鱼低价提醒工具 —— docker-compose.yml（P1：Web 基础版常驻服务）
+# 闲鱼低价提醒工具 —— docker-compose.yml（P2/P3：Web 全功能常驻服务）
 # ===========================================================
-# P1 语义：常驻 Web 服务（FastAPI :8080 + monitor 后台线程）。
+# P2/P3 语义：常驻 Web 服务（FastAPI :8080 + monitor 后台线程）。
 #
 # ⚠️ 项目名提示：若项目目录名含中文/空格/非 ASCII，docker compose 会报
 #    `project name must not be empty`，必须在命令中显式指定项目名：
@@ -17,8 +17,11 @@
 #   docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml
 #   docker compose -p xianyu-alert run --rm xianyu-alert list --config config.poc.yaml
 #
-# 远程访问：把 ports 改为 "8080:8080" 并设置 XY_WEB_TOKEN（P3 认证），
-#   或用 Caddy / Tailscale 反代。
+# 远程访问（P3-01 认证）：
+#   1) 把 ports 改为 "8080:8080"（暴露到局域网/公网）；
+#   2) 取消下面 XY_WEB_TOKEN 注释并设置强随机串；
+#   3) 可选再加 Caddy basic_auth / Tailscale 反向代理做第二层。
+#   未设 token 时默认仅本机 127.0.0.1 访问，行为与 P1 一致。
 #
 # 数据卷：./xianyu-data:/app/data —— config.yaml / secret.key / state/ 全部落卷。
 #   ⚠️ 备份时必须连同 secret.key 一起备份，否则 fernet1: 密文 Cookie 无法解密。
@@ -29,12 +32,14 @@ services:
     build: .
     image: xianyu-alert:1.8.0
     container_name: xianyu-alert
-    # 7×24：宿主机重启 / 容器崩溃自动拉起（P1 起启用）
+    # 7×24：宿主机重启 / 容器崩溃自动拉起（P3-03 确认保留）
     restart: unless-stopped
     environment:
       XY_DATA_DIR: /app/data        # paths.data_dir() 直通（v1.8 已支持，零改动）
       TZ: Asia/Shanghai             # 提醒记录时间正确（镜像内已装 tzdata）
-      # XY_WEB_TOKEN: "change-me-随机串"  # P3：远程访问时启用 Bearer 认证
+      # XY_WEB_TOKEN: "change-me-随机串"  # P3-01：远程访问时启用 Bearer 认证
+      #                                  #   设置后除 /healthz、/、/static/* 外全部要求
+      #                                  #   Authorization: Bearer <token>
     ports:
       - "127.0.0.1:8080:8080"       # 默认仅本机；远程访问改 "8080:8080" + 开 token
     volumes:
@@ -53,11 +58,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # 单用户纯 Python + SQLite 资源上限（P3 加固项，P1 起一并启用）
+    # 单用户纯 Python + SQLite 资源上限（P3-03 确认保留）
     deploy:
       resources:
         limits:
           memory: 256M
           cpus: "0.5"
-    # 非 root 加固（P3 可选）：需卷属主对齐
+    # 非 root 加固（P3-03 should，可选）：需卷属主对齐（默认卷属主为宿主机创建者）。
+    # 启用前请先确认 ./xianyu-data 目录属主为 1000:1000（chown -R 1000:1000 xianyu-data）。
     # user: "1000:1000"

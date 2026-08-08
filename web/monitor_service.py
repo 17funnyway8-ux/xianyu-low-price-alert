@@ -26,13 +26,30 @@ import asyncio
 import itertools
 import logging
 import os
+import tempfile
 import threading
 from collections import deque
 from datetime import datetime
 from typing import Any, Deque, Dict, List, Optional
 
+import yaml
+
 from xianyu_alert import gui, secure  # noqa: F401  # gui 防御性导入 tkinter，容器可 import
-from xianyu_alert.config import Config, ConfigError, config_from_dict, load_config
+from xianyu_alert.config import (
+    Config,
+    ConfigError,
+    config_from_dict,
+    load_config,
+    serialize_cookie_pool,
+)
+from xianyu_alert.cookie import (
+    HEALTH_EXPIRING,
+    HEALTH_OK,
+    TOKEN_TTL_MS,
+    cookie_has_token,
+    cookie_token_timestamp,
+    detect_cookie_health,
+)
 from xianyu_alert.fetcher import build_fetcher
 from xianyu_alert.monitor import Monitor
 from xianyu_alert.notifier import build_notifiers
@@ -48,6 +65,13 @@ LOG_STATUS_LIMIT = 200
 MONITOR_JOIN_TIMEOUT = 5.0
 #: SQLite busy timeout（毫秒）：Web 读与 monitor 写并发时的等待上限
 SQLITE_BUSY_TIMEOUT_MS = 5000
+
+#: 「校验在架」限速间隔 / 单次上限 / 单条详情接口超时（秒）
+#: 直接复用 gui.SOLD_CHECK_*（gui.py:113-115），Web 与桌面行为完全一致（设计 R2）
+SOLD_CHECK_INTERVAL: float = gui.SOLD_CHECK_INTERVAL          # 1.5
+SOLD_CHECK_MAX_ITEMS: int = gui.SOLD_CHECK_MAX_ITEMS          # 30
+SOLD_REASON_DETAIL: str = gui.SOLD_REASON_DETAIL              # "详情接口判定"
+CHECK_SHELF_ITEM_TIMEOUT: float = 12.0
 
 #: 日志来源 logger 名（monitor/fetcher/notifier 等子 logger 会自动向上传播）
 _LOG_LOGGER_NAME = "xianyu_alert"
@@ -209,11 +233,29 @@ def web_form_from_config(data: Dict[str, Any]) -> Dict[str, Any]:
     if check_interval < 0:
         check_interval = 0
 
+    # ---- P2-09：监测参数透传（page_size / page_sleep 读 fetcher 节点） ----
+    fetcher_raw = data.get("fetcher") if isinstance(data, dict) else None
+    fetcher_raw = fetcher_raw if isinstance(fetcher_raw, dict) else {}
+    try:
+        page_size = int(fetcher_raw.get("page_size", 30))
+    except (TypeError, ValueError):
+        page_size = 30
+    if page_size < 1:
+        page_size = 30
+    try:
+        page_sleep = float(fetcher_raw.get("page_sleep", 2.0))
+    except (TypeError, ValueError):
+        page_sleep = 2.0
+    if page_sleep < 0:
+        page_sleep = 2.0
+
     return {
         "keywords": keywords,
         "interval_seconds": int(form.get("interval") or 600),
         "fetcher_type": str(form.get("fetcher_type") or "mtop"),
         "pages": int(form.get("pages") or 1),
+        "page_size": page_size,
+        "page_sleep": page_sleep,
         "user_agent": str(form.get("user_agent") or ""),
         "storage_path": str(form.get("storage_path") or "state/xianyu_alert.db"),
         "channels": form.get("channels", {}),
@@ -287,6 +329,11 @@ def config_from_web_form(form: Dict[str, Any], base: Dict[str, Any]) -> Dict[str
     if "cookie_pool" in base_monitor:
         monitor["cookie_pool"] = base_monitor["cookie_pool"]
 
+    # ---- P2-09：user_agent 写回（gui.build_config_dict 只 setdefault，不覆盖表单）；
+    # 表单未提供该字段时保留 base（避免旧客户端/缺省表单把 UA 清空） ----
+    if form.get("user_agent") is not None:
+        monitor["user_agent"] = str(form.get("user_agent") or "").strip()
+
     # ---- v1.8 新增字段（gui.build_config_dict 不覆盖，这里显式写回） ----
     monitor["cookie_alert_enabled"] = gui.parse_enabled_flag(
         form.get("cookie_alert_enabled"), default=True
@@ -298,6 +345,27 @@ def config_from_web_form(form: Dict[str, Any], base: Dict[str, Any]) -> Dict[str
     if check_interval < 0:
         check_interval = 0
     monitor["cookie_check_interval_seconds"] = check_interval
+
+    # ---- P2-09：page_size / page_sleep 透传写回 fetcher 节点（base deepcopy 保留其它字段） ----
+    fetcher = data.setdefault("fetcher", {})
+    page_size_raw = form.get("page_size")
+    if page_size_raw is not None and str(page_size_raw).strip() != "":
+        try:
+            page_size = int(page_size_raw)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"抓取每页数量必须是整数，当前输入：{page_size_raw}") from exc
+        if page_size < 1 or page_size > 100:
+            raise ConfigError(f"抓取每页数量必须在 1~100 之间，当前输入：{page_size_raw}")
+        fetcher["page_size"] = page_size
+    page_sleep_raw = form.get("page_sleep")
+    if page_sleep_raw is not None and str(page_sleep_raw).strip() != "":
+        try:
+            page_sleep = float(page_sleep_raw)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"翻页间隔必须是数字（秒），当前输入：{page_sleep_raw}") from exc
+        if page_sleep < 0:
+            raise ConfigError(f"翻页间隔不能为负数，当前输入：{page_sleep_raw}")
+        fetcher["page_sleep"] = page_sleep
 
     return data
 
@@ -334,6 +402,23 @@ class MonitorService:
         self._logs: Deque[Dict[str, str]] = deque(maxlen=LOG_BUFFER_MAXLEN)
         self._log_lock = threading.Lock()
         self._broadcaster = SseBroadcaster()
+
+        # ---- P2 新增状态：校验在架批处理（与 monitor 线程互斥，R7） ----
+        self._check_shelf_lock = threading.Lock()
+        self._check_shelf_thread: Optional[threading.Thread] = None
+        self._check_shelf_cancel: Optional[threading.Event] = None
+        self._check_shelf_state: Dict[str, Any] = {
+            "running": False,
+            "total": 0,
+            "done": 0,
+            "sold": 0,
+            "unknown": 0,
+            "cancelled": False,
+            "started_at": None,
+            "finished_at": None,
+        }
+        #: P2-11 明细日志开关（默认仅展示命中；run_once 传 log_item_details=not 本值）
+        self._detail_only: bool = True
 
         # 首次启动：配置文件不存在时生成内置默认配置（gui.load_raw_config 兜底）
         data = gui.load_raw_config(self.config_path)
@@ -405,7 +490,7 @@ class MonitorService:
                 if stop_event.is_set():
                     break
                 try:
-                    notified = monitor.run_once()
+                    notified = monitor.run_once(log_item_details=not self._detail_only)
                     with self._lock:
                         self._round_count += 1
                         self._notified_count += notified
@@ -426,10 +511,18 @@ class MonitorService:
     def start(self) -> Dict[str, Any]:
         """启动 monitor 后台线程（幂等：已在运行时直接返回）。
 
+        P2 互斥（R7）：校验在架批处理执行中不可启动监测（409 语义）。
+
         Returns:
             {"ok": bool, "message": str}。
         """
+        with self._check_shelf_lock:
+            shelf_running = (
+                self._check_shelf_thread is not None and self._check_shelf_thread.is_alive()
+            )
         with self._lock:
+            if shelf_running:
+                return {"ok": False, "message": "校验在架任务正在执行中，无法启动监测"}
             if self._thread is not None and self._thread.is_alive():
                 return {"ok": True, "message": "监测已在运行中"}
             config = self._config
@@ -516,7 +609,7 @@ class MonitorService:
                 self._check_config_mtime()
             except Exception:  # noqa: BLE001
                 pass
-            notified = monitor.run_once()
+            notified = monitor.run_once(log_item_details=not self._detail_only)
             with self._lock:
                 self._round_count += 1
                 self._notified_count += notified
@@ -552,11 +645,19 @@ class MonitorService:
                 "fetcher_type": self._config.fetcher.type if self._config else "",
                 "keyword_count": len(self._config.keywords) if self._config else 0,
                 "storage_path": self._config.storage.path if self._config else "",
+                "detail_only": bool(self._detail_only),
             }
 
     def shutdown(self) -> None:
-        """优雅关闭：停 monitor → 关 storage → 摘除日志接收。"""
+        """优雅关闭：停 monitor → 中止校验在架 → 关 storage → 摘除日志接收。"""
         self.stop()
+        with self._check_shelf_lock:
+            cancel_event = self._check_shelf_cancel
+            shelf_thread = self._check_shelf_thread
+            if cancel_event is not None:
+                cancel_event.set()
+        if shelf_thread is not None and shelf_thread.is_alive():
+            shelf_thread.join(timeout=MONITOR_JOIN_TIMEOUT)
         with self._lock:
             if self._storage is not None:
                 try:
@@ -649,6 +750,544 @@ class MonitorService:
         if self._config is None:
             raise RuntimeError("Config 尚未加载")
         return self._config
+
+    # ------------------------------------------------------------------ #
+    # P2-11：明细日志开关
+    # ------------------------------------------------------------------ #
+    def set_detail_only(self, enabled: bool) -> None:
+        """设置明细日志开关（true=仅展示命中；run_once 传 log_item_details=False）。"""
+        self._detail_only = bool(enabled)
+
+    # ------------------------------------------------------------------ #
+    # P2-03：校验在架（异步批处理，与 monitor 线程互斥 R7）
+    # ------------------------------------------------------------------ #
+    def start_check_shelf(self, product_ids: List[str]) -> Dict[str, Any]:
+        """启动校验在架批处理（异步线程，202 语义）。
+
+        校验顺序与 GUI `on_check_on_shelf`（gui.py:3325-3368）一致：
+            1. ids 空 → 400；
+            2. fetcher 非 mtop → 400「校验在架仅支持 mtop 抓取方式」；
+            3. monitor 线程运行中 → 409「监测正在运行中，请先停止后再校验在架状态」；
+            4. 已有批处理运行 → 409「已有校验任务正在执行」；
+            5. 超 `SOLD_CHECK_MAX_ITEMS` → 截断到 30 并打日志。
+
+        Returns:
+            成功：{"ok": True, "accepted": True, "count": N}；
+            失败：{"ok": False, "message": str, "code": int}。
+        """
+        ids: List[str] = []
+        for pid in product_ids or []:
+            p = str(pid or "").strip()
+            if p:
+                ids.append(p)
+        if not ids:
+            return {"ok": False, "message": "请先选择要校验的商品", "code": 400}
+
+        with self._lock:
+            monitor_running = self._thread is not None and self._thread.is_alive()
+            fetcher_type = self._config.fetcher.type if self._config else ""
+        if monitor_running:
+            return {"ok": False, "message": "监测正在运行中，请先停止后再校验在架状态", "code": 409}
+        if fetcher_type != "mtop":
+            return {"ok": False, "message": "校验在架仅支持 mtop 抓取方式", "code": 400}
+
+        if len(ids) > SOLD_CHECK_MAX_ITEMS:
+            logger.info(
+                "校验在架商品数 %d 超过上限 %d，已截断",
+                len(ids),
+                SOLD_CHECK_MAX_ITEMS,
+            )
+            ids = ids[:SOLD_CHECK_MAX_ITEMS]
+
+        with self._check_shelf_lock:
+            if self._check_shelf_thread is not None and self._check_shelf_thread.is_alive():
+                return {"ok": False, "message": "已有校验任务正在执行", "code": 409}
+            cancel_event = threading.Event()
+            self._check_shelf_cancel = cancel_event
+            self._check_shelf_state = {
+                "running": True,
+                "total": len(ids),
+                "done": 0,
+                "sold": 0,
+                "unknown": 0,
+                "cancelled": False,
+                "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "finished_at": None,
+            }
+            thread = threading.Thread(
+                target=self._check_shelf_worker,
+                args=(list(ids), cancel_event),
+                name="xianyu-web-check-shelf",
+                daemon=True,
+            )
+            self._check_shelf_thread = thread
+            thread.start()
+        logger.info("校验在架任务已启动：%d 个商品", len(ids))
+        return {"ok": True, "accepted": True, "count": len(ids)}
+
+    def cancel_check_shelf(self) -> Dict[str, Any]:
+        """请求中止校验批处理（worker 在限速等待处唤醒退出）。"""
+        with self._check_shelf_lock:
+            cancel_event = self._check_shelf_cancel
+            running = (
+                self._check_shelf_thread is not None and self._check_shelf_thread.is_alive()
+            )
+        if not running:
+            return {"ok": True, "cancelled": False, "message": "当前没有正在执行的校验任务"}
+        if cancel_event is not None:
+            cancel_event.set()
+        logger.info("已请求中止校验在架任务")
+        return {"ok": True, "cancelled": True, "message": "已请求中止校验任务"}
+
+    def check_shelf_status(self) -> Dict[str, Any]:
+        """返回校验批处理进度（前端轮询 2s 用）。"""
+        with self._check_shelf_lock:
+            return dict(self._check_shelf_state)
+
+    def _check_shelf_worker(self, ids: List[str], cancel_event: threading.Event) -> None:
+        """后台线程：build_fetcher(config) → 逐条 check_item_status(pid, timeout=12.0)。
+
+        - 判 False → `mark_sold_out_by_id(pid, reason=SOLD_REASON_DETAIL)` + sold+1；
+        - 判 True → done+1（日志「✅ 在架」）；
+        - None/异常 → unknown+1（WARNING 继续，不中断批量）；
+        - 两条请求间 `cancel_event.wait(SOLD_CHECK_INTERVAL)`，被取消则 break；
+        - 全程 logger.info 写进度（环形缓冲 + SSE 可见）；finally fetcher.close() + 收尾状态。
+        """
+        fetcher = None
+        try:
+            with self._lock:
+                config = self._config
+            if config is None:
+                logger.error("校验在架失败：配置尚未加载")
+                return
+            fetcher = build_fetcher(config)
+            logger.info(
+                "开始校验 %d 个商品的在架状态（每次间隔 %gs 限速）…",
+                len(ids),
+                SOLD_CHECK_INTERVAL,
+            )
+            done = sold = unknown = 0
+            for pid in ids:
+                if cancel_event.is_set():
+                    logger.info("校验在架已收到中止请求，正在退出…")
+                    break
+                try:
+                    status = fetcher.check_item_status(pid, timeout=CHECK_SHELF_ITEM_TIMEOUT)
+                except Exception as exc:  # noqa: BLE001 - 单条异常不中断批量
+                    status = None
+                    logger.warning(
+                        "⚠️ 商品 %s 在架状态无法判定（异常：%s，跳过，未标记）", pid, exc
+                    )
+                if status is False:
+                    try:
+                        with self._lock:
+                            storage = self._storage
+                        if storage is not None:
+                            storage.mark_sold_out_by_id(pid, reason=SOLD_REASON_DETAIL)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("商品 %s 标记售出失败：%s", pid, exc)
+                    sold += 1
+                    logger.info("🚫 商品（%s）已下架/售出，已标记", pid)
+                elif status is True:
+                    done += 1
+                    logger.info("✅ 商品（%s）在架", pid)
+                else:
+                    unknown += 1
+                    logger.warning("⚠️ 商品 %s 在架状态无法判定（跳过，未标记）", pid)
+                with self._check_shelf_lock:
+                    st = self._check_shelf_state
+                    st["done"] = done
+                    st["sold"] = sold
+                    st["unknown"] = unknown
+                if cancel_event.wait(SOLD_CHECK_INTERVAL):
+                    break
+            cancelled = bool(cancel_event.is_set())
+            logger.info(
+                "校验在架完成：共 %d 条，标记售出 %d，无法判定 %d（被取消：%s）",
+                len(ids),
+                sold,
+                unknown,
+                "是" if cancelled else "否",
+            )
+        finally:
+            if fetcher is not None:
+                try:
+                    fetcher.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            with self._check_shelf_lock:
+                st = self._check_shelf_state
+                st["running"] = False
+                st["cancelled"] = bool(cancel_event.is_set())
+                st["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._check_shelf_thread = None
+                self._check_shelf_cancel = None
+
+    # ------------------------------------------------------------------ #
+    # P2-01：Cookie 池管理（读明文/写密文 + reload R1/R4）
+    # ------------------------------------------------------------------ #
+    def cookie_pool_list(self) -> Dict[str, Any]:
+        """读磁盘 config 的 monitor.cookie_pool（解密为明文）→ 逐条 detect_cookie_health
+        + mask_cookie 脱敏 + expire 时间 → 返回展示列表（**绝不出明文**，R4）。
+
+        Returns:
+            {
+                "pool_used": bool,           # 池中是否有「启用+健康」条目（轮换语义）
+                "pool": [{"name", "enabled", "health_state", "health_reason",
+                          "expire_at", "masked"}, ...],
+                "single": {"health_state", "health_reason", "masked"},
+                "message": 可选提示（池空/无健康条目时回退单值）。
+            }
+        """
+        items = self._read_pool_plaintext()
+        pool: List[Dict[str, Any]] = []
+        for item in items:
+            cookie = str(item.get("cookie") or "")
+            state, reason = detect_cookie_health(cookie)
+            pool.append(
+                {
+                    "name": str(item.get("name") or ""),
+                    "enabled": bool(item.get("enabled", True)),
+                    "health_state": state,
+                    "health_reason": reason,
+                    "expire_at": self._cookie_expire_text(
+                        cookie, enabled=bool(item.get("enabled", True))
+                    ),
+                    "masked": secure.mask_cookie(cookie) or "",
+                }
+            )
+        with self._lock:
+            single_raw = str(self._config.monitor.cookies or "") if self._config else ""
+        single_state, single_reason = detect_cookie_health(single_raw)
+        single = {
+            "health_state": single_state,
+            "health_reason": single_reason,
+            "masked": secure.mask_cookie(single_raw) or "",
+        }
+        # pool_used：池中是否有「启用 + 非空 + 健康」条目（resolve_cookie_for_round 语义）。
+        # 注意 items 是 dict（非 CookiePoolItem），不能用 pool_enabled_cookies（属性访问），
+        # 这里直接按 dict 键过滤，与 cookie.pool_usable_cookies 语义对齐。
+        usable: List[str] = []
+        for item in items:
+            if not bool(item.get("enabled", True)):
+                continue
+            ck = str(item.get("cookie") or "")
+            if not ck:
+                continue
+            try:
+                state, _reason = detect_cookie_health(ck)
+            except Exception:  # noqa: BLE001 - 检测异常按不可用处理
+                continue
+            if state in (HEALTH_OK, HEALTH_EXPIRING):
+                usable.append(ck)
+        pool_used = bool(usable)
+        result: Dict[str, Any] = {
+            "pool_used": pool_used,
+            "pool": pool,
+            "single": single,
+        }
+        if not pool_used:
+            result["message"] = "池为空或无健康条目，将回退单值 Cookie"
+        return result
+
+    def cookie_pool_action(
+        self,
+        action: str,
+        name: Optional[str] = None,
+        new_name: Optional[str] = None,
+        cookie: Optional[str] = None,
+        force_missing_token: bool = False,
+    ) -> Dict[str, Any]:
+        """action 分发（add/update/delete/toggle/set_default/refresh_selected/auto_disable_expired）。
+
+        所有写路径：内存明文操作 → `serialize_cookie_pool(items, encrypt=True)`
+        （fernet1: 密文）→ 原子写盘 → `reload_if_external_changed()`（R1/R4）。
+
+        Returns:
+            成功：{"ok": True, "message": str, "pool": 展示列表?}；
+            失败：{"ok": False, "message": str, "code": int}。
+        """
+        action = str(action or "").strip().lower()
+        items = self._read_pool_plaintext()
+
+        def _find_idx(target: str) -> int:
+            for i, item in enumerate(items):
+                if item.get("name") == target:
+                    return i
+            return -1
+
+        def _dup_name(target: str, exclude_idx: int = -1) -> bool:
+            for i, item in enumerate(items):
+                if i == exclude_idx:
+                    continue
+                if item.get("name") == target:
+                    return True
+            return False
+
+        def _persist() -> List[Dict[str, Any]]:
+            """加密写盘 + mtime 重载 + 返回刷新后的池展示列表（只取 pool 数组）。"""
+            self._write_pool_encrypted(items)
+            self.reload_if_external_changed()
+            return self.cookie_pool_list()["pool"]
+
+        if action == "add":
+            nm = str(name or "").strip()
+            ck = str(cookie or "").strip()
+            if not nm:
+                return {"ok": False, "message": "条目名称不能为空", "code": 400}
+            if not ck:
+                return {"ok": False, "message": "Cookie 内容不能为空", "code": 400}
+            if _dup_name(nm):
+                return {"ok": False, "message": f"已存在同名条目「{nm}」", "code": 400}
+            if not cookie_has_token(ck) and not force_missing_token:
+                return {
+                    "ok": False,
+                    "message": "缺少 _m_h5_tk，mtop 抓取很可能失败，仍要添加吗？",
+                    "code": 400,
+                }
+            items.append({"name": nm, "cookie": ck, "enabled": True})
+            pool = _persist()
+            return {"ok": True, "message": f"已添加 Cookie 条目「{nm}」", "pool": pool}
+
+        if action == "update":
+            nm = str(name or "").strip()
+            idx = _find_idx(nm)
+            if idx < 0:
+                return {"ok": False, "message": f"条目「{nm}」不存在", "code": 400}
+            new_nm = str(new_name or "").strip()
+            if new_nm:
+                if _dup_name(new_nm, exclude_idx=idx):
+                    return {"ok": False, "message": f"已存在同名条目「{new_nm}」", "code": 400}
+                items[idx]["name"] = new_nm
+            if cookie is not None:
+                ck = str(cookie or "").strip()
+                if not ck:
+                    return {"ok": False, "message": "Cookie 内容不能为空", "code": 400}
+                state, reason = detect_cookie_health(ck)
+                if state != HEALTH_OK:
+                    return {
+                        "ok": False,
+                        "message": f"Cookie 无效（{state}）：{reason}，未保存任何改动",
+                        "code": 400,
+                    }
+                items[idx]["cookie"] = ck
+            pool = _persist()
+            return {"ok": True, "message": f"已更新条目「{new_nm or nm}」", "pool": pool}
+
+        if action == "delete":
+            nm = str(name or "").strip()
+            idx = _find_idx(nm)
+            if idx < 0:
+                return {"ok": False, "message": f"条目「{nm}」不存在", "code": 400}
+            items.pop(idx)
+            pool = _persist()
+            return {"ok": True, "message": f"已删除条目「{nm}」", "pool": pool}
+
+        if action == "toggle":
+            nm = str(name or "").strip()
+            idx = _find_idx(nm)
+            if idx < 0:
+                return {"ok": False, "message": f"条目「{nm}」不存在", "code": 400}
+            items[idx]["enabled"] = not bool(items[idx].get("enabled", True))
+            pool = _persist()
+            now_state = "启用" if items[idx]["enabled"] else "停用"
+            return {"ok": True, "message": f"已{now_state}条目「{nm}」", "pool": pool}
+
+        if action == "set_default":
+            nm = str(name or "").strip()
+            idx = _find_idx(nm)
+            if idx < 0:
+                return {"ok": False, "message": f"条目「{nm}」不存在", "code": 400}
+            ck = str(items[idx].get("cookie") or "")
+            state, reason = detect_cookie_health(ck)
+            if state not in (HEALTH_OK, HEALTH_EXPIRING):
+                return {
+                    "ok": False,
+                    "message": f"条目「{nm}」当前不可用（{state}）：{reason}",
+                    "code": 400,
+                }
+            self._write_single_cookie_encrypted(ck)
+            self.reload_if_external_changed()
+            return {"ok": True, "message": f"已把「{nm}」设为默认 Cookie，下一轮生效"}
+
+        if action == "refresh_selected":
+            nm = str(name or "").strip()
+            idx = _find_idx(nm)
+            if idx < 0:
+                return {"ok": False, "message": f"条目「{nm}」不存在", "code": 400}
+            ck = str(cookie or "").strip()
+            if not ck:
+                return {"ok": False, "message": "请粘贴新的 Cookie 内容", "code": 400}
+            state, reason = detect_cookie_health(ck)
+            if state != HEALTH_OK:
+                return {
+                    "ok": False,
+                    "message": f"Cookie 无效（{state}）：{reason}，未保存任何改动",
+                    "code": 400,
+                }
+            items[idx]["cookie"] = ck
+            pool = _persist()
+            return {"ok": True, "message": f"已刷新条目「{nm}」", "pool": pool}
+
+        if action == "auto_disable_expired":
+            disabled = 0
+            for item in items:
+                if not bool(item.get("enabled", True)):
+                    continue
+                state, _reason = detect_cookie_health(str(item.get("cookie") or ""))
+                if state in ("expired", "no_token", "missing", "invalid_encrypt"):
+                    item["enabled"] = False
+                    disabled += 1
+            if disabled:
+                pool = _persist()
+            else:
+                pool = self.cookie_pool_list()["pool"]
+            return {
+                "ok": True,
+                "message": f"已自动停用 {disabled} 个过期/无效条目（保留条目）",
+                "pool": pool,
+            }
+
+        return {"ok": False, "message": f"未知操作：{action}", "code": 400}
+
+    def _read_pool_plaintext(self) -> List[Dict[str, Any]]:
+        """读取磁盘 config 的 monitor.cookie_pool 并逐条解密为明文。
+
+        Returns:
+            [{"name": str, "cookie": str(明文；解密失败为空), "enabled": bool}, ...]。
+            解密失败条目保留 name/enabled，cookie 置空（前端显示 invalid_encrypt）。
+        """
+        data = gui.load_raw_config(self.config_path)
+        monitor = data.get("monitor") if isinstance(data, dict) else None
+        monitor = monitor if isinstance(monitor, dict) else {}
+        items: List[Dict[str, Any]] = []
+        for entry in monitor.get("cookie_pool") or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            raw = str(entry.get("cookie") or "").strip()
+            if not name:
+                continue
+            cookie = raw
+            if secure.is_encrypted(raw):
+                decrypted = secure.decrypt_text(raw)
+                if not decrypted:
+                    logger.warning("Cookie 池条目 %s 密文无法解密（跳过内容）", name)
+                    cookie = ""
+                else:
+                    cookie = decrypted
+            try:
+                enabled = bool(entry.get("enabled", True))
+            except Exception:  # noqa: BLE001 - 脏数据容错
+                enabled = True
+            items.append({"name": name, "cookie": cookie, "enabled": enabled})
+        return items
+
+    def _write_pool_encrypted(self, items: List[Dict[str, Any]]) -> None:
+        """把明文池序列化为 fernet1: 密文并**原子写盘**（同目录临时文件 + os.replace）。
+
+        磁盘上不存在明文持久化窗口（R4）；写盘后由调用方触发 reload。
+        """
+        data = gui.load_raw_config(self.config_path)
+        if not isinstance(data, dict):
+            data = {}
+        monitor = data.get("monitor")
+        if not isinstance(monitor, dict):
+            monitor = {}
+        serialized = serialize_cookie_pool(items, encrypt=True)
+        monitor["cookie_pool"] = serialized
+        data["monitor"] = monitor
+        parent = os.path.dirname(os.path.abspath(self.config_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=parent or ".")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fp:
+                yaml.safe_dump(
+                    data, fp, allow_unicode=True, sort_keys=False, default_flow_style=False
+                )
+            os.replace(tmp_path, self.config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        logger.info("Cookie 池已加密写盘（%d 条，fernet1: 密文）", len(serialized))
+
+    def _write_single_cookie_encrypted(self, cookie: str) -> None:
+        """把明文 Cookie 加密写入 monitor.cookies（fernet1:），原子写盘。
+
+        Raises:
+            ValueError: 加密不可用（Fernet 密钥缺失 / encrypt_text 降级返回明文）。
+        """
+        cipher = secure.encrypt_text(cookie)
+        if not secure.is_encrypted(cipher):
+            raise ValueError("Cookie 加密不可用（Fernet 密钥缺失或不可用），未保存任何改动")
+        data = gui.load_raw_config(self.config_path)
+        if not isinstance(data, dict):
+            data = {}
+        monitor = data.get("monitor")
+        if not isinstance(monitor, dict):
+            monitor = {}
+        monitor["cookies"] = cipher
+        monitor["cookies_encrypted"] = True
+        data["monitor"] = monitor
+        parent = os.path.dirname(os.path.abspath(self.config_path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=parent or ".")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fp:
+                yaml.safe_dump(
+                    data, fp, allow_unicode=True, sort_keys=False, default_flow_style=False
+                )
+            os.replace(tmp_path, self.config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        logger.info("已把默认 Cookie 加密写入 monitor.cookies（fernet1: 密文）")
+
+    def _cookie_expire_text(self, cookie: str, enabled: bool = True) -> str:
+        """计算 Cookie 过期时间展示文本（未知 → 「未知」；停用/空 → 「—」）。"""
+        raw = str(cookie or "").strip()
+        if not enabled or not raw:
+            return "—"
+        ts = cookie_token_timestamp(raw)
+        if ts is None:
+            return "未知"
+        expire_ms = int(ts) + TOKEN_TTL_MS
+        return datetime.fromtimestamp(expire_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
+
+    # ------------------------------------------------------------------ #
+    # P2-02 / P2-04 / P2-05：黑名单 / 售出撤销 / 清空记录
+    # ------------------------------------------------------------------ #
+    def clear_records(self) -> Dict[str, Any]:
+        """清空去重记录（product + meta，**保留 blacklist**）。
+
+        monitor 线程运行中 → 409「请先停止监控再清空记录」（对齐 GUI gui.py:3800-3802）。
+        """
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return {"ok": False, "message": "请先停止监控再清空记录", "code": 409}
+            storage = self._storage
+        if storage is None:
+            return {"ok": False, "message": "存储尚未初始化", "code": 500}
+        deleted = storage.clear_all()
+        logger.info("已清空去重记录，共删除 %d 条", int(deleted))
+        return {"ok": True, "deleted": int(deleted), "message": f"已清空去重记录，共删除 {deleted} 条"}
+
+    def unmark_record(self, product_id: str) -> Dict[str, Any]:
+        """把商品恢复为在架（撤销售出标记，幂等）。"""
+        pid = str(product_id or "").strip()
+        if not pid:
+            return {"ok": False, "message": "product_id 不能为空", "code": 400}
+        updated = self.storage.unmark_sold_out(pid)
+        logger.info("已把商品 %s 恢复为在架", pid)
+        return {"ok": True, "updated": int(updated), "message": "已恢复为在架"}
 
 
 # ---------------------------------------------------------------------- #

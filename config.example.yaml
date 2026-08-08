@@ -2,6 +2,13 @@
 # 闲鱼低价提醒工具 —— 配置模板
 # 复制为 config.yaml 后按需修改
 # ===========================================================
+#
+# Docker 部署提示（P2/P3）：
+#   - 容器内路径：XY_DATA_DIR=/app/data → 本文件应位于卷的 /app/data/config.yaml；
+#   - 首次启动无 config.yaml 时会自动生成默认配置；如需定制请先复制本模板；
+#   - Web「保存配置」会写回本文件（Cookie 密文、cookie_pool 保留）；
+#   - 密码类字段（monitor.cookies / notify 通道密码）保存时 Fernet 加密（fernet1:）；
+#   - 远程访问请设置环境变量 XY_WEB_TOKEN（见 docker-compose.yml 注释）。
 
 # ---------- 0. 预置排除词（v3.5，可选）----------
 # GUI 添加新关键词时，会自动把下面这份「预置排除词模板」写入该关键词的

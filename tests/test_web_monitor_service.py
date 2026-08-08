@@ -276,6 +276,302 @@ class MonitorServiceTestCase(unittest.TestCase):
         self.assertEqual(form["cookie_health"]["state"], "missing")
         self.assertNotIn("cookies", form)  # 永不回传明文 Cookie 字段
 
+    # ------------------------------------------------------------------ #
+    # P2-09：监测参数透传
+    # ------------------------------------------------------------------ #
+    def test_web_form_includes_page_params(self) -> None:
+        """web_form_from_config 返回 page_size / page_sleep（读 fetcher 节点）。"""
+        data = make_mock_config_dict()
+        data["fetcher"]["page_size"] = 50
+        data["fetcher"]["page_sleep"] = 1.5
+        form = web_form_from_config(data)
+        self.assertEqual(form["page_size"], 50)
+        self.assertEqual(form["page_sleep"], 1.5)
+
+    def test_config_from_web_form_persists_page_params(self) -> None:
+        """config_from_web_form 显式写回 page_size/page_sleep/user_agent，保留其它 fetcher 字段。"""
+        base = make_mock_config_dict()
+        base["fetcher"]["mock_products_per_round"] = 7
+        form = make_form(
+            page_size=40,
+            page_sleep=0.5,
+            user_agent="Mozilla/5.0 (Test)",
+        )
+        out = web_form_from_config  # noqa: F841 - 引用避免误用
+        data = _config_from_form(form, base)
+        self.assertEqual(data["fetcher"]["page_size"], 40)
+        self.assertEqual(data["fetcher"]["page_sleep"], 0.5)
+        self.assertEqual(data["monitor"]["user_agent"], "Mozilla/5.0 (Test)")
+        self.assertEqual(data["fetcher"]["mock_products_per_round"], 7)  # base deepcopy 保留
+
+    def test_config_from_web_form_rejects_bad_page_params(self) -> None:
+        """page_size 越界 / page_sleep 负数 → ConfigError（api.py 转 400）。"""
+        from web.monitor_service import config_from_web_form
+
+        base = make_mock_config_dict()
+        with self.assertRaises(ConfigError):
+            config_from_web_form(make_form(page_size=0), base)
+        with self.assertRaises(ConfigError):
+            config_from_web_form(make_form(page_size=101), base)
+        with self.assertRaises(ConfigError):
+            config_from_web_form(make_form(page_sleep=-1), base)
+
+    # ------------------------------------------------------------------ #
+    # P2-11：明细日志开关
+    # ------------------------------------------------------------------ #
+    def test_detail_only_toggle(self) -> None:
+        """set_detail_only 切换 + status 回显 detail_only 字段。"""
+        self.assertTrue(self.service.status()["detail_only"])  # 默认 true
+        self.service.set_detail_only(False)
+        self.assertFalse(self.service.status()["detail_only"])
+        self.service.set_detail_only(True)
+        self.assertTrue(self.service.status()["detail_only"])
+
+    # ------------------------------------------------------------------ #
+    # P2-03：校验在架（服务层，mock fetcher + 计时断言）
+    # ------------------------------------------------------------------ #
+    def test_check_shelf_rejects_wrong_fetcher_type(self) -> None:
+        """fetcher 非 mtop → ok=False + 400 语义。"""
+        result = self.service.start_check_shelf(["111"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], 400)
+        self.assertIn("mtop", result["message"])
+
+    def test_check_shelf_rejects_empty_ids(self) -> None:
+        """ids 空 → ok=False。"""
+        result = self.service.start_check_shelf([])
+        self.assertFalse(result["ok"])
+
+    def test_check_shelf_rejects_while_monitor_running(self) -> None:
+        """monitor 运行时 → 409 语义。"""
+        # 切 mtop 配置（同一服务实例，保留 storage 路径）
+        self.service.apply_config(
+            make_form(fetcher_type="mtop", storage_path=self.storage_path)
+        )
+        self.service.start()
+        time.sleep(0.2)
+        try:
+            result = self.service.start_check_shelf(["111"])
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["code"], 409)
+        finally:
+            self.service.stop()
+
+    def test_check_shelf_worker_rate_limit_and_sold_marking(self) -> None:
+        """mtop 配置 + mock check_item_status：限速 ≥1.5s/条 + False 标记售出 + 进度统计。"""
+        from unittest import mock
+
+        from web import monitor_service as ms
+
+        # 预置 3 条已提醒商品记录（让 mark_sold_out_by_id 有行可更新）
+        ids = ["111", "222", "333"]
+        for pid in ids:
+            product = gui.make_sample_product(keyword="Switch")
+            product.product_id = pid
+            product.title = f"商品 {pid}"
+            self.service.storage.mark_notified(product)
+
+        # 切 mtop 配置（同一服务实例，保留 storage 路径与既有记录）
+        self.service.apply_config(
+            make_form(fetcher_type="mtop", storage_path=self.storage_path)
+        )
+
+        call_times: list = []
+
+        class _FakeFetcher:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def check_item_status(self, product_id, timeout=None):
+                self.calls.append(product_id)
+                call_times.append(time.monotonic())
+                # ids[0] 在架，ids[1] 售出，其余无法判定
+                if product_id == ids[0]:
+                    return True
+                if product_id == ids[1]:
+                    return False
+                return None
+
+            def close(self) -> None:
+                pass
+
+        fake = _FakeFetcher()
+        with mock.patch.object(ms, "build_fetcher", return_value=fake):
+            result = self.service.start_check_shelf(ids)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 3)
+        # 轮询直到完成
+        deadline = time.time() + 12
+        while time.time() < deadline and self.service.check_shelf_status()["running"]:
+            time.sleep(0.2)
+        st = self.service.check_shelf_status()
+        self.assertFalse(st["running"])
+        self.assertEqual(st["total"], 3)
+        self.assertEqual(st["done"], 1)
+        self.assertEqual(st["sold"], 1)
+        self.assertEqual(st["unknown"], 1)
+        # 限速断言：相邻调用间隔 ≥ SOLD_CHECK_INTERVAL（允许微小抖动）
+        self.assertEqual(len(call_times), 3)
+        for i in range(1, len(call_times)):
+            gap = call_times[i] - call_times[i - 1]
+            self.assertGreaterEqual(gap, ms.SOLD_CHECK_INTERVAL - 0.2)
+        # 售出标记落库（reason=详情接口判定）
+        sold_rows = [
+            r
+            for r in self.service.storage.list_notified(limit=100, include_sold=True)
+            if str(r["product_id"]) == ids[1]
+        ]
+        self.assertTrue(sold_rows)
+        self.assertEqual(sold_rows[0]["sold_reason"], ms.SOLD_REASON_DETAIL)
+
+    def test_check_shelf_cancel(self) -> None:
+        """cancel 中止：worker 退出且状态 cancelled=True。"""
+        from unittest import mock
+
+        from web import monitor_service as ms
+
+        cfg = gui.load_raw_config(self.config_path)
+        cfg["fetcher"]["type"] = "mtop"
+        gui.save_raw_config(self.config_path, cfg)
+        service = MonitorService(config_path=self.config_path)
+        try:
+            class _SlowFetcher:
+                def check_item_status(self, product_id, timeout=None):
+                    return True
+
+                def close(self) -> None:
+                    pass
+
+            with mock.patch.object(ms, "build_fetcher", return_value=_SlowFetcher()):
+                # 10 条 → 正常跑完要 15s；取消应在 2s 内生效
+                result = service.start_check_shelf([str(i) for i in range(10)])
+            self.assertTrue(result["ok"])
+            time.sleep(0.5)
+            cancel = service.cancel_check_shelf()
+            self.assertTrue(cancel["ok"])
+            self.assertTrue(cancel["cancelled"])
+            deadline = time.time() + 6
+            while time.time() < deadline and service.check_shelf_status()["running"]:
+                time.sleep(0.1)
+            st = service.check_shelf_status()
+            self.assertFalse(st["running"])
+            self.assertTrue(st["cancelled"])
+            self.assertLess(st["done"], 10)  # 未跑完全部
+        finally:
+            service.shutdown()
+
+    # ------------------------------------------------------------------ #
+    # P2-01：Cookie 池（服务层）
+    # ------------------------------------------------------------------ #
+    def test_cookie_pool_action_add_write_encrypted_and_reload(self) -> None:
+        """add 落盘 fernet1: 密文 + reload；运行中 monitor 下一轮换用新池（R1）。"""
+        from xianyu_alert import cookie
+
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        result = self.service.cookie_pool_action(
+            action="add", name="主账号", cookie=cookie_str
+        )
+        self.assertTrue(result["ok"])
+        raw = open(self.config_path, "r", encoding="utf-8").read()
+        self.assertIn("fernet1:", raw)
+        self.assertNotIn("_m_h5_tk=abc_", raw.replace("fernet1:", ""))
+        # 重新加载后池可用（health=ok 计入轮换）
+        items = self.service._read_pool_plaintext()  # noqa: SLF001
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["name"], "主账号")
+        self.assertTrue(cookie.cookie_has_token(items[0]["cookie"]))
+
+    def test_cookie_pool_action_delete_toggle_set_default(self) -> None:
+        """delete / toggle / set_default 语义正确且写盘。"""
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        self.service.cookie_pool_action(action="add", name="A", cookie=cookie_str)
+        self.service.cookie_pool_action(action="add", name="B", cookie=cookie_str)
+        # toggle A → 停用
+        result = self.service.cookie_pool_action(action="toggle", name="A")
+        self.assertTrue(result["ok"])
+        items = self.service._read_pool_plaintext()  # noqa: SLF001
+        self.assertFalse(items[0]["enabled"])
+        # delete B
+        result = self.service.cookie_pool_action(action="delete", name="B")
+        self.assertTrue(result["ok"])
+        items = self.service._read_pool_plaintext()  # noqa: SLF001
+        self.assertEqual(len(items), 1)
+        # set_default A（A 停用但 Cookie 健康 → 仍可设默认）
+        result = self.service.cookie_pool_action(action="set_default", name="A")
+        self.assertTrue(result["ok"])
+        saved = gui.load_raw_config(self.config_path)
+        self.assertIn("fernet1:", str(saved["monitor"].get("cookies", "")))
+
+    def test_cookie_pool_action_missing_token_confirmation(self) -> None:
+        """add 缺 _m_h5_tk → ok=False + 400；force=true → 成功。"""
+        result = self.service.cookie_pool_action(action="add", name="X", cookie="cookie2=abc")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], 400)
+        self.assertIn("_m_h5_tk", result["message"])
+        result = self.service.cookie_pool_action(
+            action="add", name="X", cookie="cookie2=abc", force_missing_token=True
+        )
+        self.assertTrue(result["ok"])
+
+    def test_cookie_pool_refresh_rejects_invalid(self) -> None:
+        """refresh_selected 非 ok → 400 且不落盘。"""
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        self.service.cookie_pool_action(action="add", name="A", cookie=cookie_str)
+        result = self.service.cookie_pool_action(
+            action="refresh_selected", name="A", cookie="cookie2=bad"
+        )
+        self.assertFalse(result["ok"])
+        items = self.service._read_pool_plaintext()  # noqa: SLF001
+        self.assertNotIn("bad", items[0]["cookie"])
+
+    # ------------------------------------------------------------------ #
+    # P2-05 / P2-04：清空记录 / 售出撤销（服务层）
+    # ------------------------------------------------------------------ #
+    def test_clear_records_returns_count_and_preserves_blacklist(self) -> None:
+        """clear_records 返回删除数（≥已提醒条数）、保留 blacklist。"""
+        self.service.run_once()
+        rows = self.service.storage.list_notified(limit=100)
+        self.assertGreater(len(rows), 0)
+        pid = rows[0]["product_id"]
+        self.service.storage.add_blacklist(pid, keyword="Switch", reason="测试")
+        result = self.service.clear_records()
+        self.assertTrue(result["ok"])
+        # clear_all 删除全部 product 行（含未提醒的），故 ≥ 已提醒条数
+        self.assertGreaterEqual(result["deleted"], len(rows))
+        self.assertEqual(len(self.service.storage.list_notified(limit=100)), 0)
+        self.assertGreaterEqual(len(self.service.storage.list_blacklist(limit=100)), 1)
+
+    def test_clear_records_conflict_while_running(self) -> None:
+        """monitor 运行时 clear_records → ok=False + 409。"""
+        self.service.start()
+        time.sleep(0.2)
+        try:
+            result = self.service.clear_records()
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["code"], 409)
+        finally:
+            self.service.stop()
+
+    def test_unmark_record_round_trip(self) -> None:
+        """mark_sold_out_by_id → unmark_record 幂等恢复。"""
+        self.service.run_once()
+        rows = self.service.storage.list_notified(limit=100)
+        pid = rows[0]["product_id"]
+        self.service.storage.mark_sold_out_by_id(pid, reason="人工标记")
+        result = self.service.unmark_record(pid)
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(result["updated"], 1)
+        # 幂等
+        result = self.service.unmark_record(pid)
+        self.assertTrue(result["ok"])
+
+
+def _config_from_form(form: dict, base: dict) -> dict:
+    """测试辅助：web.monitor_service.config_from_web_form（延迟导入避免循环）。"""
+    from web.monitor_service import config_from_web_form
+
+    return config_from_web_form(form, base)
+
 
 if __name__ == "__main__":
     unittest.main()

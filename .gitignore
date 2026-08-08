@@ -2,6 +2,9 @@
 state/
 *.db
 
+# Docker 数据卷挂载目录（P2/P3：config.yaml / secret.key / state/ 落卷，含真实凭据）
+xianyu-data/
+
 # 安全：Cookie 加密密钥（绝对不允许提交）
 secret.key
 

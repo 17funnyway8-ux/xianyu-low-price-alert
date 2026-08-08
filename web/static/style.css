@@ -600,4 +600,386 @@ textarea {
   .record-title {
     max-width: 160px;
   }
+  /* P2-17：移动端弹窗全屏化 */
+  .modal {
+    width: 100vw !important;
+    height: 100vh;
+    max-height: none;
+    border-radius: 0;
+    margin: 0;
+  }
+  .modal-overlay {
+    align-items: stretch;
+    padding: 0;
+  }
+  .modal-body {
+    max-height: none;
+    flex: 1;
+  }
+  .pool-toolbar {
+    flex-wrap: wrap;
+  }
 }
+
+/* ===========================================================
+ * P2/P3 新增样式（弹窗 / 认证 / 错误条 / 骨架 / 日志工具条 / 批量）
+ * =========================================================== */
+
+/* ---------------- 页头右侧操作区 ---------------- */
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------------- 顶部错误条（P2-13） ---------------- */
+.error-banner {
+  max-width: 980px;
+  margin: 12px auto 0;
+  padding: 10px 16px;
+  background: #fff0ef;
+  border: 1px solid #ffb3ad;
+  border-radius: 10px;
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.error-banner.hidden {
+  display: none;
+}
+
+.error-banner-text {
+  flex: 1;
+}
+
+/* ---------------- 骨架 / 加载占位（P2-13） ---------------- */
+.skeleton-row td,
+.skeleton-card {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 18px 0;
+  background: linear-gradient(90deg, #f2f2f4 25%, #e8e8ed 50%, #f2f2f4 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s infinite;
+  border-radius: 8px;
+}
+
+.skeleton-card {
+  padding: 24px 0;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ---------------- 按钮 loading 态 ---------------- */
+.btn.loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+
+.btn.loading::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------------- 字段级错误红框（P2-14） ---------------- */
+.field-error {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.15) !important;
+}
+
+/* ---------------- 通用弹窗（modal.js） ---------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25);
+  width: 520px;
+  max-width: 100%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.modal-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.modal-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.modal-message {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ---------------- 认证遮罩（P3-01） ---------------- */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(245, 245, 247, 0.96);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.auth-overlay.hidden {
+  display: none;
+}
+
+.auth-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 28px 32px;
+  width: 380px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+}
+
+.auth-card h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.auth-card p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.auth-error {
+  color: var(--danger);
+  font-size: 12px;
+  min-height: 18px;
+}
+
+/* ---------------- Cookie 池管理弹窗（P2-01） ---------------- */
+.pool-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.pool-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.pool-table th,
+.pool-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.pool-table th {
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: #fafafa;
+}
+
+.pool-table tr.selected td {
+  background: #e8f2ff;
+}
+
+.pool-health {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  margin-right: 6px;
+}
+
+.pool-health.ok { background: #d1fadf; color: #1a7f37; }
+.pool-health.expiring { background: #fff3cd; color: #856404; }
+.pool-health.bad { background: #ffe0dd; color: #b42318; }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.checkbox-col {
+  width: 36px;
+  text-align: center !important;
+}
+
+.checkbox-col input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+/* ---------------- 关键词工具条 ---------------- */
+.keyword-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+/* ---------------- 表格横向滚动容器（P2-17） ---------------- */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------------- 日志工具条（P2-12） ---------------- */
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.log-title {
+  margin: 0 8px 0 0 !important;
+}
+
+.log-toolbar input[type="text"] {
+  flex: 1;
+  min-width: 160px;
+  padding: 6px 10px;
+}
+
+.log-line {
+  min-height: 20px;
+}
+
+/* ---------------- 已售出行灰显 + 恢复按钮（P2-04） ---------------- */
+.record-table tr.row-sold td {
+  opacity: 0.55;
+  background: #f5f5f7;
+}
+
+.record-table tr.row-sold .record-title a {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+
+/* ---------------- 校验在架进度（P2-03） ---------------- */
+.check-shelf-progress {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* ---------------- 触控目标 ≥44px（P2-17） ---------------- */
+@media (max-width: 720px) {
+  .btn,
+  .tab,
+  .switch,
+  .modal-close,
+  .record-table button,
+  .kw-table button,
+  .channel-card button,
+  .pool-toolbar button {
+    min-height: 44px;
+  }
+  .btn {
+    padding: 10px 16px;
+  }
+  .btn.small {
+    min-height: 44px;
+    padding: 8px 14px;
+  }
+}
+
+/* ---------------- 记录表批量操作列 ---------------- */
+.record-toolbar {
+  flex-wrap: wrap;
+}
+

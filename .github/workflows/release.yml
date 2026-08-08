@@ -194,3 +194,46 @@ jobs:
           files: release-assets/*
           draft: false
           generate_release_notes: true
+
+  # ---------------------------------------------------------------------------
+  # Docker 镜像（P3-05 可选）：打 tag 触发，buildx 双平台 amd64/arm64 → GHCR
+  #   独立 job，失败不阻断桌面 job（build-windows / build-macos / release）。
+  # ===========================================================
+  build-docker:
+    name: Build Docker image (amd64 + arm64)
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/xianyu-low-price-alert
+      ASSET_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 模拟)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (tag)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.ASSET_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

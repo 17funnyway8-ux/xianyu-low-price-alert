@@ -1,0 +1,113 @@
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端 tab-run.js
+    participant A as web/api.py
+    participant S as MonitorService
+    participant T as 批处理线程
+    participant M as MtopFetcher
+    participant D as Storage
+
+    U->>F: 勾选记录 → 点击「校验在架」
+    F->>A: POST /api/records/check_shelf {product_ids:[...]}
+    alt monitor 运行中
+        A-->>F: 409 {ok:false, message:"请先停止后再校验"}
+    else fetcher != mtop
+        A-->>F: 400 {ok:false, message:"校验在架仅支持 mtop"}
+    else 合法
+        A->>S: start_check_shelf(ids)（截断≤30）
+        S->>S: 预检 + 初始化 check_shelf_state + cancel_event
+        S->>T: 启动 daemon 线程
+        A-->>F: 202 {ok:true, accepted:true, count:N}
+        Note over T,D: 后台执行（不阻塞 HTTP）
+        T->>M: check_item_status(pid, timeout=12.0)
+        alt False（已下架/售出）
+            T->>D: mark_sold_out_by_id(pid, reason="详情接口判定")
+            T->>S: logger.info("🚫 已标记")（环形缓冲+SSE 广播）
+        else True
+            T->>S: logger.info("✅ 在架")
+        else None/异常
+            T->>S: logger.warning("⚠️ 无法判定，跳过")
+        end
+        T->>T: cancel_event.wait(SOLD_CHECK_INTERVAL=1.5)  # 限速 + 可中止
+        Note over F,S: 前端每 2s 轮询 status
+        F->>A: GET /api/records/check_shelf/status
+        A->>S: check_shelf_status()
+        S-->>F: {running, done, sold, unknown, cancelled}
+        alt 用户点击中止
+            F->>A: POST /api/records/check_shelf/cancel
+            A->>S: cancel_check_shelf() → cancel_event.set()
+            Note over T: wait 返回 True → break
+        end
+        Note over T,D: 全部完成 → fetcher.close() → finished_at
+        F->>A: GET /api/records?include_sold=... （刷新记录表）
+    end
+```
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端 Cookie 池弹窗
+    participant A as web/api.py
+    participant S as MonitorService
+    participant C as cookie.py
+    participant K as config.py(serialize)
+    participant Y as config.yaml
+    participant M as Monitor(线程)
+
+    U->>F: 打开「Cookie 管理」→ 检测全部
+    F->>A: GET /api/cookie/pool
+    A->>S: cookie_pool_list()（_read_pool_plaintext 解密）
+    S->>C: detect_cookie_health(每条) + mask_cookie
+    S-->>F: {pool:[{name,enabled,health,expire,masked}], single:{...}}
+    F-->>U: 表格展示（脱敏）
+    U->>F: 添加/编辑/刷新/删除/启停/设默认/自动停用
+    F->>A: POST /api/cookie/pool {action, name, cookie, force_missing_token}
+    A->>S: cookie_pool_action(...)
+    alt add 缺 _m_h5_tk 且未确认
+        S-->>F: 400 "缺少 _m_h5_tk，仍要添加吗？"
+        F-->>U: 弹二次确认
+        U->>F: 确认 → force_missing_token=true 重试
+    else refresh_selected 非 ok
+        S-->>F: 400 "Cookie 无效（...）：未保存任何改动"
+    else 合法
+        S->>K: serialize_cookie_pool(items, encrypt=True) → fernet1: 密文
+        S->>Y: 原子写盘 monitor.cookie_pool
+        S->>S: reload_if_external_changed()（mtime 变化）
+        Note over M: 运行中 monitor 下一轮 run_once 经 resolve_cookie_for_round 换用新池
+        S-->>F: 200 {ok, message:"Cookie 池已更新，下一轮生效"}
+        F-->>U: toast + 刷新池列表
+    end
+```
+
+```mermaid
+sequenceDiagram
+    participant U as 用户
+    participant F as 前端 api.js/auth.js
+    participant A as web/api.py(require_auth)
+    participant E as 环境变量 XY_WEB_TOKEN
+
+    alt 未设置 XY_WEB_TOKEN（默认本机）
+        F->>A: 任意 /api/* 请求（无 Authorization）
+        A->>E: token 为空 → 放行
+        A-->>F: 200（与 P1 行为一致）
+    else 设置了 XY_WEB_TOKEN
+        F->>A: GET /api/monitor/status（无 token）
+        A->>E: 读取 token 非空 → 校验失败
+        A-->>F: 401 {ok:false, message:"未认证或 token 错误"}
+        F->>F: 清 localStorage('xy_web_token') → showAuthOverlay()
+        F-->>U: 遮罩 + token 输入框
+        U->>F: 输入 token → 提交
+        F->>A: GET /api/monitor/status（Authorization: Bearer <token>）
+        A->>A: secrets.compare_digest(provided, token)
+        alt 正确
+            A-->>F: 200
+            F->>F: localStorage 存 token → 关遮罩 → 重放原请求
+            F->>A: 原请求（带 token）→ 200
+        else 错误
+            A-->>F: 401
+            F-->>U: 遮罩内提示「token 错误」，不清输入
+        end
+    end
+    Note over F,A: /healthz、/、/static/* 豁免认证（不经过 api_router 依赖）
+```

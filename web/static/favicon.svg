@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- 简单「铃铛 + 闲」favicon：圆角蓝底 + 白色铃铛轮廓 + 红色「闲」字 -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#0071e3"/>
+  <path d="M32 12c-8 0-13 6-13 14v8l-3 6c-1 2 0 4 3 4h26c3 0 4-2 3-4l-3-6v-8c0-8-5-14-13-14z"
+        fill="#ffffff"/>
+  <circle cx="32" cy="50" r="4" fill="#ff3b30"/>
+  <circle cx="32" cy="20" r="5" fill="#ffffff" opacity="0.9"/>
+  <text x="32" y="33" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, sans-serif"
+        font-size="18" font-weight="700" fill="#ff3b30">闲</text>
+</svg>

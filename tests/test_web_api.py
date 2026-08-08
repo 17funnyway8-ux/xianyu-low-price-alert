@@ -109,6 +109,16 @@ class WebApiTestCase(unittest.TestCase):
         self.assertIn("monitor_running", data)
         self.assertIn("last_round_at", data)
 
+    def test_healthz_has_version_and_data_dir(self) -> None:
+        """P2-16 关于弹窗依赖：/healthz 返回 version 与 data_dir（QA FINDING-3）。"""
+        resp = self.client.get("/healthz")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("version", data)
+        self.assertIn("data_dir", data)
+        self.assertTrue(str(data["version"]))
+        self.assertTrue(str(data["data_dir"]))
+
     def test_index_returns_html(self) -> None:
         resp = self.client.get("/")
         self.assertEqual(resp.status_code, 200)
@@ -341,9 +351,290 @@ class WebApiTestCase(unittest.TestCase):
         asyncio.run(consume())
 
     def test_sse_route_registered(self) -> None:
-        """SSE 路由存在（TestClient 无法流式读取，仅验证注册）。"""
-        paths = {route.path for route in web_api.app.routes}
+        """SSE 路由存在（TestClient 无法流式读取，仅验证注册）。
+
+        注：starlette 1.5 的 `include_router` 会在 app.routes 中放一个
+        `_IncludedRouter` 容器（无 path 属性），需递归收集其子路由路径。
+        """
+        paths = set()
+
+        def _collect(routes) -> None:
+            for route in routes:
+                if hasattr(route, "path"):
+                    paths.add(route.path)
+                if hasattr(route, "routes"):
+                    _collect(route.routes)
+                # starlette 1.5 _IncludedRouter：子路由藏在 original_router.routes
+                original = getattr(route, "original_router", None)
+                if original is not None and hasattr(original, "routes"):
+                    _collect(original.routes)
+
+        _collect(web_api.app.routes)
         self.assertIn("/api/logs/stream", paths)
+
+    # ------------------------------------------------------------------ #
+    # P2-01：Cookie 池 API
+    # ------------------------------------------------------------------ #
+    def test_cookie_pool_list_empty_no_plaintext(self) -> None:
+        """池为空时 GET /api/cookie/pool 返回空列表 + 单值状态，无明文。"""
+        resp = self.client.get("/api/cookie/pool")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["pool"], [])
+        self.assertIn("single", data)
+        self.assertIn("health_state", data["single"])
+        raw = open(self.config_path, "r", encoding="utf-8").read()
+        self.assertNotIn("cookie_pool", raw)  # 未写任何池条目
+
+    def test_cookie_pool_add_requires_token_confirmation(self) -> None:
+        """add 缺 _m_h5_tk → 400 提示二次确认，不落盘。"""
+        resp = self.client.post(
+            "/api/cookie/pool",
+            json={"action": "add", "name": "小号", "cookie": "cookie2=abc"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("_m_h5_tk", resp.json()["message"])
+        raw = open(self.config_path, "r", encoding="utf-8").read()
+        self.assertNotIn("cookie2=abc", raw)
+
+    def test_cookie_pool_add_force_and_encrypted(self) -> None:
+        """force_missing_token=true 添加成功：池落盘为 fernet1: 密文，绝无明文。"""
+        resp = self.client.post(
+            "/api/cookie/pool",
+            json={
+                "action": "add",
+                "name": "主账号",
+                "cookie": "cookie2=abc; _m_h5_tk=t_1700000000000",
+                "force_missing_token": False,
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertIn("pool", data)
+        # 落盘为密文
+        raw = open(self.config_path, "r", encoding="utf-8").read()
+        self.assertIn("fernet1:", raw)
+        self.assertNotIn("_m_h5_tk=t_1700000000000", raw.replace("fernet1:", ""))
+        # 列表脱敏回显
+        pool = data["pool"]
+        self.assertEqual(pool[0]["name"], "主账号")
+        self.assertNotIn("_m_h5_tk=t_1700000000000", str(pool))
+        self.assertTrue(pool[0]["masked"])
+
+    def test_cookie_pool_toggle_and_auto_disable(self) -> None:
+        """toggle 停用/启用 + auto_disable_expired 批量停用过期条目（保留条目）。"""
+        # _m_h5_tk 时间戳 1700000000000（2023-11）→ 必然已过期
+        self.client.post(
+            "/api/cookie/pool",
+            json={"action": "add", "name": "过期号", "cookie": "cookie2=abc; _m_h5_tk=t_1700000000000"},
+        )
+        # toggle 停用
+        resp = self.client.post(
+            "/api/cookie/pool", json={"action": "toggle", "name": "过期号"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("已停用", resp.json()["message"])
+        # 再启用，然后 auto_disable_expired
+        self.client.post("/api/cookie/pool", json={"action": "toggle", "name": "过期号"})
+        resp = self.client.post(
+            "/api/cookie/pool", json={"action": "auto_disable_expired"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("已自动停用 1 个", resp.json()["message"])
+        pool = resp.json()["pool"]
+        self.assertFalse(pool[0]["enabled"])  # 保留条目但停用
+
+    def test_cookie_pool_set_default_writes_single(self) -> None:
+        """set_default：健康条目写入单值 monitor.cookies（加密落盘）。"""
+        cookie = valid_cookie()
+        self.client.post(
+            "/api/cookie/pool",
+            json={"action": "add", "name": "默认号", "cookie": cookie},
+        )
+        resp = self.client.post(
+            "/api/cookie/pool", json={"action": "set_default", "name": "默认号"}
+        )
+        self.assertEqual(resp.status_code, 200)
+        saved = gui.load_raw_config(self.config_path)
+        self.assertIn("fernet1:", str(saved["monitor"].get("cookies", "")))
+        self.assertNotIn("_m_h5_tk=abc_", str(saved["monitor"].get("cookies", "")))
+
+    def test_cookie_pool_refresh_rejects_invalid(self) -> None:
+        """refresh_selected 校验非 ok → 400 且不落盘。"""
+        self.client.post(
+            "/api/cookie/pool",
+            json={"action": "add", "name": "小号", "cookie": valid_cookie()},
+        )
+        resp = self.client.post(
+            "/api/cookie/pool",
+            json={"action": "refresh_selected", "name": "小号", "cookie": "cookie2=bad"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        raw = open(self.config_path, "r", encoding="utf-8").read()
+        self.assertNotIn("cookie2=bad", raw)
+
+    # ------------------------------------------------------------------ #
+    # P2-02：黑名单 API
+    # ------------------------------------------------------------------ #
+    def test_blacklist_list_and_restore(self) -> None:
+        """GET /api/blacklist 4 字段 + restore 幂等移出。"""
+        self.client.post("/api/monitor/run_once")
+        records = self.client.get("/api/records").json()["records"]
+        self.assertGreater(len(records), 0)
+        pid = records[0]["product_id"]
+        self.client.post(f"/api/records/{pid}/blacklist", json={"reason": "测试剔除"})
+        resp = self.client.get("/api/blacklist")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertGreaterEqual(data["total"], 1)
+        item = data["items"][0]
+        for key in ("product_id", "keyword", "reason", "created_at"):
+            self.assertIn(key, item)
+        # restore 幂等
+        resp = self.client.post(f"/api/blacklist/{pid}/restore")
+        self.assertEqual(resp.status_code, 200)
+        self.assertGreaterEqual(resp.json()["removed"], 1)
+        resp = self.client.post(f"/api/blacklist/{pid}/restore")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["removed"], 0)
+
+    # ------------------------------------------------------------------ #
+    # P2-03：校验在架 API
+    # ------------------------------------------------------------------ #
+    def test_check_shelf_rejects_non_mtop(self) -> None:
+        """fetcher 非 mtop → 400「校验在架仅支持 mtop」。"""
+        resp = self.client.post(
+            "/api/records/check_shelf", json={"product_ids": ["123"]}
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("mtop", resp.json()["message"])
+
+    def test_check_shelf_rejects_empty_ids(self) -> None:
+        """product_ids 空 → 400。"""
+        resp = self.client.post("/api/records/check_shelf", json={"product_ids": []})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_check_shelf_missing_body_422_envelope(self) -> None:
+        """body 缺 product_ids → 422 且走统一信封 {ok:false,message}（QA FINDING-2）。"""
+        resp = self.client.post("/api/records/check_shelf", json={})
+        self.assertEqual(resp.status_code, 422)
+        data = resp.json()
+        self.assertFalse(data["ok"])
+        self.assertIn("message", data)
+        self.assertIn("参数校验失败", data["message"])
+        self.assertNotIn("detail", data)  # 不再返回 FastAPI 默认 detail
+
+    def test_check_shelf_accepted_202_with_mock_fetcher(self) -> None:
+        """mtop 配置 + mock fetcher → 202 接受 + status 轮询完成。"""
+        from unittest import mock
+
+        from web import monitor_service as ms
+
+        # 改配置为 mtop（否则 400）
+        cfg = gui.load_raw_config(self.config_path)
+        cfg["fetcher"]["type"] = "mtop"
+        gui.save_raw_config(self.config_path, cfg)
+        service = MonitorService(config_path=self.config_path)
+        web_api.app.dependency_overrides[web_api.get_service] = lambda: service
+        try:
+            class _FakeFetcher:
+                def __init__(self):
+                    self.calls = []
+
+                def check_item_status(self, product_id, timeout=None):
+                    self.calls.append(product_id)
+                    return True
+
+                def close(self):
+                    pass
+
+            fake = _FakeFetcher()
+            with mock.patch.object(ms, "build_fetcher", return_value=fake):
+                resp = self.client.post(
+                    "/api/records/check_shelf", json={"product_ids": ["111", "222"]}
+                )
+            self.assertEqual(resp.status_code, 202)
+            self.assertTrue(resp.json()["ok"])
+            self.assertEqual(resp.json()["count"], 2)
+            # 轮询直到完成（1.5s × 2 条 + 余量）
+            deadline = time.time() + 10
+            done = False
+            while time.time() < deadline:
+                st = self.client.get("/api/records/check_shelf/status").json()
+                if not st["running"]:
+                    done = True
+                    break
+                time.sleep(0.2)
+            self.assertTrue(done)
+            st = self.client.get("/api/records/check_shelf/status").json()
+            self.assertEqual(st["total"], 2)
+            self.assertEqual(st["done"], 2)
+        finally:
+            service.shutdown()
+            web_api.app.dependency_overrides[web_api.get_service] = lambda: self.service
+
+    # ------------------------------------------------------------------ #
+    # P2-04：售出撤销 API
+    # ------------------------------------------------------------------ #
+    def test_unmark_round_trip(self) -> None:
+        """mark sold → 默认列表消失 → unmark → 恢复在架（幂等）。"""
+        self.client.post("/api/monitor/run_once")
+        records = self.client.get("/api/records").json()["records"]
+        pid = records[0]["product_id"]
+        self.client.post(f"/api/records/{pid}/sold")
+        default_ids = {r["product_id"] for r in self.client.get("/api/records").json()["records"]}
+        self.assertNotIn(pid, default_ids)
+        resp = self.client.post(f"/api/records/{pid}/unmark")
+        self.assertEqual(resp.status_code, 200)
+        self.assertGreaterEqual(resp.json()["updated"], 1)
+        default_ids = {r["product_id"] for r in self.client.get("/api/records").json()["records"]}
+        self.assertIn(pid, default_ids)
+        # 幂等
+        resp = self.client.post(f"/api/records/{pid}/unmark")
+        self.assertEqual(resp.status_code, 200)
+
+    # ------------------------------------------------------------------ #
+    # P2-05：清空记录 API
+    # ------------------------------------------------------------------ #
+    def test_clear_records_preserves_blacklist(self) -> None:
+        """clear 后 product 清空、blacklist 保留、返回删除数。"""
+        self.client.post("/api/monitor/run_once")
+        records = self.client.get("/api/records").json()["records"]
+        pid = records[0]["product_id"]
+        self.client.post(f"/api/records/{pid}/blacklist", json={"reason": "保留测试"})
+        resp = self.client.post("/api/records/clear")
+        self.assertEqual(resp.status_code, 200)
+        self.assertGreater(resp.json()["deleted"], 0)
+        # product 清空
+        self.assertEqual(self.client.get("/api/records").json()["records"], [])
+        # blacklist 保留
+        bl = self.client.get("/api/blacklist").json()["items"]
+        self.assertTrue(any(item["product_id"] == pid for item in bl))
+
+    def test_clear_records_conflict_while_running(self) -> None:
+        """monitor 运行时 clear → 409。"""
+        self.client.post("/api/monitor/start")
+        time.sleep(0.2)
+        resp = self.client.post("/api/records/clear")
+        self.assertEqual(resp.status_code, 409)
+        self.client.post("/api/monitor/stop")
+
+    # ------------------------------------------------------------------ #
+    # P2-11：明细日志开关 API
+    # ------------------------------------------------------------------ #
+    def test_detail_only_toggle(self) -> None:
+        """POST /api/monitor/detail_only 切换 + status 回显。"""
+        resp = self.client.post("/api/monitor/detail_only", json={"enabled": False})
+        self.assertEqual(resp.status_code, 200)
+        st = self.client.get("/api/monitor/status").json()
+        self.assertFalse(st["detail_only"])
+        resp = self.client.post("/api/monitor/detail_only", json={"enabled": True})
+        self.assertEqual(resp.status_code, 200)
+        st = self.client.get("/api/monitor/status").json()
+        self.assertTrue(st["detail_only"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,82 @@
+```mermaid
+classDiagram
+    class MonitorService {
+        +config_path: str
+        +_config: Config
+        +_storage: Storage
+        +_thread: threading.Thread
+        +_detail_only: bool
+        +_check_shelf_state: Dict
+        +start() Dict
+        +stop() Dict
+        +run_once() Dict
+        +status() Dict
+        +apply_config(form) Dict
+        +reload_if_external_changed() bool
+        +set_detail_only(enabled) None
+        +start_check_shelf(ids) Dict
+        +cancel_check_shelf() Dict
+        +check_shelf_status() Dict
+        +cookie_pool_list() Dict
+        +cookie_pool_action(action, name, new_name, cookie, force_missing_token) Dict
+        +clear_records() Dict
+        +unmark_record(pid) Dict
+        +append_log(level, text, ts) None
+        +recent_logs(limit) List
+    }
+    class Storage {
+        +list_notified(limit, include_sold) List
+        +mark_sold_out_by_id(pid, reason) int
+        +unmark_sold_out(pid) int
+        +add_blacklist(pid, keyword, reason) None
+        +remove_blacklist(pid) int
+        +list_blacklist(limit) List
+        +clear_all() int
+    }
+    class Config {
+        +monitor: MonitorConfig
+        +fetcher: FetcherConfig
+        +keywords: List
+    }
+    class CookiePoolItem {
+        +name: str
+        +cookie: str
+        +enabled: bool
+    }
+    class Fetcher {
+        +check_item_status(pid, timeout) Optional~bool~
+    }
+    class SseBroadcaster {
+        +subscribe(loop) tuple
+        +unsubscribe(sub_id) None
+        +publish(data) None
+    }
+    class CookieService {
+        <<module functions>>
+        +detect_cookie_health(cookie) tuple
+        +serialize_cookie_pool(pool, encrypt) List
+        +save_cookies_validated_encrypted(path, cookie) None
+        +pool_usable_cookies(pool) List
+        +mask_cookie(cookie) str
+    }
+    class ApiModels {
+        <<pydantic>>
+        CookiePoolActionBody
+        CheckShelfBody
+        MonitorDetailOnlyBody
+        BlacklistBody
+    }
+    class FrontendModules {
+        <<window.XY>>
+        XYUtil XYApi XYModal XYAuth XYState
+        XYTabConfig XYTabNotify XYTabRun
+    }
+    MonitorService --> Storage : 读写
+    MonitorService --> Config : 装载/热重启
+    MonitorService --> Fetcher : 构建/关闭(批处理)
+    MonitorService --> SseBroadcaster : 日志广播
+    MonitorService --> CookieService : 池/脱敏/保存
+    Storage --> CookiePoolItem : 不直接持有(经 config)
+    ApiModels --> MonitorService : handler 组装
+    FrontendModules --> ApiModels : JSON 请求/响应
+```

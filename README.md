@@ -424,6 +424,96 @@ python -m xianyu_alert.cli gui           # macOS 自动走 Qt GUI
 
 ---
 
+## 八·六、Docker 部署（Web 全功能版，P2/P3）
+
+> 本镜像 = FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试三合一。
+> Web 覆盖桌面版三页签全部能力：关键词/过滤词/预置词、Cookie 池管理、通知通道、
+> 运行监控（校验在架 / 售出撤销 / 黑名单管理 / 清空记录 / 批量操作）、实时日志。
+
+### 8.6.1 一键启动（docker compose）
+
+```bash
+# 启动常驻 Web（首次自动构建镜像）
+docker compose -p xianyu-alert up -d --build
+
+# 健康检查（HTTP /healthz，含 monitor 线程状态）
+curl http://127.0.0.1:8080/healthz
+
+# 打开 Web 界面
+open http://127.0.0.1:8080/
+
+# 查看日志 / 停止
+docker compose -p xianyu-alert logs -f
+docker compose -p xianyu-alert down        # SIGTERM 优雅退出
+```
+
+数据卷：`./xianyu-data:/app/data`，其中 `config.yaml`、`secret.key`、`state/`（SQLite）
+全部自动落卷；删除容器不丢数据。**备份必须三件套一起备份**（见 8.6.4）。
+
+### 8.6.2 老数据迁移（桌面版 → 容器）
+
+把桌面版的三个文件复制到卷对应位置：
+
+```bash
+# 1. 配置文件（含 fernet1: 密文 Cookie）
+cp ~/Library/"Application Support"/闲鱼低价提醒工具/config.yaml ./xianyu-data/config.yaml
+# 2. 加密密钥（缺失 → 已有 Cookie 全部无法解密，需重新粘贴）
+cp ~/Library/"Application Support"/闲鱼低价提醒工具/secret.key ./xianyu-data/secret.key
+# 3. 提醒记录库
+cp ~/Library/"Application Support"/闲鱼低价提醒工具/state/xianyu_alert.db ./xianyu-data/state/xianyu_alert.db
+```
+
+> ⚠️ `secret.key` 缺失或换了密钥 → 存量 `fernet1:` 密文 Cookie 无法解密，
+> Web「Cookie 管理」里会显示 `invalid_encrypt`，重新粘贴 Cookie 即可。
+> DPAPI（`dpapi1:`，Windows 老版）密文跨平台不可解，属预期降级。
+
+### 8.6.3 登录 Cookie（容器内无浏览器）
+
+Web 端：打开「监控配置 → Cookie 管理（池）」→ 添加/刷新条目，或直接粘贴到单值输入框。
+保存时校验有效性并 **Fernet 加密落盘**，磁盘无明文。
+
+CLI 端：`docker exec` 调 `login` 脚本模式（本机浏览器复制 Cookie 后传入）：
+
+```bash
+docker compose -p xianyu-alert exec xianyu-alert python -m xianyu_alert.cli login \
+  --cookie-string "cookie2=...; _m_h5_tk=..."
+```
+
+### 8.6.4 备份指引
+
+`secret.key` + `config.yaml` + `state/xianyu_alert.db` **三件套一起备份**：
+
+```bash
+# SQLite 热备（Web 运行中也安全）
+docker compose -p xianyu-alert exec xianyu-alert python -c \
+  "import sqlite3; src=sqlite3.connect('/app/data/state/xianyu_alert.db'); \
+   dst=sqlite3.connect('/app/data/backup_$(date +%F).db'); src.backup(dst); dst.close(); src.close()"
+# 然后把 /app/data 整目录拷贝到备份位置
+cp -r ./xianyu-data ./backup-xianyu-$(date +%F)
+```
+
+### 8.6.5 远程访问（认证，P3-01）
+
+1. `docker-compose.yml` 把 `ports` 改为 `"8080:8080"`；
+2. 设置环境变量 `XY_WEB_TOKEN`（强随机串），重启容器；
+3. 此后除 `/healthz`、`/`、`/static/*` 外全部 API 要求
+   `Authorization: Bearer <token>`（前端首次访问会弹 token 输入框，存 localStorage）；
+4. 进阶：Caddy `basic_auth` 反代或 Tailscale 组网做第二层保护。
+
+未设 token 时默认仅 `127.0.0.1` 可访问（P1 行为不变）。
+
+### 8.6.6 容器内 CLI 约束
+
+镜像内置 `xianyu_alert.cli` 供调试，但 **Web 运行中不可 `once`/`run`**
+（会与 Web 进程抢单实例锁，返回退出码 2）。调试请用只读/写入命令：
+
+```bash
+docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml
+docker compose -p xianyu-alert run --rm xianyu-alert list --config config.poc.yaml
+```
+
+---
+
 ## 九、⚠️ 重要局限说明（务必阅读）
 
 闲鱼（goofish.com）是**强反爬 + 前端 JS 渲染**的站点，`WebFetcher` 属于「尽力而为」实现：
