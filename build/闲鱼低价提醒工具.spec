@@ -40,6 +40,14 @@ a = Analysis(
         "playwright.async_api",
         "playwright._impl",
         "playwright._impl._driver",
+        # 关键：PySide6（Qt）仅供 macOS 端 gui_qt 使用，Windows 端走 Tkinter。
+        # gui_qt 虽为函数内延迟导入，但 PyInstaller 静态分析该包时仍会收集
+        # PySide6 整树（体积 +30MB 以上），必须整棵排除：
+        "PySide6",
+        "PySide6.QtCore",
+        "PySide6.QtGui",
+        "PySide6.QtWidgets",
+        "shiboken6",
         # 打包机上的开发工具也不应混入产物
         "pytest",
         "unittest",
@@ -60,7 +68,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # 必须禁用：UPX 压缩会损坏 cryptography 的原生 _rust.pyd 导致 exe 启动崩溃（已知坑）
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,  # windowed：不弹黑色控制台
