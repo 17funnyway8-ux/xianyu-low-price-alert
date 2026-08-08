@@ -9,8 +9,24 @@
 #   3) SQLite 落盘到 $XY_DATA_DIR/state/xianyu_alert.db
 #   4) `cli cookie status` 可运行（只检测不写入）
 #   5) Fernet 加解密往返 OK（encrypt_text -> decrypt_text）
+#   6) dpapi1: 老密文优雅降级（返回空串提示重登）
 #
 # 有 Docker 的主机可直接在容器内跑等价命令（见脚本末尾输出 / 交付说明）。
+#
+# ⚠️ 容器内全量测试的边界（非代码缺陷，请勿据此报障）：
+#   python:3.13-slim 镜像只装业务核心（不装 GUI/Web），因此容器内跑
+#   `unittest discover` 全量测试会有**预期失败**：
+#     - GUI 测试（test_gui* / test_qa_macos_extra 等）：slim 无 tkinter
+#       （libtk8.6.so 缺失），必然失败；
+#     - test_paths：容器预设 XY_DATA_DIR=/app/data，导致「默认路径」断言失败。
+#   这两类失败是「容器环境 vs 测试预期」的差异，不是代码缺陷。
+#   容器内验证业务核心的正确方式是【核心测试子集】（198 个，容器内实测全过），
+#   模块范围：tests.test_models tests.test_storage tests.test_notifier
+#            tests.test_cookie tests.test_secure tests.test_monitor tests.test_filter
+#   - 宿主机直接跑：python -m unittest tests.test_models …（同上模块列表）
+#   - 容器内跑：tests/ 未打进镜像，需挂载 + 覆盖 entrypoint，
+#     完整命令见本脚本末尾输出的 docker compose 版。
+#   全量 836 测试的权威基线以宿主机/CI 为准。
 #
 # 用法：
 #   bash scripts/verify_docker_p0.sh            # 使用随机临时目录
@@ -193,7 +209,11 @@ if [[ "${FAIL}" -gt 0 ]]; then
 fi
 echo "✅ 全部通过。"
 echo ""
-echo "在【有 Docker】的主机上，容器内等价命令："
-echo "  docker compose run --rm xianyu-alert once --config config.poc.yaml"
-echo "  docker compose run --rm xianyu-alert cookie status --config config.poc.yaml"
+echo "在【有 Docker】的主机上，容器内等价命令（目录名含中文/空格时必须带 -p xianyu-alert）："
+echo "  docker compose -p xianyu-alert run --rm xianyu-alert once --config config.poc.yaml"
+echo "  docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.poc.yaml"
+echo "（service 已设 entrypoint=python -m xianyu_alert.cli，run 后直接跟子命令即可）"
+echo "容器内业务核心测试子集（198 个；tests/ 未打进镜像，需挂载并覆盖 entrypoint）："
+echo "  docker compose -p xianyu-alert run --rm --no-deps -v \"./tests:/app/tests\" \\"
+echo "    --entrypoint python xianyu-alert -m unittest tests.test_models tests.test_storage tests.test_notifier tests.test_cookie tests.test_secure tests.test_monitor tests.test_filter"
 exit 0

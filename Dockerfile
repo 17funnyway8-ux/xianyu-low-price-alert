@@ -12,9 +12,13 @@
 # P0 无 Web 服务 → 不设 HEALTHCHECK（P1 起用 HTTP /healthz 探活；
 # 容器内健康巡检请用 `cli cookie status` / `cli list`，它们不参与单实例锁）。
 #
-# 使用（一次性命令，非常驻服务）：
-#   docker compose run --rm xianyu-alert once --config config.poc.yaml
-#   docker compose run --rm xianyu-alert cookie status --config config.example.yaml
+# ⚠️ 项目名提示：项目目录名含中文/空格时必须带 -p xianyu-alert，
+#    否则 docker compose 报 `project name must not be empty`。
+#
+# 使用（一次性命令，非常驻服务；service 的 entrypoint 已设为
+# python -m xianyu_alert.cli，见 docker-compose.yml，run 后直接跟子命令）：
+#   docker compose -p xianyu-alert run --rm xianyu-alert once --config config.poc.yaml
+#   docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml
 # ===========================================================
 
 FROM python:3.13-slim
@@ -47,7 +51,8 @@ COPY config.poc.yaml config.example.yaml ./
 # 数据卷挂载点（XY_DATA_DIR=/app/data -> config.yaml / secret.key / state/ 落卷）
 RUN mkdir -p /app/data
 
-# 占位 CMD：P0 容器语义是「一次性命令」，实际入口用 docker compose run --rm：
-#   docker compose run --rm xianyu-alert once --config config.poc.yaml
-#   docker compose run --rm xianyu-alert cookie status --config config.example.yaml
-CMD ["python", "-c", "print('xianyu-alert P0 容器就绪。请用 docker compose run --rm xianyu-alert once --config config.poc.yaml 验证业务核心。')"]
+# 占位 CMD：P0 容器语义是「一次性命令」，实际入口用 docker compose run --rm
+# （entrypoint 由 compose 注入，见 docker-compose.yml）：
+#   docker compose -p xianyu-alert run --rm xianyu-alert once --config config.poc.yaml
+#   docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml
+CMD ["python", "-c", "print('xianyu-alert P0 容器就绪。请用 docker compose -p xianyu-alert run --rm xianyu-alert once --config config.poc.yaml 验证业务核心。')"]
