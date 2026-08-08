@@ -280,6 +280,13 @@ textarea {
 .row-actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* P3 修复：操作按钮不压缩、不截断（配合 .record-table min-width 横向滚动） */
+.row-actions .btn {
+  flex-shrink: 0;
   white-space: nowrap;
 }
 
@@ -368,6 +375,13 @@ textarea {
   color: var(--text-secondary);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* P3 修复：当前默认账号显示（状态灯旁，与 masked 同风格） */
+.cookie-default-account {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .cookie-editor {
@@ -541,6 +555,12 @@ textarea {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--danger);
+}
+
+/* P3 修复：提醒记录表最小宽度 → 窄屏由 .table-scroll 横向滚动，
+   保证操作按钮列（售出/恢复/黑名单）不被压缩截断 */
+.record-table {
+  min-width: 920px;
 }
 
 /* ---------------- 页脚 / Toast ---------------- */

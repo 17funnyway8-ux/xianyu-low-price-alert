@@ -219,6 +219,27 @@ window.XY.TabConfig = (function () {
         ? "（已保存：" + State.config.cookies_masked + "）"
         : "";
     }
+    // P3 修复：显示当前默认使用账号（池 set_default 条目名 / 单值脱敏 / 未配置）
+    renderDefaultAccount();
+  }
+
+  /** P3：拉取 /api/cookie/pool 的 default_name 并渲染到状态区（失败保持「未配置」）。 */
+  async function renderDefaultAccount() {
+    const defaultEl = U.$("#cookie-default-account");
+    if (!defaultEl) return;
+    let text = "默认账号：未配置";
+    try {
+      const pool = await Api.api("/api/cookie/pool");
+      if (pool.default_name) {
+        text = "默认账号：" + pool.default_name;
+      } else if (pool.pool_used && (pool.pool || []).length) {
+        text = `默认账号：未配置（池轮换 ${pool.pool.length} 条）`;
+      }
+    } catch (err) {
+      /* 读取失败保持「未配置」 */
+    }
+    defaultEl.textContent = text;
+    defaultEl.title = "当前监测实际使用的 Cookie 来源（池优先、单值兜底）";
   }
 
   async function saveCookie() {
@@ -479,6 +500,8 @@ window.XY.TabConfig = (function () {
           body: { action: "set_default", name: item.name },
         });
         U.toast(result.message || "已设为默认");
+        // P3：立即刷新状态区「默认账号」显示
+        renderCookieStatus();
         return;
       }
       if (action === "auto_disable") {

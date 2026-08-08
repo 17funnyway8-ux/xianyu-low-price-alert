@@ -936,6 +936,9 @@ class MonitorService:
                 "pool": [{"name", "enabled", "health_state", "health_reason",
                           "expire_at", "masked"}, ...],
                 "single": {"health_state", "health_reason", "masked"},
+                "default_name": str,         # P3：当前默认账号名（单值命中池条目→条目名；
+                                             #     单值独立存在→脱敏标识；未设置→空串）
+                "default_is_pool": bool,     # default_name 是否为池条目名（true）或单值脱敏（false）
                 "message": 可选提示（池空/无健康条目时回退单值）。
             }
         """
@@ -964,6 +967,21 @@ class MonitorService:
             "health_reason": single_reason,
             "masked": secure.mask_cookie(single_raw) or "",
         }
+        # P3：当前默认账号名——单值命中池条目 → 显示条目名（set_default 语义）；
+        # 单值独立存在 → 显示其脱敏标识（min 变更，复用既有字段）；单值为空 → 未配置
+        # （池轮换场景由前端结合 pool_used 提示）。
+        default_name = ""
+        default_is_pool = False
+        if single_raw:
+            matched = next(
+                (it for it in items if str(it.get("cookie") or "") == single_raw), None
+            )
+            if matched is not None:
+                default_name = str(matched.get("name") or "")
+                default_is_pool = True
+            else:
+                default_name = secure.mask_cookie(single_raw) or ""
+                default_is_pool = False
         # pool_used：池中是否有「启用 + 非空 + 健康」条目（resolve_cookie_for_round 语义）。
         # 注意 items 是 dict（非 CookiePoolItem），不能用 pool_enabled_cookies（属性访问），
         # 这里直接按 dict 键过滤，与 cookie.pool_usable_cookies 语义对齐。
@@ -985,6 +1003,8 @@ class MonitorService:
             "pool_used": pool_used,
             "pool": pool,
             "single": single,
+            "default_name": default_name,
+            "default_is_pool": default_is_pool,
         }
         if not pool_used:
             result["message"] = "池为空或无健康条目，将回退单值 Cookie"

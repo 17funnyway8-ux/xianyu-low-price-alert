@@ -524,6 +524,31 @@ class MonitorServiceTestCase(unittest.TestCase):
         items = self.service._read_pool_plaintext()  # noqa: SLF001
         self.assertNotIn("bad", items[0]["cookie"])
 
+    def test_cookie_pool_list_default_name(self) -> None:
+        """P3：cookie_pool_list 返回当前默认账号名（set_default 条目 / 单值脱敏 / 未配置）。"""
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        # 1) 未配置任何 Cookie → default_name 为空串（未配置）
+        data = self.service.cookie_pool_list()
+        self.assertEqual(data["default_name"], "")
+        self.assertFalse(data["default_is_pool"])
+        # 2) 独立单值（不在池中）→ 显示单值脱敏标识
+        self.service.cookie_pool_action(action="add", name="池A", cookie=cookie_str)
+        single_standalone = cookie_str + "; extra=1"
+        self.service._write_single_cookie_encrypted(single_standalone)  # noqa: SLF001
+        self.service.reload_if_external_changed()
+        data = self.service.cookie_pool_list()
+        self.assertEqual(data["default_name"], secure.mask_cookie(single_standalone))
+        self.assertFalse(data["default_is_pool"])
+        # 3) set_default（单值 = 池条目 cookie）→ 显示条目名
+        result = self.service.cookie_pool_action(action="set_default", name="池A")
+        self.assertTrue(result["ok"])
+        data = self.service.cookie_pool_list()
+        self.assertEqual(data["default_name"], "池A")
+        self.assertTrue(data["default_is_pool"])
+        # 4) 池条目仍为脱敏回显，绝无明文
+        raw = str(data["pool"])
+        self.assertNotIn("_m_h5_tk=abc_", raw)
+
     # ------------------------------------------------------------------ #
     # P2-05 / P2-04：清空记录 / 售出撤销（服务层）
     # ------------------------------------------------------------------ #

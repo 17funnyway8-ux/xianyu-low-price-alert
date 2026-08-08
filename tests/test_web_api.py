@@ -384,6 +384,9 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(data["pool"], [])
         self.assertIn("single", data)
         self.assertIn("health_state", data["single"])
+        # P3：未配置任何 Cookie → 默认账号为空串
+        self.assertEqual(data["default_name"], "")
+        self.assertFalse(data["default_is_pool"])
         raw = open(self.config_path, "r", encoding="utf-8").read()
         self.assertNotIn("cookie_pool", raw)  # 未写任何池条目
 
@@ -460,6 +463,12 @@ class WebApiTestCase(unittest.TestCase):
         saved = gui.load_raw_config(self.config_path)
         self.assertIn("fernet1:", str(saved["monitor"].get("cookies", "")))
         self.assertNotIn("_m_h5_tk=abc_", str(saved["monitor"].get("cookies", "")))
+        # P3：GET 返回当前默认账号名（单值命中池条目 → 条目名）
+        resp2 = self.client.get("/api/cookie/pool")
+        self.assertEqual(resp2.status_code, 200)
+        data = resp2.json()
+        self.assertEqual(data["default_name"], "默认号")
+        self.assertTrue(data["default_is_pool"])
 
     def test_cookie_pool_refresh_rejects_invalid(self) -> None:
         """refresh_selected 校验非 ok → 400 且不落盘。"""

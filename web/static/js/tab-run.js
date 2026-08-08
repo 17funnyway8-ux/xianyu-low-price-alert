@@ -21,6 +21,47 @@ window.XY.TabRun = (function () {
   let logStream = null;
 
   // ------------------------------------------------------------------ //
+  // P3 修复：提醒记录自动刷新
+  // 触发源：轮次推进（round_count 变化）或新提醒日志（NEW_ITEM）→ 折叠为一次刷新，
+  // 不固定轮询 /api/records，避免无谓请求；仅前端实现，后端 records API 无需改动。
+  // ------------------------------------------------------------------ //
+  let recordsRefreshTimer = null;   // 多个触发源在 800ms 内折叠为一次刷新
+  let recordsLoading = false;       // /api/records 请求在途标记
+  let recordsReloadPending = false; // 在途期间又有触发 → 完成后补一次
+  let lastSeenRoundCount = null;    // 上次已见轮数（首轮仅记录不触发）
+  let monitorRunning = false;       // 上次 pollStatus 的 running 状态
+  let recordsPollInit = false;      // 首次 pollStatus 只做基线，不触发刷新
+
+  /** 触发一次提醒记录自动刷新（多个触发源折叠；已排程则跳过）。 */
+  function scheduleRecordsRefresh() {
+    if (recordsRefreshTimer) return;
+    recordsRefreshTimer = setTimeout(async () => {
+      recordsRefreshTimer = null;
+      await refreshRecordsOnce();
+    }, 800);
+  }
+
+  /** 执行记录刷新：避免并发请求叠加，在途时挂起待补一次。 */
+  async function refreshRecordsOnce() {
+    if (recordsLoading) {
+      recordsReloadPending = true;
+      return;
+    }
+    recordsLoading = true;
+    try {
+      await loadRecords();
+    } catch (err) {
+      /* loadRecords 内部已 toast，这里忽略 */
+    } finally {
+      recordsLoading = false;
+      if (recordsReloadPending) {
+        recordsReloadPending = false;
+        scheduleRecordsRefresh();
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ //
   // 状态条 + 明细开关
   // ------------------------------------------------------------------ //
   async function pollStatus() {
@@ -37,6 +78,22 @@ window.XY.TabRun = (function () {
       const detailInput = U.$("#detail-only-input");
       if (detailInput && detailInput.checked !== !!data.detail_only) {
         detailInput.checked = !!data.detail_only;
+      }
+      // P3 修复：提醒记录自动刷新——轮次推进或 monitor 刚启动时触发
+      const roundCount = data.round_count || 0;
+      if (!recordsPollInit) {
+        recordsPollInit = true;
+        lastSeenRoundCount = roundCount;
+        monitorRunning = !!data.running;
+      } else {
+        if (roundCount !== lastSeenRoundCount) {
+          lastSeenRoundCount = roundCount;
+          scheduleRecordsRefresh();
+        }
+        if (data.running && !monitorRunning) {
+          scheduleRecordsRefresh();
+        }
+        monitorRunning = !!data.running;
       }
     } catch (err) {
       /* 轮询失败静默，下一轮重试 */
@@ -104,8 +161,10 @@ window.XY.TabRun = (function () {
     const logBox = U.$("#log-box");
     if (!logBox) return;
     logBox.querySelector(".log-empty")?.remove();
-    if (!matchesLogFilter(entry)) return;
     const tag = logTagForEntry(entry);
+    // P3 修复：新提醒日志（🔔/命中低价/新出现）→ 自动刷新提醒记录表
+    if (tag === "NEW_ITEM") scheduleRecordsRefresh();
+    if (!matchesLogFilter(entry)) return;
     const div = document.createElement("div");
     div.className = "log-line " + tag;
     div.textContent = entry.text || "";
