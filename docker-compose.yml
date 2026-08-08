@@ -1,0 +1,46 @@
+# ===========================================================
+# 闲鱼低价提醒工具 —— docker-compose.yml（P0 容器 POC 最小版）
+# ===========================================================
+# P0 语义：一次性命令容器（非常驻服务），验证「业务核心在容器内可跑」。
+#
+# P0 验证用法（在有 Docker 的主机上，于项目根目录执行）：
+#   # 1) mock 离线抓取一轮（无需 Cookie / 网络，验证业务核心 + SQLite 落盘）
+#   docker compose run --rm xianyu-alert once --config config.poc.yaml
+#
+#   # 2) Cookie 健康巡检（只检测不写入，脱敏回显，适合脚本/ssh）
+#   docker compose run --rm xianyu-alert cookie status --config config.example.yaml
+#
+#   # 3) 查看已提醒记录
+#   docker compose run --rm xianyu-alert list --config config.poc.yaml
+#
+# P0 故意不含（P1 引入 Web 后再加）：
+#   - ports        ：P0 无 Web 服务，无需暴露端口
+#   - healthcheck  ：P0 无 HTTP 端点；容器内巡检用 `cli cookie status`（不抢单实例锁）
+#   - XY_WEB_TOKEN ：P1 认证
+#   - restart      ：P0 是一次性 run 命令，不需要守护；P1 常驻 Web 时改为
+#                    `restart: unless-stopped`（7×24 自动拉起）
+#
+# 数据卷：./xianyu-data:/app/data —— config.yaml / secret.key / state/ 全部落卷。
+#   ⚠️ 备份时必须连同 secret.key 一起备份，否则 fernet1: 密文 Cookie 无法解密。
+# ===========================================================
+
+services:
+  xianyu-alert:
+    build: .
+    # P1 常驻 Web 后建议固定镜像名：image: xianyu-alert:1.8.0
+    environment:
+      XY_DATA_DIR: /app/data        # paths.data_dir() 直通（v1.8 已支持，零改动）
+      TZ: Asia/Shanghai             # 提醒记录时间正确（镜像内已装 tzdata）
+    volumes:
+      - ./xianyu-data:/app/data     # config.yaml / secret.key / state/ 全部落卷
+    # --- P1 起启用（常驻 Web）---
+    # ports:
+    #   - "127.0.0.1:8080:8080"     # 默认仅本机；远程访问改 "8080:8080" + 开 token
+    # restart: unless-stopped
+    # healthcheck:
+    #   test: ["CMD", "python", "-c",
+    #     "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 3
+    #   start_period: 10s

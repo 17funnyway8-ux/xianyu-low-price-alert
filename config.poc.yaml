@@ -1,0 +1,51 @@
+# ===========================================================
+# 闲鱼低价提醒工具 —— P0 容器 POC 演示配置（mock 离线抓取）
+# ===========================================================
+# 用途：在**无 Cookie / 无网络**环境下验证「业务核心在容器内可跑」。
+#   - fetcher.type: mock        -> 离线确定性假数据，不访问闲鱼
+#   - storage.path: 相对路径    -> 自动锚定 XY_DATA_DIR（容器内 /app/data）
+#     即 SQLite 落盘到 $XY_DATA_DIR/state/xianyu_alert.db
+#
+# 注意：config.example.yaml 默认 fetcher.type 是 mtop（真实抓取，需先配 Cookie），
+# 因此 P0 的「once mock 抓取成功」演示统一用本文件；
+# `cookie status` 巡检两者皆可（只检测不写入、不参与单实例锁）。
+# ===========================================================
+
+# ---------- 0. 预置排除词（模板，添加新关键词时自动预置）----------
+preset_exclude_keywords:
+  - "回收"
+  - "置换"
+  - "收购"
+  - "高价回收"
+  - "收"
+
+# ---------- 1. 关键词 + 价格阈值 ----------
+keywords:
+  - keyword: "Switch"
+    max_price: 1000
+  - keyword: "iPhone"
+    max_price: 1500
+
+# ---------- 2. 监测循环 ----------
+monitor:
+  interval_seconds: 600
+  user_agent: ""
+  cookies: ""                      # mock 不需要 Cookie
+
+# ---------- 3. 抓取器（mock：离线确定性假数据）----------
+fetcher:
+  type: "mock"
+  page_size: 30
+  pages: 1
+  page_sleep: 2.0
+  mock_products_per_round: 5
+  mock_fail_rounds: []
+
+# ---------- 4. 去重存储（相对路径 -> 锚定 XY_DATA_DIR）----------
+storage:
+  path: "state/xianyu_alert.db"
+
+# ---------- 5. 通知通道（控制台，永远可用）----------
+notify:
+  channels:
+    - type: "console"

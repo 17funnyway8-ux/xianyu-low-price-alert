@@ -1,0 +1,44 @@
+# ===========================================================
+# 闲鱼低价提醒工具 —— .dockerignore
+# 排除本地数据 / 虚拟环境 / 打包产物 / 文档，保证镜像最小且不泄漏凭据
+# ===========================================================
+
+# 版本控制
+.git/
+.gitignore
+.github/
+
+# 虚拟环境与 Python 缓存
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 本地运行数据（含真实 Cookie 的 config.yaml 与加密密钥，严禁进镜像）
+state/
+xianyu-data/
+config.yaml
+secret.key
+*.db
+*.log
+
+# 打包 / 逆向分析产物
+dist/
+build/
+re_analysis/
+
+# 文档与测试（P0 镜像不需要；测试在 CI/开发环境跑）
+docs/
+tests/
+
+# 个人工作区（记忆日志、QA 临时文件）
+.workbuddy/
+
+# 平台 GUI 专属（容器内无桌面语义，不进镜像）
+run_gui.pyw
+start_gui.bat
+*.plist
+icon.ico

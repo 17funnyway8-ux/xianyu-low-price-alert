@@ -1,0 +1,144 @@
+classDiagram
+    class web_entry {
+        <<module>>
+        +main() int
+        -_setup_data_dir() str
+        -_setup_secret_key() None
+        -_setup_lock() Optional[InstanceLock]
+        -_shutdown(sig, frame) None
+    }
+    class MonitorService {
+        +config_path: str
+        +config: Config
+        +monitor: Optional[Monitor]
+        +thread: Optional[Thread]
+        +log_buffer: Deque[str]
+        +_running: bool
+        +start() bool
+        +stop() None
+        +run_once() int
+        +status() dict
+        +reload_config() bool
+        +check_config_mtime() bool
+    }
+    class api {
+        <<module>>
+        +app: FastAPI
+        +require_token(auth) str
+        +get_config() dict
+        +put_config(payload) dict
+        +post_monitor_start() dict
+        +post_monitor_stop() dict
+        +post_monitor_run_once() dict
+        +get_monitor_status() dict
+        +post_cookie_save(payload) dict
+        +post_notify_test(payload) dict
+        +get_records(params) list
+        +get_healthz() dict
+        +get_logs_stream() EventSourceResponse
+    }
+    class Monitor {
+        +config: Config
+        +fetcher: Fetcher
+        +storage: Storage
+        +notifiers: List[Notifier]
+        +run_once(round_ts, log_item_details) int
+        +run_forever(max_rounds) int
+        +stop() None
+        +preflight_cookie() str
+        +_check_cookie_health_and_alert(round_index) None
+    }
+    class Storage {
+        +is_notified(keyword, product_id) bool
+        +mark_notified(product, ts) None
+        +save_seen(product, ts) None
+        +get_previous_round_ids(keyword) Set[str]
+        +set_previous_round_ids(keyword, ids) None
+        +list_notified(limit) list
+        +mark_sold_out(...) int
+        +add_blacklist(...) None
+        +list_blacklist(limit) list
+        +get_meta_value(key) Optional[str]
+        +set_meta_value(key, value) None
+    }
+    class secure {
+        <<module>>
+        +encrypt_text(plain) str
+        +decrypt_text(cipher) str
+        +is_encrypted(cookie) bool
+        +mask_cookie(cookie) str
+        +set_key_file(path) None
+    }
+    class cookie {
+        <<module>>
+        +detect_cookie_health(cookie) tuple
+        +pool_usable_cookies(pool) List[str]
+        +save_cookies_validated(config_path, cookie) None
+        +resolve_cookie_for_round(monitor, round_index) str
+    }
+    class Config {
+        +keywords: List[KeywordRule]
+        +monitor: MonitorConfig
+        +fetcher: FetcherConfig
+        +storage: StorageConfig
+        +notify: NotifyConfig
+    }
+    class MonitorConfig {
+        +interval_seconds: int = 600
+        +cookies: str = ""
+        +cookie_pool: List[CookiePoolItem]
+        +cookie_alert_enabled: bool = True
+        +cookie_check_interval_seconds: int = 0
+    }
+    class InstanceLock {
+        +lock_path: str
+        +fd: int
+        +pid: int
+        +release() None
+    }
+    class singleton {
+        <<module>>
+        +acquire_instance_lock(lock_path=None, strict=False) Optional[InstanceLock]
+        +release_instance_lock(lock) None
+        +is_running(lock_path=None) bool
+    }
+    class paths {
+        <<module>>
+        +data_dir() str
+        +default_config_path() str
+        +default_state_dir() str
+        +resolve_data_path(rel) str
+    }
+    class Notifier {
+        <<abstract>>
+        +notify(products) None
+        +safe_notify(products) bool
+        +notify_message(title, text) None
+        +safe_notify_message(title, text) bool
+    }
+    class Fetcher {
+        <<abstract>>
+        +fetch(keyword) List[Product]
+        +set_cookies(cookie) None
+        +set_max_price(price) None
+        +check_item_status(product_id) bool
+    }
+
+    api --> MonitorService : 单例调用
+    api --> Storage : 只读查询
+    api --> cookie : save_cookies_validated / detect_cookie_health
+    api --> secure : mask_cookie / encrypt_text
+    MonitorService --> Monitor : 线程驱动
+    MonitorService --> Config : load/reload
+    MonitorService --> api : SSE 日志广播
+    web_entry --> singleton : acquire_instance_lock
+    web_entry --> secure : _load_or_create_key
+    web_entry --> MonitorService : 启动
+    web_entry --> paths : ensure_data_dir
+    Monitor --> Fetcher : 注入 cookie/阈值
+    Monitor --> Storage : 读写
+    Monitor --> Notifier : safe_notify / safe_notify_message
+    Monitor --> cookie : 健康检测/轮换
+    cookie --> secure : 加解密/脱敏
+    Config --> secure : 解密 Cookie
+    singleton --> paths : 锁路径 data_dir/state/instance.lock

@@ -1,0 +1,57 @@
+sequenceDiagram
+    participant U as 用户/浏览器
+    participant API as web/api.py (FastAPI)
+    participant S as MonitorService
+    participant M as Monitor(线程)
+    participant C as cookie.py
+    participant SEC as secure.py
+    participant F as config.yaml/卷
+    participant ST as Storage(SQLite)
+    participant N as Notifier
+
+    Note over U,API: ① 配置读取与保存
+    U->>API: GET /api/config
+    API->>API: load_config(/app/data/config.yaml)
+    API-->>U: 表单 JSON（含 v1.8 cookie_alert_enabled 等）
+    U->>API: PUT /api/config（保存）
+    API->>API: build_config_dict → 校验 → 写盘
+    API->>S: reload_config()（若监控运行 → 停旧 → 重建 → 重启）
+    API-->>U: 200
+
+    Note over U,N: ② Cookie 粘贴（容器内无浏览器）
+    U->>API: POST /api/cookie/save {cookie}
+    API->>C: detect_cookie_health(cookie)
+    alt state != ok
+        API-->>U: 400 中文原因（mask_cookie 脱敏，不落盘）
+    else ok
+        API->>SEC: encrypt_text → fernet1:...
+        API->>F: save_raw_config(encrypt_cookies=True)
+        API-->>U: 200 {status:"ok", masked}
+    end
+
+    Note over U,N: ③ 监控启停 + 实时日志
+    U->>API: POST /api/monitor/start
+    API->>S: start()
+    S->>M: threading.Thread(daemon=True) → run_forever()
+    loop 每轮（interval ≥ 600s）
+        M->>M: run_once()
+        M->>M: _check_cookie_health_and_alert（v1.8 去抖提醒）
+        M->>C: resolve_cookie_for_round / detect_cookie_health
+        M->>ST: 去重/已见/黑名单/meta 去抖读写
+        alt 命中低价
+            M->>N: safe_notify(hits)
+        end
+        alt Cookie 失效/临期（v1.8）
+            M->>N: safe_notify_message(标题, 刷新指引)（状态跃迁才发）
+        end
+        M->>S: 日志写入环形缓冲
+        S->>API: SSE /api/logs/stream 广播
+        API-->>U: 实时日志行
+    end
+    U->>API: POST /api/monitor/stop
+    API->>S: stop() → Monitor.stop() + join(timeout=5)
+
+    Note over U,N: ④ 健康检查（不抢单实例锁）
+    U->>API: GET /healthz
+    API->>S: status()（线程存活 + last_round_at）
+    API-->>U: 200 {web:"ok", monitor:"running", last_round_at:"..."}
