@@ -1,0 +1,27 @@
+keywords:
+- keyword: Switch
+  max_price: 1000.0
+  exclude_keywords: []
+  required_keywords: []
+  enabled: true
+monitor:
+  interval_seconds: 600
+  user_agent: ''
+  cookies: ''
+  cookie_pool: []
+fetcher:
+  type: mock
+  mock_products_per_round: 5
+  mock_fail_rounds: []
+  pages: 1
+storage:
+  path: ':memory:'
+notify:
+  channels:
+  - type: console
+preset_exclude_keywords:
+- 回收
+- 置换
+- 收购
+- 高价回收
+- 收

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  闲鱼低价提醒工具 · LaunchAgent（可选开机自启 + 崩溃拉起）
+  对齐 macOS 适配设计文档 §3.6
+
+  说明：
+    - RunAtLoad：用户登录后自动启动 GUI；
+    - KeepAlive + SuccessfulExit=false：非正常退出（崩溃）时自动拉起；
+      手动退出（正常 exit 0）不会反复拉起；
+    - 路径占位符 __APP_PATH__ / __HOME__ 由 install_launchagent.sh 在安装时替换；
+    - 数据目录走 XY_DATA_DIR（可选）覆盖；不设置则落
+      ~/Library/Application Support/闲鱼低价提醒工具/
+    - 安装：bash scripts/install_launchagent.sh
+    - 卸载：bash scripts/uninstall_launchagent.sh
+-->
+<dict>
+    <key>Label</key>
+    <string>com.xianyu-alert.gui</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__APP_PATH__/Contents/MacOS/闲鱼低价提醒工具</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>XY_DATA_DIR</key>
+        <string>__HOME__/Library/Application Support/闲鱼低价提醒工具</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/xianyu-alert/launchagent.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/xianyu-alert/launchagent.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+    actor U as 用户
+    participant App as XianyuAlertQtApp（主线程）
+    participant W as MonitorWorker(QThread)
+    participant M as Monitor/Fetcher/Storage/Notifier
+    participant L as LogView(QPlainTextEdit)
+
+    Note over App: 启动（双击 .app / cli gui）
+    App->>App: QApplication + 平台分发（darwin→gui_qt）
+    App->>App: paths.ensure_data_dir() + 加载 config（secure 自动解密）
+
+    U->>App: 点击「开始监控」
+    App->>App: _build_config_object() 校验（主线程，纯本地）
+    App->>W: start() + connect(ui_message)
+    W->>M: run_once() 循环（interval 轮询）
+    M-->>W: 命中/概况/异常
+    W->>App: ui_message.emit("log"/"alert"/"status", payload)
+    App->>App: _handle_ui_message（主线程槽函数）
+    App->>L: append_log(level, text) / 更新提醒记录表
+
+    Note over W: 任意线程（monitor/notifier 等）产生 logging
+    W->>App: QtLogHandler.emit(record)
+    App->>App: LogBridge.message.emit(level, text)（queued 投递）
+    App->>L: 渲染高亮日志（maximumBlockCount 自动裁剪 2000 行）
+
+    U->>App: 点击「停止」
+    App->>W: request_stop()（stop_event.set()）
+    W->>W: 本轮结束，退出循环
+    W-->>App: run() 返回
+    App->>W: wait(CLOSE_JOIN_TIMEOUT=5s)
+
+    Note over App: 关闭窗口
+    U->>App: 点击关闭（WM_DELETE）
+    App->>App: closeEvent → request_stop + wait(5s) → accept
+    App->>App: 保存配置（secure.encrypt_text → fernet1:）

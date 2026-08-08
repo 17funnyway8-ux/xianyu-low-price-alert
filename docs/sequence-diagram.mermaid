@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant U as 用户
+    participant G as XianyuAlertGUI
+    participant S as secure.py
+    participant C as cookie.py
+    participant F as MtopFetcher
+    participant M as Monitor
+
+    U->>G: 双击启动 / 打开窗口
+    G->>G: 加载 config.yaml（含 dpapi1: 密文）
+    G->>S: decrypt_text(cipher)
+    S-->>G: 明文 Cookie 或 空+警告
+    G->>G: cookie_status 五态灯渲染（过期→红）
+    G->>M: preflight_cookie()（可选，启动/开始监控前）
+    M-->>G: 过期 → warning 日志「Cookie 已过期，请重新登录」
+    U->>G: 粘贴新 Cookie → 保存
+    G->>S: encrypt_text(plain) → dpapi1:base64
+    G->>G: save_raw_config（密文落盘）

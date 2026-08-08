@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  闲鱼低价提醒工具 · LaunchAgent 模板（可选开机自启 + 崩溃拉起）
+
+  这是给用户查看/手动安装的说明模板；实际安装请用一键脚本：
+      bash scripts/install_launchagent.sh
+      bash scripts/uninstall_launchagent.sh
+
+  手动安装步骤（不推荐，脚本已封装）：
+    1. 把本文件复制为 ~/Library/LaunchAgents/com.xianyu-alert.gui.plist；
+    2. 把 __APP_PATH__ 替换为 .app 绝对路径，__HOME__ 替换为你的主目录；
+    3. 执行：
+         launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.xianyu-alert.gui.plist
+    4. 卸载：
+         launchctl bootout "gui/$(id -u)/com.xianyu-alert.gui"
+
+  语义：
+    - RunAtLoad：登录后自动启动；
+    - KeepAlive SuccessfulExit=false：崩溃自动拉起，手动退出不反复拉起；
+    - NSAppSleepDisabled 已随 .app 的 Info.plist 下发（防 App Nap）；
+    - XY_DATA_DIR 可选覆盖数据目录（默认 ~/Library/Application Support/闲鱼低价提醒工具/）。
+-->
+<dict>
+    <key>Label</key>
+    <string>com.xianyu-alert.gui</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__APP_PATH__/Contents/MacOS/闲鱼低价提醒工具</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>XY_DATA_DIR</key>
+        <string>__HOME__/Library/Application Support/闲鱼低价提醒工具</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/xianyu-alert/launchagent.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/xianyu-alert/launchagent.err.log</string>
+</dict>
+</plist>

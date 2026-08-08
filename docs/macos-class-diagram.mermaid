@@ -1,0 +1,76 @@
+classDiagram
+    class XianyuAlertQtApp {
+        +QMainWindow
+        -worker: MonitorWorker
+        -tick_timer: QTimer
+        -tab_config: MonitorConfigTab
+        -tab_notify: NotifyConfigTab
+        -tab_run: RunMonitorTab
+        +__init__(config_path)
+        +_build_menu_bar()
+        +_build_tabs()
+        +_handle_ui_message(kind, payload)
+        +on_start()
+        +on_stop()
+        +on_run_once()
+        +closeEvent(event)
+    }
+    class MonitorWorker {
+        +QThread
+        +ui_message: Signal(str, object)
+        -stop_event: Event
+        +request_stop()
+        +run()
+    }
+    class QtLogHandler {
+        +logging.Handler
+        -bridge: LogBridge
+        +emit(record)
+    }
+    class LogBridge {
+        +QObject
+        +message: Signal(str, str)
+    }
+    class LogView {
+        +QPlainTextEdit
+        +append_log(level, text)
+        +set_font_size(delta)
+        +clear_log()
+    }
+    class MonitorConfigTab {
+        +QWidget
+        +build_form()
+        +collect_config() dict
+    }
+    class NotifyConfigTab {
+        +QWidget
+        +build_channels()
+        +collect_config() dict
+    }
+    class RunMonitorTab {
+        +QWidget
+        +refresh_status()
+        +append_alert(record)
+    }
+    class secure {
+        +encrypt_text(plain) str
+        +decrypt_text(cipher) str
+        +is_encrypted(cookie) bool
+        +mask_cookie(cookie) str
+    }
+    class paths {
+        +data_dir() str
+        +ensure_data_dir()
+        +default_config_path() str
+        +resolve_data_path(rel) str
+    }
+    XianyuAlertQtApp --> MonitorWorker
+    XianyuAlertQtApp --> QtLogHandler
+    XianyuAlertQtApp --> MonitorConfigTab
+    XianyuAlertQtApp --> NotifyConfigTab
+    XianyuAlertQtApp --> RunMonitorTab
+    MonitorWorker --> ui_message
+    QtLogHandler --> LogBridge
+    LogBridge --> LogView
+    MonitorConfigTab --> secure
+    XianyuAlertQtApp --> paths

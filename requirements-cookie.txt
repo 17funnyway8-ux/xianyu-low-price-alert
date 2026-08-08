@@ -1,0 +1,8 @@
+# Cookie 半自动获取（cli login 浏览器模式）的可选依赖。
+# 不装也不影响主程序运行：login 会自动降级为手动粘贴模式，
+# 也可以用 `login --cookie-string "..."` 脚本模式直接存盘。
+#
+# 安装步骤（两步都要执行）：
+#   pip install -r requirements-cookie.txt
+#   playwright install chromium
+playwright>=1.40.0

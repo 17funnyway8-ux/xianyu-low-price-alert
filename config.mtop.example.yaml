@@ -1,0 +1,49 @@
+# ===========================================================
+# 闲鱼低价提醒工具 —— 真实抓取（mtop）配置模板
+#
+# 使用步骤：
+#   1. 复制本文件为 config.yaml（或用 --config 指定本文件）
+#   2. 获取登录 Cookie（二选一）：
+#        python -m xianyu_alert.cli login --config config.mtop.example.yaml
+#      或在图形界面「监控配置」页点击「获取 Cookie」
+#   3. 验证：
+#        python -m xianyu_alert.cli once --config config.mtop.example.yaml
+#   4. 长期运行：
+#        python -m xianyu_alert.cli run  --config config.mtop.example.yaml
+#
+# ⚠️ 重要提示
+#   - mtop 是**唯一能真正抓到闲鱼数据**的方式，必须携带含 _m_h5_tk 的登录 Cookie；
+#   - 匿名请求会被风控直接拦截（返回「哎哟喂,被挤爆啦」），且不下发 _m_h5_tk；
+#   - interval_seconds 建议 **600 秒以上**（v3.2 默认 600），过于频繁必然触发风控。
+# ===========================================================
+
+# ---------- 1. 关键词 + 价格阈值 ----------
+keywords:
+  - keyword: "Switch"
+    max_price: 800          # 仅当价格 < 800 元时提醒
+  - keyword: "iPad mini"
+    max_price: 1500
+
+# ---------- 2. 监测循环 ----------
+monitor:
+  interval_seconds: 600     # 建议 600~900 秒，切勿过短
+  user_agent: ""            # 留空使用内置浏览器 UA
+  # 登录 Cookie（必填！形如 "cookie2=xxx; _m_h5_tk=yyy_1700000000000; ..."）
+  # 请用 `cli login` 或图形界面「获取 Cookie」自动写入，不要手工编造。
+  cookies: ""
+
+# ---------- 3. 抓取器 ----------
+fetcher:
+  type: "mtop"              # mtop = 真实抓取闲鱼（推荐）
+  page_size: 30             # 每次搜索拉取的商品条数（1~100）
+
+# ---------- 4. 去重存储 ----------
+storage:
+  path: "state/xianyu_mtop.db"
+
+# ---------- 5. 通知通道 ----------
+notify:
+  channels:
+    - type: "console"
+    # - type: "serverchan"
+    #   sendkey: "SCTxxxxxxxxxxxxxxxx"

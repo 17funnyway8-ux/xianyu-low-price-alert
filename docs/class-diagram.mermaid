@@ -1,0 +1,64 @@
+classDiagram
+    class paths {
+        +is_frozen() bool
+        +app_base_dir() str
+        +resource_path(rel) str
+        +default_config_path() str
+        +resolve_data_path(rel) str
+        +default_state_dir() str
+    }
+    class secure {
+        +encrypt_text(plain) str
+        +decrypt_text(cipher) str
+        +mask_cookie(cookie) str
+        +is_encrypted(cookie) bool
+    }
+    class shortcut {
+        +create_desktop_shortcut(target, args, workdir, icon) Optional[str]
+    }
+    class Fetcher {
+        <<abstract>>
+        +fetch(keyword) List[Product]
+        +close()
+    }
+    class MtopFetcher {
+        +pages: int
+        +page_sleep: float
+        +fetch(keyword) List[Product]
+        +_search(keyword, page_number) Dict
+    }
+    class Notifier {
+        <<abstract>>
+        +name: str
+        +notify(products) None
+        +safe_notify(products) bool
+    }
+    class BarkNotifier {
+        +url: str
+        +notify(products) None
+    }
+    class WebhookNotifier {
+        +url: str
+        +notify(products) None
+    }
+    class Config {
+        +keywords: List[KeywordRule]
+        +monitor: MonitorConfig
+        +fetcher: FetcherConfig
+        +storage: StorageConfig
+        +notify: NotifyConfig
+    }
+    class FetcherConfig {
+        +type: str
+        +pages: int
+        +page_size: int
+    }
+    class MonitorConfig {
+        +interval_seconds: int
+        +cookies: str
+    }
+    Fetcher <|-- MtopFetcher
+    Notifier <|-- BarkNotifier
+    Notifier <|-- WebhookNotifier
+    Config --> FetcherConfig
+    Config --> MonitorConfig

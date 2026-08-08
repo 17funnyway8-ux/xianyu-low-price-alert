@@ -1,0 +1,27 @@
+# 运行产物
+state/
+*.db
+
+# 安全：Cookie 加密密钥（绝对不允许提交）
+secret.key
+
+# ⚠️ 本地配置文件含真实登录 Cookie（等同账号凭据），严禁提交
+# 仓库内请使用 config.example.yaml 作为模板
+config.yaml
+
+# 个人工作区数据（记忆日志、QA 临时文件）
+.workbuddy/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 打包产物（spec 文件作为源码保留在 build/ 下，只忽略 PyInstaller 中间目录与 dist/）
+dist/
+build/*/
+
+# 逆向分析中间产物（解包出的 150MB+ 二进制文件，非项目源码）
+re_analysis/extracted/

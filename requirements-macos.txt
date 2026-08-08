@@ -1,0 +1,4 @@
+# macOS 专用依赖（在 M4 Mac 上构建 / 运行时安装）
+# 安装：pip install -r requirements-macos.txt
+# PySide6>=6.6 提供 Qt for macOS 原生观感（QMacStyle / 原生菜单栏 / Retina / 深色模式）
+PySide6>=6.6

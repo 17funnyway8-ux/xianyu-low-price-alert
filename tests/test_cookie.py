@@ -1,0 +1,251 @@
+"""cookie 模块单元测试：纯函数 + 配置写回 + Playwright 缺失降级。
+
+不真跑 Playwright；相关路径用 mock 模拟。
+"""
+
+from __future__ import annotations
+
+import io
+import os
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from unittest import mock
+
+import yaml
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from xianyu_alert import cli  # noqa: E402
+from xianyu_alert.cookie import (  # noqa: E402
+    PlaywrightUnavailable,
+    acquire_via_playwright,
+    acquire_via_prompt,
+    build_cookie_header,
+    save_cookies_to_config,
+)
+
+SAMPLE_CONFIG = {
+    "keywords": [{"keyword": "Switch", "max_price": 1000}],
+    "monitor": {"interval_seconds": 60, "user_agent": "", "cookies": ""},
+    "fetcher": {"type": "mock"},
+    "storage": {"path": "state/xianyu_alert.db"},
+    "notify": {"channels": [{"type": "console"}]},
+}
+
+
+def _write_yaml(path: str, data: dict) -> None:
+    with open(path, "w", encoding="utf-8") as fp:
+        yaml.safe_dump(data, fp, allow_unicode=True, sort_keys=False)
+
+
+def _read_yaml(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as fp:
+        return yaml.safe_load(fp)
+
+
+class TestBuildCookieHeader(unittest.TestCase):
+    """build_cookie_header 纯函数测试。"""
+
+    def test_basic(self) -> None:
+        cookies = [
+            {"name": "_m_h5_tk", "value": "abc"},
+            {"name": "cookie2", "value": "xyz"},
+        ]
+        self.assertEqual(build_cookie_header(cookies), "_m_h5_tk=abc; cookie2=xyz")
+
+    def test_empty_list(self) -> None:
+        self.assertEqual(build_cookie_header([]), "")
+        self.assertEqual(build_cookie_header(None), "")  # type: ignore[arg-type]
+
+    def test_skips_invalid_entries(self) -> None:
+        cookies = [
+            {"name": "a", "value": "1", "domain": ".goofish.com", "path": "/"},
+            {"value": "no-name"},          # 缺 name，应跳过
+            {"name": "", "value": "x"},    # 空 name，应跳过
+            "not-a-dict",                  # 非 dict，应跳过
+            {"name": "b"},                 # 缺 value，按空值处理
+        ]
+        self.assertEqual(build_cookie_header(cookies), "a=1; b=")
+
+
+class TestSaveCookiesToConfig(unittest.TestCase):
+    """save_cookies_to_config 写回测试（临时 YAML 文件）。"""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.config_path = os.path.join(self.tmpdir.name, "config.yaml")
+        _write_yaml(self.config_path, SAMPLE_CONFIG)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_updates_cookies_and_preserves_other_fields(self) -> None:
+        save_cookies_to_config(self.config_path, "_m_h5_tk=test123; cookie2=val")
+        data = _read_yaml(self.config_path)
+
+        # monitor.cookies 已更新
+        self.assertEqual(data["monitor"]["cookies"], "_m_h5_tk=test123; cookie2=val")
+        # 其它字段全部保留
+        self.assertEqual(data["keywords"], SAMPLE_CONFIG["keywords"])
+        self.assertEqual(data["monitor"]["interval_seconds"], 60)
+        self.assertEqual(data["fetcher"], SAMPLE_CONFIG["fetcher"])
+        self.assertEqual(data["storage"], SAMPLE_CONFIG["storage"])
+        self.assertEqual(data["notify"], SAMPLE_CONFIG["notify"])
+
+    def test_strips_whitespace(self) -> None:
+        save_cookies_to_config(self.config_path, "  a=1; b=2  ")
+        self.assertEqual(_read_yaml(self.config_path)["monitor"]["cookies"], "a=1; b=2")
+
+    def test_empty_cookie_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            save_cookies_to_config(self.config_path, "   ")
+
+    def test_missing_monitor_section_created(self) -> None:
+        """原文件没有 monitor 节点时应自动创建。"""
+        _write_yaml(self.config_path, {"keywords": SAMPLE_CONFIG["keywords"]})
+        save_cookies_to_config(self.config_path, "a=1")
+        data = _read_yaml(self.config_path)
+        self.assertEqual(data["monitor"]["cookies"], "a=1")
+        self.assertEqual(data["keywords"], SAMPLE_CONFIG["keywords"])
+
+    def test_missing_file_creates_new(self) -> None:
+        """配置文件不存在时应新建仅含 monitor.cookies 的文件。"""
+        new_path = os.path.join(self.tmpdir.name, "new.yaml")
+        save_cookies_to_config(new_path, "a=1")
+        self.assertEqual(_read_yaml(new_path), {"monitor": {"cookies": "a=1"}})
+
+    def test_result_loadable_by_load_config(self) -> None:
+        """写回后的文件应仍能被 config.load_config 正常加载。"""
+        from xianyu_alert.config import load_config
+
+        save_cookies_to_config(self.config_path, "_m_h5_tk=tk; cookie2=c2")
+        config = load_config(self.config_path)
+        self.assertEqual(config.monitor.cookies, "_m_h5_tk=tk; cookie2=c2")
+        self.assertEqual(config.keywords[0].keyword, "Switch")
+
+
+class TestAcquireViaPrompt(unittest.TestCase):
+    """acquire_via_prompt 交互测试（mock input）。"""
+
+    @mock.patch("builtins.input", return_value="  _m_h5_tk=abc; cookie2=x  ")
+    def test_returns_stripped_input(self, _mock_input: mock.MagicMock) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            result = acquire_via_prompt()
+        self.assertEqual(result, "_m_h5_tk=abc; cookie2=x")
+
+    @mock.patch("builtins.input", return_value="   ")
+    def test_empty_input_raises(self, _mock_input: mock.MagicMock) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), self.assertRaises(ValueError):
+            acquire_via_prompt()
+
+    @mock.patch("builtins.input", return_value="cookie2=only")
+    def test_missing_key_cookie_warns_but_accepts(self, _mock_input: mock.MagicMock) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), self.assertLogs("xianyu_alert.cookie", level="WARNING"):
+            result = acquire_via_prompt()
+        self.assertEqual(result, "cookie2=only")
+
+
+class TestAcquireViaPlaywright(unittest.TestCase):
+    """acquire_via_playwright 的 import 降级测试（不真跑浏览器）。"""
+
+    def test_raises_playwright_unavailable_when_missing(self) -> None:
+        """模拟 playwright 未安装：应抛 PlaywrightUnavailable 且提示安装命令。"""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object):
+            if name.startswith("playwright"):
+                raise ImportError("No module named 'playwright'")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=fake_import):
+            with self.assertRaises(PlaywrightUnavailable) as ctx:
+                acquire_via_playwright(timeout=1)
+        self.assertIn("pip install playwright", str(ctx.exception))
+        self.assertIn("playwright install chromium", str(ctx.exception))
+
+
+class TestCliLogin(unittest.TestCase):
+    """cli login 子命令端到端测试（不触网、不开浏览器）。"""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.config_path = os.path.join(self.tmpdir.name, "config.yaml")
+        _write_yaml(self.config_path, SAMPLE_CONFIG)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_login_with_cookie_string(self) -> None:
+        """脚本模式：--cookie-string 直接存盘。"""
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = cli.main(
+                ["login", "--config", self.config_path, "--cookie-string", "_m_h5_tk=t; c=1"]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(_read_yaml(self.config_path)["monitor"]["cookies"], "_m_h5_tk=t; c=1")
+        self.assertIn("已写入", buffer.getvalue())
+
+    def test_login_with_empty_cookie_string_fails(self) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = cli.main(["login", "--config", self.config_path, "--cookie-string", "  "])
+        self.assertEqual(code, 2)
+        self.assertEqual(_read_yaml(self.config_path)["monitor"]["cookies"], "")
+
+    @mock.patch("xianyu_alert.cli.acquire_via_playwright")
+    def test_login_playwright_success(self, mock_acquire: mock.MagicMock) -> None:
+        """半自动模式：playwright 成功返回 Cookie 时应写盘。"""
+        mock_acquire.return_value = "_m_h5_tk=auto; cookie2=pw"
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = cli.main(["login", "--config", self.config_path])
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            _read_yaml(self.config_path)["monitor"]["cookies"], "_m_h5_tk=auto; cookie2=pw"
+        )
+        self.assertIn("_m_h5_tk", buffer.getvalue())
+
+    @mock.patch("xianyu_alert.cli.acquire_via_prompt")
+    @mock.patch("xianyu_alert.cli.acquire_via_playwright")
+    def test_login_fallback_to_prompt(
+        self, mock_acquire: mock.MagicMock, mock_prompt: mock.MagicMock
+    ) -> None:
+        """playwright 缺失时应打印安装提示并降级到粘贴模式。"""
+        mock_acquire.side_effect = PlaywrightUnavailable(
+            "未安装 Playwright。请先执行：pip install playwright / playwright install chromium"
+        )
+        mock_prompt.return_value = "_m_h5_tk=pasted"
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = cli.main(["login", "--config", self.config_path])
+
+        self.assertEqual(code, 0)
+        output = buffer.getvalue()
+        self.assertIn("pip install playwright", output)
+        self.assertIn("手动粘贴", output)
+        self.assertEqual(_read_yaml(self.config_path)["monitor"]["cookies"], "_m_h5_tk=pasted")
+
+    @mock.patch("xianyu_alert.cli.acquire_via_playwright")
+    def test_login_timeout_returns_nonzero(self, mock_acquire: mock.MagicMock) -> None:
+        """登录超时应返回非 0 退出码且不改配置。"""
+        from xianyu_alert.cookie import LoginTimeout
+
+        mock_acquire.side_effect = LoginTimeout("登录超时，请重试或改用手动模式")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = cli.main(["login", "--config", self.config_path])
+        self.assertEqual(code, 3)
+        self.assertEqual(_read_yaml(self.config_path)["monitor"]["cookies"], "")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()

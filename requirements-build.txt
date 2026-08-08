@@ -1,0 +1,9 @@
+# ===========================================================
+# 构建期依赖（仅打包 exe 时需要，运行时不依赖）
+# 安装：pip install -r requirements-build.txt
+# 然后：pyinstaller build/闲鱼低价提醒工具.spec
+# ===========================================================
+pyinstaller>=6.0
+# macOS 图标生成依赖（build/make_icns.py 用 Pillow 从 icon.ico 生成
+# iconset PNG / icns；macos_build.sh 在生成 icon.icns 前自动安装，Bug #1）
+pillow>=10.0

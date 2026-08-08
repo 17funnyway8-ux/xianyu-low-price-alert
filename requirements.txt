@@ -1,0 +1,8 @@
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+PyYAML>=6.0
+# Cookie 跨平台加密（Fernet；macOS 适配必需，全平台 runtime 依赖）
+cryptography>=42.0
+# macOS 端 GUI（PySide6 仅 darwin 必需，Windows/Linux 走 Tkinter 无需安装）。
+# 正式安装请使用：pip install -r requirements-macos.txt
+# PySide6>=6.6

@@ -1,0 +1,124 @@
+# ===========================================================
+# 闲鱼低价提醒工具 —— 配置模板
+# 复制为 config.yaml 后按需修改
+# ===========================================================
+
+# ---------- 0. 预置排除词（v3.5，可选）----------
+# GUI 添加新关键词时，会自动把下面这份「预置排除词模板」写入该关键词的
+# exclude_keywords（回收商 / 置换商典型噪音词）。可在 GUI「编辑预置排除词」
+# 弹窗中增删（每行一个），保存后写回本字段；缺省使用内置默认值：
+#   回收 / 置换 / 收购 / 高价回收 / 收
+# 显式配置为空列表 [] = 关闭自动预置（添加新关键词时不再自动带排除词）。
+preset_exclude_keywords:
+  - "回收"
+  - "置换"
+  - "收购"
+  - "高价回收"
+  - "收"
+
+# ---------- 1. 关键词 + 价格阈值 ----------
+# 可配置多个关键词；仅当「商品价格 < max_price」时才触发提醒
+keywords:
+  - keyword: "Switch"       # 搜索关键词（匹配商品标题/描述）
+    max_price: 1000         # 价格阈值（元），低于此价才提醒
+    # enabled: true         # v3.7（可选）：是否启用该关键词。缺省 true；
+    #                       #   停用（false）= 临时不监控（monitor 不抓取、不提醒），
+    #                       #   但配置与过滤规则保留，GUI 中仍可见可编辑，随时可再启用。
+    # --- v3.1 关键词过滤（可选；v3.3 起 GUI 添加关键词时自动预置排除词、必含词留空）---
+    # exclude_keywords:      # 排除词：标题命中**任一**即跳过该商品（子串匹配，大小写不敏感）
+    #   - "回收"             #   GUI 添加新关键词时**自动预置**上方 preset_exclude_keywords
+    #   - "置换"             #   的列表（v3.5 起可在 GUI「编辑预置排除词」中定制）：
+    #   - "收购"             #     回收 / 置换 / 收购 / 高价回收 / 收
+    #   - "高价回收"
+    #   - "收"
+    # required_keywords:     # 必含词：标题必须**全部包含**；留空列表 [] = 不强制（等同关闭）
+    #   - "16G"              #   v3.3 起 GUI 添加关键词时**必含词留空**，由用户自行填写；
+    #                        #   未显式配置该字段时，config 解析层仍会按旧行为
+    #                        #   从主关键词自动提取「数字+单位」片段（16G / DDR4 / 3200 / 8GB）
+    #                        #   作为默认必含词，若自动提取过严可在 GUI 编辑弹窗手动删除。
+    # 典型用法示例（防金百达/回收商混入）：
+    # - keyword: "光威 笔记本DDR4 3200 16G"
+    #   max_price: 300
+    #   exclude_keywords: ["回收", "置换", "收购", "高价回收", "收"]
+    #   required_keywords: ["16G", "DDR4", "3200"]
+  - keyword: "iPhone"
+    max_price: 1500
+
+# ---------- 2. 监测循环 ----------
+monitor:
+  interval_seconds: 600     # 监测间隔（秒）。v3.2 起默认 600（10 分钟）；生产建议 600~900，过短易触发风控
+  # 浏览器 UA，留空使用内置默认值
+  user_agent: ""
+  # 闲鱼登录态 Cookie（形如 "cookie2=xxx; _m_h5_tk=yyy_1700000000000"）。
+  # 使用 mtop 抓取时**必填**：匿名请求必定被风控拦截，拿不到任何商品数据。
+  # 请用 `python -m xianyu_alert.cli login` 或图形界面「Cookie 管理」→「如何获取 Cookie？」手动步骤填写。
+  # v3 起 GUI 保存会以 DPAPI 密文（dpapi1: 前缀）落盘，加载时自动解密；
+  # 明文也兼容（向后兼容），但建议加密。
+  cookies: ""
+  # cookies_encrypted: false   # 是否已加密（由保存路径自动维护，一般无需手改）
+
+  # --- v3.2 多账号 Cookie 池（可选）---
+  # 可配置多个闲鱼账号 Cookie，监控时**按轮次轮换取用**（分摊风控）。
+  # 池优先、单值兜底：池中启用条目非空时使用池；池为空时回退上方 cookies 字段。
+  # cookie 字段同样支持 DPAPI 密文（GUI「Cookie 管理」对话框保存时自动加密）。
+  # cookie_pool:
+  #   - name: "主账号"        # 用户自定义标识，仅用于区分
+  #     cookie: "cookie2=xxx; _m_h5_tk=yyy_1700000000000"
+  #     enabled: true          # false = 停用（不参与轮换）
+  #   - name: "小号1"
+  #     cookie: "dpapi1:AQAAANCMnd8BFdERjHoAwE/Cl+sB..."
+  #     enabled: true
+
+# ---------- 3. 抓取器 ----------
+# type 可选：
+#   mtop ★推荐（默认）= 走闲鱼 h5api mtop 接口，**唯一能真正抓到数据**的方式，需登录 Cookie
+#   mock       = 开发演示用，离线确定性假数据，无需网络与登录
+#   web        = 旧版 HTML 解析（已废弃）。闲鱼搜索结果由 JS 异步渲染，**实测抓到 0 个商品**，
+#                仅作为通用 HTML 站点的示例实现保留；GUI 与推荐配置不再展示
+fetcher:
+  type: "mtop"
+  page_size: 30                # 仅 mtop 生效：每次搜索拉取的商品条数（1~100）
+  pages: 1                     # 仅 mtop 生效：多页抓取总页数（默认 1 不改变现状）。
+                               #   翻页会增加请求频率、提高风控概率，建议配合 300s+ 间隔使用
+  page_sleep: 2.0              # 仅 mtop 生效：翻页之间的限速秒数
+  mock_products_per_round: 5   # 仅 mock 生效：每轮生成多少个商品
+  mock_fail_rounds: []         # 仅 mock 生效：指定哪些轮次模拟抓取失败，如 [3]
+
+# ---------- 4. 去重存储 ----------
+storage:
+  path: "state/xianyu_alert.db"   # SQLite 文件路径，目录会自动创建
+
+# ---------- 5. 通知通道（可配置多个，逐个发送） ----------
+notify:
+  channels:
+    - type: "console"       # 控制台输出，永远可用
+
+    # --- Server酱（微信推送） ---
+    # - type: "serverchan"
+    #   sendkey: "SCTxxxxxxxxxxxxxxxx"
+
+    # --- 邮件（SMTP） ---
+    # - type: "email"
+    #   smtp_host: "smtp.qq.com"
+    #   smtp_port: 465          # 465=SSL，587=STARTTLS
+    #   username: "you@qq.com"
+    #   password: "授权码"
+    #   to: "target@example.com"   # 多个收件人用英文逗号分隔
+    #   use_tls: true
+    #   use_ssl: false           # 端口 465 时会自动启用 SSL
+
+    # --- Telegram Bot ---
+    # - type: "telegram"
+    #   bot_token: "123456:ABC-DEF..."
+    #   chat_id: "123456789"
+
+    # --- Bark（iOS 推送）---
+    # 语义：GET {url}/{quote(msg)}；url 末尾可带斜杠
+    # - type: "bark"
+    #   url: "https://api.day.app/YourKey/"
+
+    # --- 企业微信机器人（Webhook）---
+    # v3.3 起通道明确为「企业微信机器人」：在企业微信群 →「添加群机器人」→ 复制 Webhook 地址
+    # 语义：POST JSON {"msgtype":"text","text":{"content":msg}}（自动带 Content-Type: application/json）
+    # - type: "webhook"
+    #   url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
