@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -360,6 +362,76 @@ def save_cookies_validated(config_path: str, cookie_str: str) -> None:
     if state != HEALTH_OK:
         raise ValueError(f"Cookie 无效（{state}）：{reason}，未保存任何改动。")
     save_cookies_to_config(config_path, cookie_str)
+
+
+def save_cookies_validated_encrypted(config_path: str, cookie_str: str) -> None:
+    """校验后**加密**保存：`detect_cookie_health` 非 `ok` → 抛 ValueError 且**不落盘**。
+
+    与 `save_cookies_validated` 的区别（设计 §4.2 / 共享知识 7「不允许存在明文
+    持久化路径」）：
+        - 流程为「校验（不落盘）→ 内存 `encrypt_text` → **单次原子写盘**」，
+          Cookie 明文只存在于内存，**磁盘上不存在明文持久化窗口**；
+        - 加密不可用（cryptography 缺失 / 密钥失败 / `encrypt_text` 降级返回明文）
+          → 抛 ValueError 拒绝保存，**绝不降级明文落盘**（与 `save_cookies_encrypted`
+          的降级语义刻意不同，供 Web 粘贴路径使用）；
+        - 写盘用「同目录临时文件 + `os.replace`」原子替换：进程中途被 kill
+          也不会留下半截文件或明文内容。
+
+    v1.8 兼容性：与 `save_cookies_validated` 共用同一校验函数 `detect_cookie_health`，
+    无时间戳的 `_m_h5_tk=t` 历史样本仍判定 `ok` 可保存（旧测试不破）；CLI login
+    路径（`save_cookies_validated`）语义不变。
+
+    Args:
+        config_path: 配置文件路径。
+        cookie_str: Cookie 请求头字符串（明文）。
+
+    Raises:
+        ValueError: cookie 为空 / 校验非 `ok` / 加密不可用（含中文原因文案）。
+        OSError: 文件读写失败。
+        yaml.YAMLError: 原文件 YAML 语法错误。
+    """
+    cookie_str = str(cookie_str or "").strip()
+    state, reason = detect_cookie_health(cookie_str)
+    if state != HEALTH_OK:
+        raise ValueError(f"Cookie 无效（{state}）：{reason}，未保存任何改动。")
+    # 内存加密（绝不先写明文）：加密降级返回明文时视为不可用，拒绝保存
+    cipher = secure.encrypt_text(cookie_str)
+    if not secure.is_encrypted(cipher):
+        raise ValueError("Cookie 加密不可用（Fernet 密钥缺失或不可用），未保存任何改动，请检查安装。")
+
+    # 读取现有配置（文件不存在时从空结构开始），仅更新 monitor.cookies 字段
+    data: Dict[str, Any] = {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as fp:
+            loaded = yaml.safe_load(fp)
+        if isinstance(loaded, dict):
+            data = loaded
+    except FileNotFoundError:
+        logger.warning("配置文件 %s 不存在，将创建新文件", config_path)
+
+    monitor = data.get("monitor")
+    if not isinstance(monitor, dict):
+        monitor = {}
+    monitor["cookies"] = cipher
+    monitor["cookies_encrypted"] = True
+    data["monitor"] = monitor
+
+    # 单次原子写盘：同目录临时文件 + os.replace
+    parent = os.path.dirname(os.path.abspath(config_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=parent or ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            yaml.safe_dump(data, fp, allow_unicode=True, sort_keys=False, default_flow_style=False)
+        os.replace(tmp_path, config_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    logger.info("已把 Cookie 加密写入 %s 的 monitor.cookies（fernet1: 密文）", config_path)
 
 
 def save_cookies_encrypted(config_path: str, cookie_str: str) -> None:

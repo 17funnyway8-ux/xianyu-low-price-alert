@@ -319,6 +319,123 @@ class TestSaveCookiesValidated(unittest.TestCase):
             save_cookies_validated(self.config_path, "   ")
 
 
+class TestSaveCookiesValidatedEncrypted(unittest.TestCase):
+    """v1.8 Web：save_cookies_validated_encrypted 校验 → 内存加密 → 单次原子写盘。
+
+    QA FINDING-1 回归：磁盘上**不存在明文持久化窗口**——加密不可用 / 失败时
+    config.yaml 保持原样，绝不写明文（设计 §4.2 / 共享知识 7）。
+    """
+
+    def setUp(self) -> None:
+        from xianyu_alert import secure
+
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.config_path = os.path.join(self.tmpdir.name, "config.yaml")
+        _write_yaml(self.config_path, SAMPLE_CONFIG)
+        # 独立密钥文件，避免触碰默认 data_dir 的密钥
+        secure.set_key_file(os.path.join(self.tmpdir.name, "secret.key"))
+
+    def tearDown(self) -> None:
+        from xianyu_alert import secure
+
+        secure.set_key_file(None)
+        self.tmpdir.cleanup()
+
+    def _load(self) -> dict:
+        return _read_yaml(self.config_path)
+
+    def test_valid_cookie_saves_encrypted(self) -> None:
+        """无时间戳 `_m_h5_tk=t`（历史样本）按 ok 处理 → fernet1: 密文落盘且无明文。"""
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
+        data = self._load()
+        cookies = str(data["monitor"]["cookies"])
+        self.assertTrue(cookies.startswith("fernet1:"))
+        self.assertTrue(data["monitor"]["cookies_encrypted"])
+        raw = open(self.config_path, "r", encoding="utf-8").read()
+        self.assertNotIn("_m_h5_tk=t; c=1", raw.replace("fernet1:", ""))
+
+    def test_valid_cookie_with_timestamp_saves_encrypted(self) -> None:
+        """带当前时间戳的 Cookie → fernet1: 密文落盘。"""
+        import time as _time
+
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        cookie = f"_m_h5_tk=abc_{int(_time.time() * 1000)}; cookie2=xyz"
+        save_cookies_validated_encrypted(self.config_path, cookie)
+        cookies = str(self._load()["monitor"]["cookies"])
+        self.assertTrue(cookies.startswith("fernet1:"))
+        self.assertNotIn(cookie, open(self.config_path, "r", encoding="utf-8").read())
+
+    def test_expired_cookie_rejected_and_not_saved(self) -> None:
+        """过期 Cookie → ValueError 且 config 不变。"""
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        before = self._load()
+        with self.assertRaises(ValueError) as ctx:
+            save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=abc_1000000000000; c=1")
+        self.assertIn("已过期", str(ctx.exception))
+        self.assertEqual(self._load(), before)
+
+    def test_no_token_cookie_rejected_and_not_saved(self) -> None:
+        """缺 _m_h5_tk → ValueError 且 config 不变。"""
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        before = self._load()
+        with self.assertRaises(ValueError) as ctx:
+            save_cookies_validated_encrypted(self.config_path, "cookie2=only")
+        self.assertIn("缺少", str(ctx.exception))
+        self.assertEqual(self._load(), before)
+
+    def test_empty_cookie_rejected(self) -> None:
+        """空串 → ValueError（missing）。"""
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        with self.assertRaises(ValueError):
+            save_cookies_validated_encrypted(self.config_path, "   ")
+
+    def test_encrypt_degraded_rejected_no_plaintext(self) -> None:
+        """加密降级返回明文（cryptography 缺失）→ ValueError 拒绝保存，config 不变。"""
+        from xianyu_alert import secure
+
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        before = self._load()
+        with mock.patch.object(
+            secure, "encrypt_text", return_value="_m_h5_tk=t; c=1"
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
+        self.assertIn("加密不可用", str(ctx.exception))
+        self.assertEqual(self._load(), before)
+
+    def test_encrypt_exception_no_write(self) -> None:
+        """encrypt_text 抛异常（IO 级故障）→ 异常上抛，config 不变（无明文残留）。"""
+        from xianyu_alert import secure
+
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        before = self._load()
+        with mock.patch.object(
+            secure, "encrypt_text", side_effect=OSError("encrypt boom")
+        ):
+            with self.assertRaises(OSError):
+                save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
+        self.assertEqual(self._load(), before)
+
+    def test_preserves_other_fields(self) -> None:
+        """仅更新 monitor.cookies / cookies_encrypted，其余字段保留。"""
+        from xianyu_alert.cookie import save_cookies_validated_encrypted
+
+        save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
+        data = self._load()
+        self.assertEqual(data["keywords"], SAMPLE_CONFIG["keywords"])
+        self.assertEqual(data["fetcher"], SAMPLE_CONFIG["fetcher"])
+        self.assertEqual(data["notify"], SAMPLE_CONFIG["notify"])
+        self.assertEqual(data["monitor"]["interval_seconds"], 60)
+
+
 class TestCliLogin(unittest.TestCase):
     """cli login 子命令端到端测试（不触网、不开浏览器）。"""
 

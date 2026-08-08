@@ -1,36 +1,24 @@
 # ===========================================================
-# 闲鱼低价提醒工具 —— docker-compose.yml（P0 容器 POC 最小版）
+# 闲鱼低价提醒工具 —— docker-compose.yml（P1：Web 基础版常驻服务）
 # ===========================================================
-# P0 语义：一次性命令容器（非常驻服务），验证「业务核心在容器内可跑」。
+# P1 语义：常驻 Web 服务（FastAPI :8080 + monitor 后台线程）。
 #
 # ⚠️ 项目名提示：若项目目录名含中文/空格/非 ASCII，docker compose 会报
 #    `project name must not be empty`，必须在命令中显式指定项目名：
 #      docker compose -p xianyu-alert <子命令>
-#    本文档下方所有命令均已带 -p xianyu-alert，请照抄。
 #
-# P0 验证用法（在有 Docker 的主机上，于项目根目录执行）：
-#   service 已设 entrypoint: ["python", "-m", "xianyu_alert.cli"]，
-#   因此 run 后面直接跟 CLI 子命令（once / cookie status / list …），
-#   无需再写 python -m xianyu_alert.cli 前缀。
+# 常用命令：
+#   docker compose -p xianyu-alert up -d --build     # 启动常驻 Web
+#   curl http://127.0.0.1:8080/healthz               # 健康检查
+#   docker compose -p xianyu-alert logs -f           # 查看容器日志
+#   docker compose -p xianyu-alert down              # 停止（SIGTERM 优雅退出）
 #
-#   # 1) mock 离线抓取一轮（无需 Cookie / 网络，验证业务核心 + SQLite 落盘）
-#   docker compose -p xianyu-alert run --rm xianyu-alert once --config config.poc.yaml
-#
-#   # 2) Cookie 健康巡检（只检测不写入，脱敏回显，适合脚本/ssh）
+# 容器内 CLI 调试（Web 运行中不可 once/run，会抢单实例锁返回 2）：
 #   docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml
-#
-#   # 3) 查看已提醒记录
 #   docker compose -p xianyu-alert run --rm xianyu-alert list --config config.poc.yaml
 #
-#   # 4) 构建镜像
-#   docker compose -p xianyu-alert build
-#
-# P0 故意不含（P1 引入 Web 后再加）：
-#   - ports        ：P0 无 Web 服务，无需暴露端口
-#   - healthcheck  ：P0 无 HTTP 端点；容器内巡检用 `cli cookie status`（不抢单实例锁）
-#   - XY_WEB_TOKEN ：P1 认证
-#   - restart      ：P0 是一次性 run 命令，不需要守护；P1 常驻 Web 时改为
-#                    `restart: unless-stopped`（7×24 自动拉起）
+# 远程访问：把 ports 改为 "8080:8080" 并设置 XY_WEB_TOKEN（P3 认证），
+#   或用 Caddy / Tailscale 反代。
 #
 # 数据卷：./xianyu-data:/app/data —— config.yaml / secret.key / state/ 全部落卷。
 #   ⚠️ 备份时必须连同 secret.key 一起备份，否则 fernet1: 密文 Cookie 无法解密。
@@ -39,24 +27,37 @@
 services:
   xianyu-alert:
     build: .
-    # P1 常驻 Web 后建议固定镜像名：image: xianyu-alert:1.8.0
-    # entrypoint：把 CLI 入口打进容器，`run --rm xianyu-alert <子命令>` 直接可用。
-    #   `docker compose run` 会用 run 后面的参数替换 entrypoint 的 argv，
-    #   因此 `once ...` / `cookie status ...` / `list ...` 均按注释原样工作。
-    entrypoint: ["python", "-m", "xianyu_alert.cli"]
+    image: xianyu-alert:1.8.0
+    container_name: xianyu-alert
+    # 7×24：宿主机重启 / 容器崩溃自动拉起（P1 起启用）
+    restart: unless-stopped
     environment:
       XY_DATA_DIR: /app/data        # paths.data_dir() 直通（v1.8 已支持，零改动）
       TZ: Asia/Shanghai             # 提醒记录时间正确（镜像内已装 tzdata）
+      # XY_WEB_TOKEN: "change-me-随机串"  # P3：远程访问时启用 Bearer 认证
+    ports:
+      - "127.0.0.1:8080:8080"       # 默认仅本机；远程访问改 "8080:8080" + 开 token
     volumes:
       - ./xianyu-data:/app/data     # config.yaml / secret.key / state/ 全部落卷
-    # --- P1 起启用（常驻 Web）---
-    # ports:
-    #   - "127.0.0.1:8080:8080"     # 默认仅本机；远程访问改 "8080:8080" + 开 token
-    # restart: unless-stopped
-    # healthcheck:
-    #   test: ["CMD", "python", "-c",
-    #     "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]
-    #   interval: 30s
-    #   timeout: 5s
-    #   retries: 3
-    #   start_period: 10s
+    # 健康检查：HTTP /healthz（Web + monitor 线程存活）；**不得**用 cli once/run（抢锁）
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # 日志轮转：容器 stdout（docker logs）+ 文件日志 state/xianyu_alert.log 双通道
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 单用户纯 Python + SQLite 资源上限（P3 加固项，P1 起一并启用）
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    # 非 root 加固（P3 可选）：需卷属主对齐
+    # user: "1000:1000"

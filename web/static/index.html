@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>闲鱼低价提醒工具</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">
+      闲鱼低价提醒工具
+      <span class="app-version" id="app-version"></span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="config" type="button">监控配置</button>
+      <button class="tab" data-tab="notify" type="button">通知设置</button>
+      <button class="tab" data-tab="run" type="button">运行监控</button>
+    </nav>
+  </header>
+
+  <!-- ======================= Tab 1 监控配置 ======================= -->
+  <main id="panel-config" class="tab-panel active">
+    <section class="card">
+      <h2>关键词与价格阈值</h2>
+      <div class="keyword-editor">
+        <input id="kw-input" type="text" placeholder="关键词（如 Switch）" autocomplete="off">
+        <input id="price-input" type="number" min="0.01" step="0.01" placeholder="价格阈值（元）">
+        <button id="kw-add-btn" class="btn primary" type="button">添加</button>
+      </div>
+      <table class="kw-table" id="kw-table">
+        <thead>
+          <tr>
+            <th>关键词</th>
+            <th>价格阈值</th>
+            <th>过滤规则</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="kw-tbody">
+          <tr class="empty-row"><td colspan="5">还没有关键词，请在上方输入后点击「添加」</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>监测参数</h2>
+      <div class="form-grid">
+        <label>监测间隔（秒）
+          <input id="interval-input" type="number" min="1" step="1" value="600">
+        </label>
+        <label>抓取页数
+          <input id="pages-input" type="number" min="1" step="1" value="1">
+        </label>
+        <label>抓取方式
+          <select id="fetcher-select">
+            <option value="mtop">mtop（真实抓取闲鱼，需登录 Cookie）★推荐</option>
+            <option value="mock">mock（开发演示用，本地假数据，无需登录）</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input id="cookie-alert-input" type="checkbox" checked>
+          Cookie 过期自动提醒（推送到全部通知通道）
+        </label>
+        <label>Cookie 健康检测节流（秒，0=每轮）
+          <input id="cookie-check-interval-input" type="number" min="0" step="1" value="0">
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>登录 Cookie</h2>
+      <div class="cookie-bar">
+        <span id="cookie-status-light" class="status-light unknown" title="">—</span>
+        <span id="cookie-status-text" class="cookie-status-text">正在读取…</span>
+        <span id="cookie-masked" class="cookie-masked"></span>
+      </div>
+      <div class="cookie-editor">
+        <textarea id="cookie-input" rows="3" placeholder="粘贴浏览器复制的 Cookie 请求头（须包含 _m_h5_tk=）"></textarea>
+        <div class="cookie-actions">
+          <button id="cookie-save-btn" class="btn primary" type="button">校验并保存</button>
+          <button id="cookie-clear-btn" class="btn ghost" type="button">清空输入</button>
+        </div>
+        <p class="hint">容器内无浏览器：请在本机浏览器登录 goofish.com → F12 → Network → 搜索请求 →
+          复制 Cookie 头粘贴到上方。保存时会校验有效性并 Fernet 加密落盘，仅回显脱敏值。</p>
+      </div>
+    </section>
+
+    <div class="card-actions">
+      <button id="config-save-btn" class="btn primary large" type="button">保存配置</button>
+      <span id="config-save-status" class="save-status"></span>
+    </div>
+  </main>
+
+  <!-- ======================= Tab 2 通知设置 ======================= -->
+  <main id="panel-notify" class="tab-panel">
+    <section class="card">
+      <h2>通知通道</h2>
+      <p class="hint">勾选启用并填写参数；「测试发送」会立即推送一条测试消息到该通道。
+        网络通道失败不会中断监测，仅记录警告日志。</p>
+      <div id="channel-list" class="channel-list"><!-- 由 app.js 渲染 6 通道卡片 --></div>
+    </section>
+  </main>
+
+  <!-- ======================= Tab 3 运行监控 ======================= -->
+  <main id="panel-run" class="tab-panel">
+    <section class="card">
+      <div class="run-controls">
+        <button id="monitor-start-btn" class="btn primary" type="button">▶ 开始监控</button>
+        <button id="monitor-stop-btn" class="btn danger" type="button">■ 停止</button>
+        <button id="monitor-once-btn" class="btn" type="button">⚡ 立即执行一轮</button>
+        <span id="monitor-status-text" class="monitor-status-text">状态：未运行</span>
+      </div>
+      <div class="status-strip" id="status-strip">
+        <span>轮数：<b id="stat-rounds">0</b></span>
+        <span>累计提醒：<b id="stat-notified">0</b></span>
+        <span>最近轮次：<b id="stat-last-round">—</b></span>
+        <span>下次执行：<b id="stat-next-round">—</b></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>实时日志</h2>
+      <div class="log-box" id="log-box">
+        <div class="log-empty">日志将实时显示在这里（SSE）…</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>提醒记录</h2>
+      <div class="record-toolbar">
+        <label class="checkbox-label">
+          <input id="include-sold-input" type="checkbox"> 显示已下架
+        </label>
+        <button id="records-refresh-btn" class="btn small" type="button">刷新</button>
+        <span id="records-count" class="records-count"></span>
+      </div>
+      <table class="record-table" id="record-table">
+        <thead>
+          <tr>
+            <th data-sort="time">提醒时间 ⇅</th>
+            <th data-sort="keyword">关键词 ⇅</th>
+            <th data-sort="title">商品名称 ⇅</th>
+            <th data-sort="price">价格 ⇅</th>
+            <th data-sort="publish">发布时间 ⇅</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="record-tbody">
+          <tr class="empty-row"><td colspan="6">暂无提醒记录</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    闲鱼低价提醒工具 · Docker Web 版（P1）· 仅供个人学习使用，请遵守平台规则
+  </footer>
+
+  <div id="toast" class="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
