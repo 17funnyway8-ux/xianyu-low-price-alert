@@ -138,6 +138,55 @@ class Notifier(ABC):
             logger.warning("[%s] 通知发送失败：%s", self.name, exc)
             return False
 
+    @abstractmethod
+    def notify_message(self, title: str, text: str) -> None:
+        """发送**纯文本**提醒（v1.8：Cookie 过期等非商品场景）。
+
+        与 `notify` 面向 `List[Product]` 不同，本方法接受任意标题 + 正文，
+        是「非商品系统提醒」的正规消息形态（共享知识 4：提醒文案绝不含
+        Cookie 明文，脱敏由调用方保证）。
+
+        Args:
+            title: 消息标题。
+            text: 消息正文。
+        """
+        raise NotImplementedError
+
+    def safe_notify_message(self, title: str, text: str) -> bool:
+        """带异常保护的纯文本发送，失败只记录 warning（与 safe_notify 同构）。
+
+        Args:
+            title: 消息标题。
+            text: 消息正文。
+
+        Returns:
+            True 表示发送成功（或无需发送）。
+        """
+        try:
+            self.notify_message(title, text)
+            return True
+        except Exception as exc:  # noqa: BLE001 - 通知失败不能中断主循环
+            logger.warning("[%s] 文本提醒发送失败：%s", self.name, exc)
+            return False
+
+
+def notify_plain_message(notifiers: List[Notifier], title: str, text: str) -> None:
+    """向全部通知器推送一条纯文本消息（v1.8：Cookie 提醒等非商品场景）。
+
+    任一通知器失败不影响其它通知器（`safe_notify_message` 内部已捕获并降级
+    warning）；本函数自身兜底捕获，绝不向调用方抛出。
+
+    Args:
+        notifiers: Notifier 列表（可为空，空则静默跳过）。
+        title: 消息标题。
+        text: 消息正文。
+    """
+    for notifier in notifiers or []:
+        try:
+            notifier.safe_notify_message(title, text)
+        except Exception as exc:  # noqa: BLE001 - 通知绝不能抛到调用方
+            logger.warning("[%s] 文本提醒异常：%s", getattr(notifier, "name", "?"), exc)
+
 
 # ---------------------------------------------------------------------- #
 # 具体实现
@@ -155,6 +204,14 @@ class ConsoleNotifier(Notifier):
         print(build_title(products))
         print("=" * 60)
         print(format_messages(products))
+        print("=" * 60, flush=True)
+
+    def notify_message(self, title: str, text: str) -> None:
+        """打印纯文本提醒到标准输出。"""
+        print("=" * 60)
+        print(title)
+        print("=" * 60)
+        print(text)
         print("=" * 60, flush=True)
 
 
@@ -189,6 +246,15 @@ class ServerChanNotifier(Notifier):
         if response.status_code != 200:
             raise RuntimeError(f"Server酱返回 HTTP {response.status_code}")
         logger.info("[serverchan] 已推送 %d 个商品", len(products))
+
+    def notify_message(self, title: str, text: str) -> None:
+        """POST 纯文本提醒到 Server酱（title/desp 两字段）。"""
+        url = SERVERCHAN_URL_TEMPLATE.format(sendkey=self.sendkey)
+        payload = {"title": title, "desp": text}
+        response = requests.post(url, data=payload, timeout=self.timeout)
+        if response.status_code != 200:
+            raise RuntimeError(f"Server酱返回 HTTP {response.status_code}")
+        logger.info("[serverchan] 已推送文本提醒：%s", title)
 
 
 class TelegramNotifier(Notifier):
@@ -226,6 +292,19 @@ class TelegramNotifier(Notifier):
         if response.status_code != 200:
             raise RuntimeError(f"Telegram 返回 HTTP {response.status_code}")
         logger.info("[telegram] 已推送 %d 个商品", len(products))
+
+    def notify_message(self, title: str, text: str) -> None:
+        """POST 纯文本提醒到 Telegram（title + 空行 + text）。"""
+        url = TELEGRAM_URL_TEMPLATE.format(token=self.bot_token)
+        payload = {
+            "chat_id": self.chat_id,
+            "text": f"{title}\n\n{text}",
+            "disable_web_page_preview": False,
+        }
+        response = requests.post(url, data=payload, timeout=self.timeout)
+        if response.status_code != 200:
+            raise RuntimeError(f"Telegram 返回 HTTP {response.status_code}")
+        logger.info("[telegram] 已推送文本提醒：%s", title)
 
 
 class EmailNotifier(Notifier):
@@ -290,11 +369,8 @@ class EmailNotifier(Notifier):
         message["To"] = ", ".join(self.recipients)
         return message
 
-    def notify(self, products: List[Product]) -> None:
-        """通过 SMTP 发送邮件。"""
-        if not products:
-            return
-        message = self._build_message(products)
+    def _smtp_send(self, message: MIMEText) -> None:
+        """通过 SMTP 发送已构造好的邮件对象。"""
         if self.use_ssl:
             server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=self.timeout)
         else:
@@ -309,7 +385,22 @@ class EmailNotifier(Notifier):
                 server.quit()
             except Exception:  # noqa: BLE001 - 关闭失败无需影响主流程
                 pass
+
+    def notify(self, products: List[Product]) -> None:
+        """通过 SMTP 发送邮件。"""
+        if not products:
+            return
+        self._smtp_send(self._build_message(products))
         logger.info("[email] 已发送 %d 个商品到 %s", len(products), ", ".join(self.recipients))
+
+    def notify_message(self, title: str, text: str) -> None:
+        """通过 SMTP 发送纯文本提醒（Subject=title / body=text）。"""
+        message = MIMEText(str(text or ""), "plain", "utf-8")
+        message["Subject"] = Header(str(title or ""), "utf-8")
+        message["From"] = formataddr((str(Header("闲鱼低价提醒", "utf-8")), self.username))
+        message["To"] = ", ".join(self.recipients)
+        self._smtp_send(message)
+        logger.info("[email] 已推送文本提醒：%s", title)
 
 
 class BarkNotifier(Notifier):
@@ -347,6 +438,15 @@ class BarkNotifier(Notifier):
         if response.status_code != 200:
             raise RuntimeError(f"Bark 返回 HTTP {response.status_code}")
         logger.info("[bark] 已推送 %d 个商品", len(products))
+
+    def notify_message(self, title: str, text: str) -> None:
+        """GET 推送纯文本提醒到 Bark。"""
+        msg = f"{title}\n\n{text}"
+        url = self.url.rstrip("/") + "/" + requests.utils.quote(msg)
+        response = requests.get(url, timeout=self.timeout)
+        if response.status_code != 200:
+            raise RuntimeError(f"Bark 返回 HTTP {response.status_code}")
+        logger.info("[bark] 已推送文本提醒：%s", title)
 
 
 class WebhookNotifier(Notifier):
@@ -390,6 +490,21 @@ class WebhookNotifier(Notifier):
         if response.status_code != 200:
             raise RuntimeError(f"Webhook 返回 HTTP {response.status_code}")
         logger.info("[webhook] 已推送 %d 个商品", len(products))
+
+    def notify_message(self, title: str, text: str) -> None:
+        """POST 纯文本提醒到企业微信风格机器人。"""
+        msg = f"{title}\n\n{text}"
+        payload = {"msgtype": "text", "text": {"content": msg}}
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(
+            self.url,
+            data=json.dumps(payload, ensure_ascii=False),
+            headers=headers,
+            timeout=self.timeout,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Webhook 返回 HTTP {response.status_code}")
+        logger.info("[webhook] 已推送文本提醒：%s", title)
 
 
 # ---------------------------------------------------------------------- #

@@ -73,7 +73,7 @@ python -m xianyu_alert.cli run --config config.yaml
 
 ### 4. 获取闲鱼 Cookie
 
-`login` 子命令可把 Cookie 便捷地写入 `config.yaml` 的 `monitor.cookies`，三种方式任选：
+`login` 子命令可把 Cookie 便捷地写入 `config.yaml` 的 `monitor.cookies`，**同时承担「首次登录」与「挂机刷新」双重语义**（v1.8）：GUI 挂机时可直接用本命令刷新 Cookie，**不参与单实例锁**。保存前会**自动校验**（`detect_cookie_health`）：过期 / 缺 `_m_h5_tk` / 无法解密的 Cookie 会**拒绝保存**（退出码非 0、配置内容不变，C15/C20）。三种方式任选：
 
 **方式 A（推荐 · 半自动）** —— 浏览器登录，自动提取：
 
@@ -106,6 +106,8 @@ python -m xianyu_alert.cli login --config config.yaml
 
 > 提醒：Cookie 存入后由 **MtopFetcher**（或已废弃的 `WebFetcher`）自动携带。闲鱼商品列表数据走**带签名（sign）的 mtop 接口**，v3.2 起默认即 mtop 真实抓取；`web`（旧版 HTML 解析）对闲鱼实测无效、已标记废弃，GUI 不再展示，仅保留代码供向后兼容。
 
+> v1.8 巡检小工具：`python -m xianyu_alert.cli cookie status --config config.yaml` 可**只检测**单值 + Cookie 池各条健康状态（脱敏回显、不写入任何配置），适合脚本 / ssh 远程巡检。
+
 ---
 
 ## 三、命令行用法
@@ -114,10 +116,13 @@ python -m xianyu_alert.cli login --config config.yaml
 python -m xianyu_alert.cli run   [-c config.yaml] [-v] [--max-rounds N]  # 持续监测，Ctrl+C 优雅退出
 python -m xianyu_alert.cli once  [-c config.yaml] [-v]                   # 只跑一轮，适合 cron / 计划任务
 python -m xianyu_alert.cli list  [-c config.yaml] [--limit 50]           # 查看已提醒记录
-python -m xianyu_alert.cli login [-c config.yaml] [--cookie-string "..."] # 获取 Cookie 并写入配置
+python -m xianyu_alert.cli login [-c config.yaml] [--cookie-string "..."] # 获取/刷新 Cookie（保存前自动校验）
+python -m xianyu_alert.cli cookie status [-c config.yaml]                # v1.8：只检测 Cookie 健康（不写入）
 python -m xianyu_alert.cli shortcut [--name "闲鱼低价提醒工具"]          # 在桌面创建快捷方式
 python -m xianyu_alert.cli --version
 ```
+
+> **v1.8 单实例锁**：GUI（Tk / Qt）+ `cli run` + `cli once` 共用一把 OS 级进程锁（`state/instance.lock`）——同一数据目录下**只允许一个实例运行**（三者都会写 SQLite）。第二个实例启动会收到中文提示并退出（CLI 退出码 2，GUI 弹框 + 非 0 退出码）；进程崩溃 / kill 后 OS 自动释放锁，**无需人工删锁**。`login`（只写 config.yaml）与 `list` / `cookie status`（只读）不参与锁，挂机时仍可远程刷新 / 巡检。
 
 Windows 计划任务 / Linux cron 示例（每 10 分钟一次）：
 

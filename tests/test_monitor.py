@@ -8,6 +8,7 @@ import sys
 import unittest
 from contextlib import redirect_stdout
 from typing import List
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -35,6 +36,24 @@ class RecordingNotifier(Notifier):
         self.calls += 1
         self.received.extend(products)
 
+    def notify_message(self, title: str, text: str) -> None:
+        pass
+
+
+class RecordingMessageNotifier(Notifier):
+    """v1.8：记录 notify_message 收到的纯文本提醒（Cookie 过期提醒）。"""
+
+    name = "recording_message"
+
+    def __init__(self) -> None:
+        self.messages: List[tuple] = []
+
+    def notify(self, products: List[Product]) -> None:
+        pass
+
+    def notify_message(self, title: str, text: str) -> None:
+        self.messages.append((title, text))
+
 
 def make_config(
     max_price: float = MAX_PRICE,
@@ -52,6 +71,40 @@ def make_config(
             "notify": {"channels": [{"type": "console"}]},
         }
     )
+
+
+def make_mtop_config(
+    cookie: str = "",
+    pool: List[dict] = None,
+    alert_enabled: bool = True,
+    check_interval: int = 0,
+    interval: int = 1,
+) -> Config:
+    """构造 mtop 抓取器 + 指定 Cookie 的配置（v1.8 健康检测用）。
+
+    Args:
+        cookie: 单值 Cookie。
+        pool: Cookie 池字典列表（[{"name","cookie","enabled"}]，与 YAML 一致）。
+    """
+    return config_from_dict(
+        {
+            "keywords": [{"keyword": KEYWORD, "max_price": MAX_PRICE}],
+            "monitor": {
+                "interval_seconds": interval,
+                "cookies": cookie,
+                "cookie_pool": pool or [],
+                "cookie_alert_enabled": alert_enabled,
+                "cookie_check_interval_seconds": check_interval,
+            },
+            "fetcher": {"type": "mtop"},
+            "storage": {"path": ":memory:"},
+            "notify": {"channels": [{"type": "console"}]},
+        }
+    )
+
+
+EXPIRED_COOKIE = "_m_h5_tk=abc_1000000000000; c=1"   # 2001 年时间戳 → expired
+OK_COOKIE = "_m_h5_tk=t; c=1"                        # 无时间戳 → ok（历史样本兼容）
 
 
 class TestMockFetcher(unittest.TestCase):
@@ -210,6 +263,9 @@ class TestMonitor(unittest.TestCase):
             def notify(self, products: List[Product]) -> None:
                 raise RuntimeError("boom")
 
+            def notify_message(self, title: str, text: str) -> None:
+                raise RuntimeError("boom")
+
         monitor = Monitor(
             self.config, self.fetcher, self.storage, [BrokenNotifier(), self.recorder]
         )
@@ -255,6 +311,171 @@ class TestMonitor(unittest.TestCase):
         """summary 应返回累计已提醒数量。"""
         count = self.monitor.run_once()
         self.assertEqual(self.monitor.summary(), {"total_notified": count})
+
+
+class TestCookieHealthAlert(unittest.TestCase):
+    """v1.8：_check_cookie_health_and_alert 检测 / 去抖 / 脱敏 / 池汇总（A1/A2/A7）。"""
+
+    def _make_monitor(self, config: Config, recorder: RecordingMessageNotifier):
+        storage = Storage(":memory:")
+        fetcher = mock.MagicMock()
+        fetcher.fetch.return_value = []
+        monitor = Monitor(config, fetcher, storage, [recorder])
+        return monitor, storage
+
+    def test_noop_for_mock_fetcher(self) -> None:
+        """fetcher=mock → 检测 no-op，不产生任何提醒（A1）。"""
+        recorder = RecordingMessageNotifier()
+        monitor, storage = self._make_monitor(make_config(), recorder)
+        try:
+            monitor.run_once()
+            self.assertEqual(recorder.messages, [])
+        finally:
+            storage.close()
+
+    def test_expired_single_cookie_alerts_all_channels(self) -> None:
+        """mtop + 过期 Cookie → 提醒含「已过期/无效」+ 刷新指引，且无 Cookie 明文。"""
+        recorder = RecordingMessageNotifier()
+        config = make_mtop_config(cookie=EXPIRED_COOKIE)
+        monitor, storage = self._make_monitor(config, recorder)
+        try:
+            monitor.run_once()
+            self.assertEqual(len(recorder.messages), 1)
+            title, text = recorder.messages[0]
+            self.assertEqual(title, "闲鱼 Cookie 已过期/无效")
+            self.assertIn("刷新", text)
+            self.assertIn("cli login", text)
+            # C19/A7：提醒文案绝不含 Cookie 明文
+            self.assertNotIn(EXPIRED_COOKIE, text)
+        finally:
+            storage.close()
+
+    def test_expiring_uses_different_title(self) -> None:
+        """即将过期 → 「闲鱼 Cookie 即将过期」标题。"""
+        import time as _time
+
+        recorder = RecordingMessageNotifier()
+        expiring = f"_m_h5_tk=abc_{int(_time.time() * 1000) - 23 * 3600 * 1000}; c=1"
+        config = make_mtop_config(cookie=expiring)
+        monitor, storage = self._make_monitor(config, recorder)
+        try:
+            monitor.run_once()
+            self.assertEqual(recorder.messages[0][0], "闲鱼 Cookie 即将过期")
+        finally:
+            storage.close()
+
+    def test_alert_disabled_by_switch(self) -> None:
+        """cookie_alert_enabled=false → 不提醒。"""
+        recorder = RecordingMessageNotifier()
+        config = make_mtop_config(cookie=EXPIRED_COOKIE, alert_enabled=False)
+        monitor, storage = self._make_monitor(config, recorder)
+        try:
+            monitor.run_once()
+            self.assertEqual(recorder.messages, [])
+        finally:
+            storage.close()
+
+    def test_debounce_transition_only_and_recovery(self) -> None:
+        """去抖：同状态不重复；恢复 ok 后再失效重新提醒（C4，meta 表持久化）。"""
+        import hashlib
+
+        from xianyu_alert.storage import _META_COOKIE_ALERT_PREFIX
+
+        recorder = RecordingMessageNotifier()
+        config = make_mtop_config(cookie=EXPIRED_COOKIE)
+        monitor, storage = self._make_monitor(config, recorder)
+        key = _META_COOKIE_ALERT_PREFIX + hashlib.sha1(EXPIRED_COOKIE.encode()).hexdigest()[:12]
+        try:
+            monitor.run_once()   # 首次：prev=None → 提醒
+            self.assertEqual(len(recorder.messages), 1)
+            self.assertEqual(storage.get_meta_value(key), "expired")
+
+            monitor.run_once()   # 同状态 → 去抖，不重复提醒
+            self.assertEqual(len(recorder.messages), 1)
+
+            # 模拟「恢复 ok」（上一轮检测到 ok 写回），再失效 → 重新提醒
+            storage.set_meta_value(key, "ok")
+            monitor.run_once()
+            self.assertEqual(len(recorder.messages), 2)
+        finally:
+            storage.close()
+
+    def test_debounce_state_persists_across_restart(self) -> None:
+        """去抖状态跨重启保持（A2：meta 表）。"""
+        import hashlib
+        import tempfile
+
+        from xianyu_alert.storage import _META_COOKIE_ALERT_PREFIX, Storage
+
+        recorder = RecordingMessageNotifier()
+        key = _META_COOKIE_ALERT_PREFIX + hashlib.sha1(EXPIRED_COOKIE.encode()).hexdigest()[:12]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "alert.db")
+            with Storage(db_path) as st:
+                st.set_meta_value(key, "expired")
+                config = make_mtop_config(cookie=EXPIRED_COOKIE)
+                fetcher = mock.MagicMock()
+                fetcher.fetch.return_value = []
+                monitor = Monitor(config, fetcher, st, [recorder])
+                monitor.run_once()  # 与上次同为 expired → 去抖，不重复提醒
+            self.assertEqual(recorder.messages, [])
+            # 重启后状态仍在 meta 表（跨重启有效）
+            with Storage(db_path) as st2:
+                self.assertEqual(st2.get_meta_value(key), "expired")
+
+    def test_throttle_interval(self) -> None:
+        """cookie_check_interval_seconds>0 节流生效（A1）。"""
+        recorder = RecordingMessageNotifier()
+        config = make_mtop_config(cookie=EXPIRED_COOKIE, check_interval=3600)
+        monitor, storage = self._make_monitor(config, recorder)
+        try:
+            monitor.run_once()   # 首次检测 → 提醒
+            self.assertEqual(len(recorder.messages), 1)
+            # 立即换一个同样过期的 Cookie（不同指纹）：节流命中 → 不提醒
+            config.monitor.cookies = "_m_h5_tk=def_1000000000000; c=2"
+            monitor.run_once()
+            self.assertEqual(len(recorder.messages), 1)
+        finally:
+            storage.close()
+
+    def test_pool_summary_alert(self) -> None:
+        """池汇总：任一条目失效 → 「池中有 N 条 Cookie 已过期/无效」；恢复后不再提醒。"""
+        from xianyu_alert.config import CookiePoolItem
+
+        recorder = RecordingMessageNotifier()
+        pool = [
+            {"name": "bad", "cookie": EXPIRED_COOKIE, "enabled": True},
+            {"name": "ok", "cookie": OK_COOKIE, "enabled": True},
+        ]
+        config = make_mtop_config(cookie=OK_COOKIE, pool=pool)
+        monitor, storage = self._make_monitor(config, recorder)
+        try:
+            monitor.run_once()
+            combined = [f"{title}\n{text}" for title, text in recorder.messages]
+            self.assertTrue(any("池中有 1 条 Cookie 已过期" in c for c in combined))
+
+            # 修复池（全部健康）→ degraded True→False，不再推送池提醒
+            recorder.messages.clear()
+            config.monitor.cookie_pool = [
+                CookiePoolItem(name="ok1", cookie=OK_COOKIE, enabled=True),
+                CookiePoolItem(name="ok2", cookie=OK_COOKIE, enabled=True),
+            ]
+            monitor.run_once()
+            combined = [f"{title}\n{text}" for title, text in recorder.messages]
+            self.assertFalse(any("池中有" in c for c in combined))
+
+            # 再次失效 → degraded False→True，重新推送
+            recorder.messages.clear()
+            config.monitor.cookie_pool = [
+                CookiePoolItem(name="bad", cookie=EXPIRED_COOKIE, enabled=True),
+                CookiePoolItem(name="ok", cookie=OK_COOKIE, enabled=True),
+            ]
+            monitor.run_once()
+            combined2 = [f"{title}\n{text}" for title, text in recorder.messages]
+            self.assertTrue(any("池中有 1 条 Cookie 已过期" in c for c in combined2))
+        finally:
+            storage.close()
 
 
 if __name__ == "__main__":  # pragma: no cover

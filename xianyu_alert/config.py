@@ -107,6 +107,10 @@ class MonitorConfig:
     cookies_encrypted: bool = False
     #: 多账号 Cookie 池（v3.2）；元素为 CookiePoolItem，cookie 为明文
     cookie_pool: List["CookiePoolItem"] = field(default_factory=list)
+    #: v1.8：Cookie 过期/即将过期时是否通过全部通知通道提醒（Q1，默认 true）
+    cookie_alert_enabled: bool = True
+    #: v1.8：Cookie 健康检测节流秒数；0 = 每轮检测（默认，纯本地零开销）
+    cookie_check_interval_seconds: int = 0
 
 
 @dataclass
@@ -387,6 +391,11 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
 
     v3.2 起支持 `monitor.cookie_pool` 多账号 Cookie 池；
     解析时逐条解密，非法条目跳过。
+
+    v1.8 新增两个字段：
+        - `cookie_alert_enabled`（bool，默认 True）：过期提醒总开关；
+        - `cookie_check_interval_seconds`（int，默认 0）：检测节流秒数。
+    两者均做脏数据容错（非预期类型回退默认），不阻断加载。
     """
     data = _as_dict(raw, "monitor")
     interval_raw = data.get("interval_seconds", 600)
@@ -408,12 +417,37 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
     else:
         cookies = cookies_raw
 
+    # v1.8：提醒总开关（脏数据回退 True）
+    cookie_alert_enabled = data.get("cookie_alert_enabled", True)
+    if isinstance(cookie_alert_enabled, str):
+        cookie_alert_enabled = cookie_alert_enabled.strip().lower() not in ("0", "false", "no", "off", "")
+    else:
+        try:
+            cookie_alert_enabled = bool(cookie_alert_enabled)
+        except Exception:  # noqa: BLE001 - 脏数据容错
+            cookie_alert_enabled = True
+
+    # v1.8：检测节流秒数（0 = 每轮检测；负数拒绝）
+    interval_raw_ck = data.get("cookie_check_interval_seconds", 0)
+    try:
+        cookie_check_interval = int(interval_raw_ck)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"`monitor.cookie_check_interval_seconds` 必须是整数：{interval_raw_ck!r}"
+        ) from exc
+    if cookie_check_interval < 0:
+        raise ConfigError(
+            f"`monitor.cookie_check_interval_seconds` 不能为负数，当前 {cookie_check_interval}"
+        )
+
     return MonitorConfig(
         interval_seconds=interval,
         user_agent=user_agent,
         cookies=cookies,
         cookies_encrypted=cookies_encrypted,
         cookie_pool=_parse_cookie_pool(data.get("cookie_pool")),
+        cookie_alert_enabled=cookie_alert_enabled,
+        cookie_check_interval_seconds=cookie_check_interval,
     )
 
 

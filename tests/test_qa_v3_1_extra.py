@@ -52,6 +52,9 @@ class RecordingNotifier(Notifier):
         self.calls += 1
         self.received.extend(products)
 
+    def notify_message(self, title: str, text: str) -> None:
+        pass
+
 
 class StubFetcher(Fetcher):
     """返回固定商品列表的抓取器；可指定 keyword 注入方式以模拟真实 fetcher。"""

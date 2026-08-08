@@ -253,43 +253,42 @@ class TestCookieRotation(unittest.TestCase):
 
     def setUp(self) -> None:
         self.pool_cfg = make_monitor_config(
-            cookies="FALLBACK",
+            cookies="_m_h5_tk=fb_9999999999999; c=1",
             pool=[
-                {"name": "a", "cookie": "C_A", "enabled": True},
-                {"name": "b", "cookie": "C_B", "enabled": True},
+                {"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True},
+                {"name": "b", "cookie": "_m_h5_tk=cb_9999999999999; c=1", "enabled": True},
             ],
         )
-        self.empty_pool_cfg = make_monitor_config(cookies="FALLBACK", pool=[])
+        self.empty_pool_cfg = make_monitor_config(cookies="_m_h5_tk=fb_9999999999999; c=1", pool=[])
 
     def test_rotates_through_enabled_cookies(self) -> None:
         """2 个启用条目：round 0->A, 1->B, 2->A, 3->B。"""
         picks = [resolve_cookie_for_round(self.pool_cfg, i) for i in range(4)]
-        self.assertEqual(picks, ["C_A", "C_B", "C_A", "C_B"])
-
+        self.assertEqual(picks, ["_m_h5_tk=ca_9999999999999; c=1", "_m_h5_tk=cb_9999999999999; c=1", "_m_h5_tk=ca_9999999999999; c=1", "_m_h5_tk=cb_9999999999999; c=1"])
     def test_pool_empty_falls_back_to_single(self) -> None:
         """池为空 → 始终回退单值 cookies。"""
         picks = [resolve_cookie_for_round(self.empty_pool_cfg, i) for i in range(3)]
-        self.assertEqual(picks, ["FALLBACK", "FALLBACK", "FALLBACK"])
+        self.assertEqual(picks, ["_m_h5_tk=fb_9999999999999; c=1", "_m_h5_tk=fb_9999999999999; c=1", "_m_h5_tk=fb_9999999999999; c=1"])
 
     def test_disabled_cookies_excluded(self) -> None:
         """停用条目不参与轮换。"""
         cfg = make_monitor_config(
-            cookies="FALLBACK",
+            cookies="_m_h5_tk=fb_9999999999999; c=1",
             pool=[
-                {"name": "a", "cookie": "C_A", "enabled": True},
-                {"name": "b", "cookie": "C_B", "enabled": False},
+                {"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True},
+                {"name": "b", "cookie": "_m_h5_tk=cb_9999999999999; c=1", "enabled": False},
             ],
         )
-        self.assertEqual(pool_enabled_cookies(cfg.cookie_pool), ["C_A"])
-        self.assertEqual(resolve_cookie_for_round(cfg, 5), "C_A")
+        self.assertEqual(pool_enabled_cookies(cfg.cookie_pool), ["_m_h5_tk=ca_9999999999999; c=1"])
+        self.assertEqual(resolve_cookie_for_round(cfg, 5), "_m_h5_tk=ca_9999999999999; c=1")
 
     def test_pool_all_disabled_falls_back(self) -> None:
         """池存在但全部停用 → 回退单值。"""
         cfg = make_monitor_config(
-            cookies="FALLBACK",
-            pool=[{"name": "a", "cookie": "C_A", "enabled": False}],
+            cookies="_m_h5_tk=fb_9999999999999; c=1",
+            pool=[{"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": False}],
         )
-        self.assertEqual(resolve_cookie_for_round(cfg, 0), "FALLBACK")
+        self.assertEqual(resolve_cookie_for_round(cfg, 0), "_m_h5_tk=fb_9999999999999; c=1")
 
 
 # ---------------------------------------------------------------------- #
@@ -302,8 +301,8 @@ class TestMonitorRotationIntegration(unittest.TestCase):
         cfg = config_from_dict(
             make_app_config(
                 pool=[
-                    {"name": "a", "cookie": "C_A", "enabled": True},
-                    {"name": "b", "cookie": "C_B", "enabled": True},
+                    {"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True},
+                    {"name": "b", "cookie": "_m_h5_tk=cb_9999999999999; c=1", "enabled": True},
                 ]
             )
         )
@@ -323,7 +322,7 @@ class TestMonitorRotationIntegration(unittest.TestCase):
             monitor.run_once()
         finally:
             storage.close()
-        self.assertEqual(used, ["C_A", "C_B", "C_A"])
+        self.assertEqual(used, ["_m_h5_tk=ca_9999999999999; c=1", "_m_h5_tk=cb_9999999999999; c=1", "_m_h5_tk=ca_9999999999999; c=1"])
 
     def test_preflight_uses_pool_cookie(self) -> None:
         """preflight 检查池中第 0 条 Cookie（而不是单值空字段）。"""

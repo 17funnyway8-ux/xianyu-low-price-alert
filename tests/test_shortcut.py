@@ -97,8 +97,15 @@ class TestPlatformSupport(unittest.TestCase):
 
 
 class TestCreateShortcut(unittest.TestCase):
-    """create_shortcut 主流程（注入 fake runner，不真调 PowerShell）。"""
+    """create_shortcut 主流程（注入 fake runner，不真调 PowerShell）。
 
+    以下用例属于 Windows 专属行为：在任意平台运行都必须模拟 win32，
+    否则 `shortcut.supported()` 在 macOS/Linux 返回 False 导致提前 return None
+    （仅剩 `test_failure_returns_none` 与 `test_create_shortcut_none_on_darwin`
+    故意保留真实平台语义）。
+    """
+
+    @mock.patch.object(sys, "platform", "win32")
     def test_success_returns_lnk_path_and_list_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lnk_path = os.path.join(tmp, "闲鱼低价提醒工具.lnk")
@@ -124,6 +131,7 @@ class TestCreateShortcut(unittest.TestCase):
             script = captured["cmd"][-1]
             self.assertIn("`$", script)
 
+    @mock.patch.object(sys, "platform", "win32")
     def test_non_frozen_target_is_pythonw(self) -> None:
         """源码模式：目标指向 pythonw.exe（无控制台窗口），参数为 run_gui.pyw。"""
         captured: dict = {}
@@ -141,6 +149,7 @@ class TestCreateShortcut(unittest.TestCase):
         self.assertIn("pythonw.exe", captured["cmd"][-1])
         self.assertIn("run_gui.pyw", captured["cmd"][-1])
 
+    @mock.patch.object(sys, "platform", "win32")
     def test_frozen_target_is_sys_executable(self) -> None:
         """frozen 模式：目标指向当前 exe（sys.executable）。"""
         captured: dict = {}
@@ -169,6 +178,7 @@ class TestCreateShortcut(unittest.TestCase):
              mock.patch("os.path.isfile", return_value=True):
             self.assertIsNone(shortcut.create_shortcut(runner=broken_run))
 
+    @mock.patch.object(sys, "platform", "win32")
     def test_default_name(self) -> None:
         """默认快捷方式名含 .lnk 后缀。"""
         captured: dict = {}

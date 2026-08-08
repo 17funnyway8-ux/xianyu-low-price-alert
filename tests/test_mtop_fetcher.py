@@ -37,7 +37,7 @@ from xianyu_alert.fetcher import (
     parse_mtop_result_list,
 )
 
-VALID_COOKIE = "cookie2=abc; _m_h5_tk=deadbeefcafe_1700000000000; _m_h5_tk_enc=xyz"
+VALID_COOKIE = "cookie2=abc; _m_h5_tk=deadbeefcafe_9999999999999; _m_h5_tk_enc=xyz"
 
 
 # ---------------------------------------------------------------------- #

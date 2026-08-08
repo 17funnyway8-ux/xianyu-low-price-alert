@@ -77,7 +77,16 @@ def main() -> int:
     else:
         from xianyu_alert.gui import main as gui_main
 
-    return gui_main(config_path=paths.default_config_path())
+    # v1.8 单实例锁：GUI 启动前先确保数据目录并获取锁（幂等，重复获取安全）。
+    # 冲突提示与退出码由 gui_main 统一处理（messagebox + 非 0）。
+    from xianyu_alert.singleton import acquire_instance_lock, release_instance_lock
+
+    paths.ensure_data_dir()
+    lock = acquire_instance_lock()
+    try:
+        return gui_main(config_path=paths.default_config_path())
+    finally:
+        release_instance_lock(lock)
 
 
 if __name__ == "__main__":

@@ -66,6 +66,11 @@ CREATE TABLE IF NOT EXISTS blacklist (
 
 _PREV_IDS_PREFIX = "prev_ids:"
 
+#: v1.8 Cookie 过期提醒去抖状态 key 前缀（单条：`cookie_alert_state:<指纹>`）
+_META_COOKIE_ALERT_PREFIX = "cookie_alert_state:"
+#: v1.8 Cookie 池过期汇总去抖 key（value = JSON {"degraded":bool,"count":int,"at":str}）
+_META_COOKIE_POOL_ALERT_KEY = "cookie_pool_alert_state"
+
 #: v3.7 存量库迁移：旧 product 表没有 sold_out / sold_at / sold_reason 列，
 #: 打开库时逐列补齐（幂等，ALTER TABLE 失败说明列已存在则忽略）。
 _SOLD_OUT_MIGRATIONS = (
@@ -536,6 +541,47 @@ class Storage:
         """清空某关键词的上一轮 ID 集合（测试 / 重置用）。"""
         with self.conn:
             self.conn.execute("DELETE FROM meta WHERE key = ?", (_PREV_IDS_PREFIX + keyword,))
+
+    # ------------------------------------------------------------------ #
+    # 通用 meta 读写（v1.8：Cookie 过期提醒去抖状态，跨重启有效）
+    # ------------------------------------------------------------------ #
+    def get_meta_value(self, key: str) -> Optional[str]:
+        """读取 meta 表 key 的 value。
+
+        Args:
+            key: meta 表主键（如 `cookie_alert_state:<指纹>`）。
+
+        Returns:
+            存储的字符串值；不存在返回 None。
+        """
+        cur = self.conn.execute("SELECT value FROM meta WHERE key = ?", (str(key),))
+        row = cur.fetchone()
+        return str(row["value"]) if row is not None else None
+
+    def set_meta_value(self, key: str, value: str) -> None:
+        """写入 / 更新 meta 表（INSERT OR REPLACE 语义，对齐 set_previous_round_ids）。
+
+        Args:
+            key: meta 表主键。
+            value: 要存储的字符串值。
+        """
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO meta (key, value) VALUES (?, ?)
+                ON CONFLICT (key) DO UPDATE SET value = excluded.value
+                """,
+                (str(key), str(value)),
+            )
+
+    def delete_meta_value(self, key: str) -> None:
+        """删除 meta 表 key（幂等；不存在时无操作）。
+
+        Args:
+            key: meta 表主键。
+        """
+        with self.conn:
+            self.conn.execute("DELETE FROM meta WHERE key = ?", (str(key),))
 
     # ------------------------------------------------------------------ #
     def clear_all(self) -> int:

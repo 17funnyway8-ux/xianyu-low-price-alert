@@ -92,8 +92,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "闲鱼低价提醒工具",
         "CFBundleDisplayName": "闲鱼低价提醒工具",
-        "CFBundleShortVersionString": "1.7.0",
-        "CFBundleVersion": "1.7.0",
+        "CFBundleShortVersionString": "1.8.0",
+        "CFBundleVersion": "1.8.0",
         "CFBundleExecutable": "闲鱼低价提醒工具",
         "NSHighResolutionCapable": True,
         # 关键：抑制 App Nap，保证 7×24 挂机时后台轮询不被系统降频

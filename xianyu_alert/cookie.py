@@ -233,12 +233,41 @@ def pool_enabled_cookies(pool: Any) -> List[str]:
     return result
 
 
-def resolve_cookie_for_round(monitor: Any, round_index: int = 0) -> str:
-    """多 Cookie 轮换策略：**池优先、单值兜底**（v3.2）。
+def pool_usable_cookies(pool: Any) -> List[str]:
+    """返回 Cookie 池中**「启用 + 非空 + 健康」**条目的明文 Cookie 列表（保序）。
 
-    - `monitor.cookie_pool` 中启用条目非空 → 按 `round_index` 轮换取用
-      （`pool[round_index % len(pool)]`，分摊风控）；
-    - 池为空 / 无启用条目 → 回退 `monitor.cookies` 单值字段（向后兼容）。
+    健康定义（v1.8，C11）：`detect_cookie_health` 状态 ∈ {ok, expiring}。
+    与 `pool_enabled_cookies` 互补：后者只过滤启用/非空，前者再过滤过期 /
+    缺 token / 无法解密等失效条目——**失效条目不参与轮换**，避免向 fetcher
+    注入已过期 Cookie。
+
+    Args:
+        pool: Cookie 池（列表）。
+
+    Returns:
+        健康条目的 Cookie 字符串列表（保序）；池为空 / 无健康条目时返回空列表。
+    """
+    usable: List[str] = []
+    for cookie in pool_enabled_cookies(pool):
+        try:
+            state, _reason = detect_cookie_health(cookie)
+        except Exception:  # noqa: BLE001 - 检测异常按不可用处理
+            continue
+        if state in (HEALTH_OK, HEALTH_EXPIRING):
+            usable.append(cookie)
+    return usable
+
+
+def resolve_cookie_for_round(monitor: Any, round_index: int = 0) -> str:
+    """多 Cookie 轮换策略：**池优先、单值兜底**（v3.2 + v1.8 健康过滤）。
+
+    v1.8（C11/C14）：
+        - 池中仅用「健康」条目（ok / expiring）轮换，过期 / 缺 token / 无法解密
+          的条目自动跳过，避免向 fetcher 注入已过期 Cookie；
+        - 池内健康条目为空但存在启用条目时：回退单值 `monitor.cookies`
+          （单值健康才用）；单值也不健康 → 返回空串并打 warning
+          （「全部 Cookie 失效，本轮抓取将失败」，C14）；
+        - 池为空 / 无启用条目 → 回退单值（与旧行为一致）。
 
     Args:
         monitor: MonitorConfig 或结构兼容对象（含 cookie_pool / cookies 属性）。
@@ -247,10 +276,23 @@ def resolve_cookie_for_round(monitor: Any, round_index: int = 0) -> str:
     Returns:
         本轮应使用的 Cookie 字符串（可能为空串）。
     """
-    pool_cookies = pool_enabled_cookies(getattr(monitor, "cookie_pool", None))
-    if pool_cookies:
-        return pool_cookies[int(round_index) % len(pool_cookies)]
-    return str(getattr(monitor, "cookies", "") or "")
+    pool = pool_usable_cookies(getattr(monitor, "cookie_pool", None))
+    if pool:
+        return pool[int(round_index) % len(pool)]
+
+    single = str(getattr(monitor, "cookies", "") or "")
+    if single:
+        try:
+            state, _reason = detect_cookie_health(single)
+        except Exception:  # noqa: BLE001 - 检测异常按不可用处理
+            state = HEALTH_MISSING
+        if state in (HEALTH_OK, HEALTH_EXPIRING):
+            return single
+
+    # 池存在启用条目但无健康条目，且单值也不可用 → C14 兜底日志
+    if pool_enabled_cookies(getattr(monitor, "cookie_pool", None)) and not pool:
+        logger.warning("池中所有 Cookie 已过期/无效，且单值 Cookie 亦不可用，本轮抓取将失败（C14）")
+    return ""
 
 
 # ---------------------------------------------------------------------- #
@@ -294,6 +336,30 @@ def save_cookies_to_config(config_path: str, cookie_str: str) -> None:
     with open(config_path, "w", encoding="utf-8") as fp:
         yaml.safe_dump(data, fp, allow_unicode=True, sort_keys=False, default_flow_style=False)
     logger.info("已把 Cookie 写入 %s 的 monitor.cookies（长度 %d）", config_path, len(cookie_str))
+
+
+def save_cookies_validated(config_path: str, cookie_str: str) -> None:
+    """校验后保存：`detect_cookie_health` 非 `ok` → 抛 ValueError 且**不落盘**。
+
+    v1.8（C15/C20）：任何刷新路径（GUI / CLI）保存前必须校验——缺 token /
+    已过期 / 无法解密等状态一律拒绝保存并给出可操作中文原因，避免把无效
+    Cookie 写进 config.yaml。通过校验后调用 `save_cookies_to_config`
+    （保持既有明文/加密语义，不破坏存量测试与 frozen 的 ensure_cookie_encrypted）。
+
+    Args:
+        config_path: 配置文件路径。
+        cookie_str: Cookie 请求头字符串。
+
+    Raises:
+        ValueError: cookie 为空 / 校验非 `ok`（含中文原因文案）。
+        OSError: 文件读写失败。
+        yaml.YAMLError: 原文件 YAML 语法错误。
+    """
+    cookie_str = str(cookie_str or "").strip()
+    state, reason = detect_cookie_health(cookie_str)
+    if state != HEALTH_OK:
+        raise ValueError(f"Cookie 无效（{state}）：{reason}，未保存任何改动。")
+    save_cookies_to_config(config_path, cookie_str)
 
 
 def save_cookies_encrypted(config_path: str, cookie_str: str) -> None:

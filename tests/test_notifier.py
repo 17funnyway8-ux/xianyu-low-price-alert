@@ -196,6 +196,109 @@ class TestEmailNotifier(unittest.TestCase):
         self.assertIsInstance(sent_body, str)
 
 
+class TestNotifierMessage(unittest.TestCase):
+    """v1.8：notify_message / safe_notify_message / notify_plain_message。"""
+
+    def test_console_notify_message_prints(self) -> None:
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            ConsoleNotifier().notify_message("标题", "正文")
+        output = buffer.getvalue()
+        self.assertIn("标题", output)
+        self.assertIn("正文", output)
+
+    @mock.patch("xianyu_alert.notifier.requests.post")
+    def test_serverchan_message_payload(self, mock_post: mock.MagicMock) -> None:
+        mock_post.return_value = mock.Mock(status_code=200)
+        ServerChanNotifier("KEY").notify_message("标题", "正文")
+        args, kwargs = mock_post.call_args
+        self.assertEqual(kwargs["data"]["title"], "标题")
+        self.assertEqual(kwargs["data"]["desp"], "正文")
+
+    @mock.patch("xianyu_alert.notifier.smtplib.SMTP")
+    def test_email_message_subject_and_body(self, mock_smtp: mock.MagicMock) -> None:
+        import base64
+        from email.header import decode_header
+
+        server = mock_smtp.return_value
+        notifier = EmailNotifier("smtp.x.com", 587, "u@x.com", "p", "a@x.com")
+        notifier.notify_message("标题", "正文")
+        sent = server.sendmail.call_args[0][2]
+        # Subject 头被 MIME base64 编码，需解码断言
+        subject_line = next(line for line in sent.splitlines() if line.startswith("Subject:"))
+        subject_value = subject_line.split(":", 1)[1].strip()
+        decoded_subject = "".join(
+            part.decode(charset or "utf-8") if isinstance(part, bytes) else part
+            for part, charset in decode_header(subject_value)
+        )
+        self.assertEqual(decoded_subject, "标题")
+        # 正文也是 base64 编码
+        self.assertIn(base64.b64encode("正文".encode("utf-8")).decode("ascii"), sent)
+
+    @mock.patch("xianyu_alert.notifier.requests.post")
+    def test_telegram_message_text(self, mock_post: mock.MagicMock) -> None:
+        mock_post.return_value = mock.Mock(status_code=200)
+        TelegramNotifier("T", "1").notify_message("标题", "正文")
+        self.assertEqual(mock_post.call_args.kwargs["data"]["text"], "标题\n\n正文")
+
+    @mock.patch("xianyu_alert.notifier.requests.get")
+    def test_bark_message_text(self, mock_get: mock.MagicMock) -> None:
+        mock_get.return_value = mock.Mock(status_code=200)
+        BarkNotifier("https://api.day.app/K/").notify_message("标题", "正文")
+        url = mock_get.call_args[0][0]
+        import urllib.parse
+
+        self.assertIn("标题", urllib.parse.unquote(url))
+
+    @mock.patch("xianyu_alert.notifier.requests.post")
+    def test_webhook_message_content(self, mock_post: mock.MagicMock) -> None:
+        mock_post.return_value = mock.Mock(status_code=200)
+        WebhookNotifier("https://x/hook").notify_message("标题", "正文")
+        payload = json.loads(mock_post.call_args.kwargs["data"])
+        self.assertEqual(payload["text"]["content"], "标题\n\n正文")
+
+    def test_safe_notify_message_swallows(self) -> None:
+        """safe_notify_message 失败只 warning 返回 False。"""
+        notifier = ServerChanNotifier("KEY")
+        with mock.patch.object(notifier, "notify_message", side_effect=RuntimeError("boom")):
+            with self.assertLogs("xianyu_alert.notifier", level="WARNING"):
+                self.assertFalse(notifier.safe_notify_message("标题", "正文"))
+
+    def test_safe_notify_message_ok(self) -> None:
+        notifier = ConsoleNotifier()
+        self.assertTrue(notifier.safe_notify_message("标题", "正文"))
+
+    def test_notify_plain_message_sends_all(self) -> None:
+        """notify_plain_message 向全部通知器发送；单个失败不影响其它。"""
+        received: list = []
+
+        class FakeNotifier(Notifier):
+            name = "fake"
+
+            def __init__(self, raise_error: bool = False) -> None:
+                self.raise_error = raise_error
+
+            def notify(self, products: list) -> None:  # type: ignore[override]
+                pass
+
+            def notify_message(self, title: str, text: str) -> None:
+                if self.raise_error:
+                    raise RuntimeError("boom")
+                received.append((title, text))
+
+        from xianyu_alert.notifier import notify_plain_message
+
+        notify_plain_message(
+            [FakeNotifier(raise_error=True), FakeNotifier()], "标题", "正文"
+        )
+        self.assertEqual(received, [("标题", "正文")])
+
+    def test_notify_plain_message_empty(self) -> None:
+        from xianyu_alert.notifier import notify_plain_message
+
+        notify_plain_message([], "标题", "正文")  # 不抛
+
+
 class TestBuildNotifiers(unittest.TestCase):
     """build_notifiers 工厂测试。"""
 

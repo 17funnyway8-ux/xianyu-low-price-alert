@@ -91,7 +91,7 @@ def make_app_config(pool=None, cookies="", ftype="mtop") -> dict:
 class TestCookiePoolRotationExtra(unittest.TestCase):
     """取模越界 / 负数轮次 / 重复名称 / 损坏密文跳过。"""
 
-    def _cfg(self, pool_items, cookies="FALLBACK") -> MonitorConfig:
+    def _cfg(self, pool_items, cookies="_m_h5_tk=fb_9999999999999; c=1") -> MonitorConfig:
         cfg = MonitorConfig(interval_seconds=600, cookies=cookies)
         cfg.cookie_pool = [CookiePoolItem(**item) for item in pool_items]
         return cfg
@@ -100,31 +100,31 @@ class TestCookiePoolRotationExtra(unittest.TestCase):
         """池 2 条：极大轮次号取模仍正确（1000001 % 2 = 1）。"""
         cfg = self._cfg(
             [
-                {"name": "a", "cookie": "C_A", "enabled": True},
-                {"name": "b", "cookie": "C_B", "enabled": True},
+                {"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True},
+                {"name": "b", "cookie": "_m_h5_tk=cb_9999999999999; c=1", "enabled": True},
             ]
         )
-        self.assertEqual(resolve_cookie_for_round(cfg, 1000001), "C_B")
-        self.assertEqual(resolve_cookie_for_round(cfg, 1000000), "C_A")
+        self.assertEqual(resolve_cookie_for_round(cfg, 1000001), "_m_h5_tk=cb_9999999999999; c=1")
+        self.assertEqual(resolve_cookie_for_round(cfg, 1000000), "_m_h5_tk=ca_9999999999999; c=1")
 
     def test_negative_round_index_uses_python_modulo(self) -> None:
         """负数轮次：Python 取模 -1 % 2 = 1 → 取最后一条（不崩即可）。"""
         cfg = self._cfg(
             [
-                {"name": "a", "cookie": "C_A", "enabled": True},
-                {"name": "b", "cookie": "C_B", "enabled": True},
+                {"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True},
+                {"name": "b", "cookie": "_m_h5_tk=cb_9999999999999; c=1", "enabled": True},
             ]
         )
-        self.assertEqual(resolve_cookie_for_round(cfg, -1), "C_B")
+        self.assertEqual(resolve_cookie_for_round(cfg, -1), "_m_h5_tk=cb_9999999999999; c=1")
 
     def test_single_enabled_pool_always_that_cookie(self) -> None:
         """池只有 1 条启用：任何轮次都取它，不回退单值。"""
         cfg = self._cfg(
-            [{"name": "a", "cookie": "C_A", "enabled": True}],
-            cookies="FALLBACK",
+            [{"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True}],
+            cookies="_m_h5_tk=fb_9999999999999; c=1",
         )
         for i in range(5):
-            self.assertEqual(resolve_cookie_for_round(cfg, i), "C_A")
+            self.assertEqual(resolve_cookie_for_round(cfg, i), "_m_h5_tk=ca_9999999999999; c=1")
 
     def test_broken_cipher_entry_skipped_parsing(self) -> None:
         """真实损坏密文（dpapi1:!!!!）→ 解密失败返回空 → 解析时跳过，不崩。"""
@@ -139,19 +139,19 @@ class TestCookiePoolRotationExtra(unittest.TestCase):
     def test_duplicate_name_keeps_first(self) -> None:
         """重复名称条目：保留首个，后续跳过。"""
         raw = [
-            {"name": "同", "cookie": "C_A", "enabled": True},
-            {"name": "同", "cookie": "C_B", "enabled": True},
+            {"name": "同", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": True},
+            {"name": "同", "cookie": "_m_h5_tk=cb_9999999999999; c=1", "enabled": True},
         ]
         cfg = config_from_dict(make_app_config(pool=raw))
         self.assertEqual(len(cfg.monitor.cookie_pool), 1)
-        self.assertEqual(cfg.monitor.cookie_pool[0].cookie, "C_A")
+        self.assertEqual(cfg.monitor.cookie_pool[0].cookie, "_m_h5_tk=ca_9999999999999; c=1")
 
     def test_pool_all_disabled_monitor_injection(self) -> None:
         """Monitor 集成：池全 disabled → 每轮注入单值回退 Cookie。"""
         cfg = config_from_dict(
             make_app_config(
-                pool=[{"name": "a", "cookie": "C_A", "enabled": False}],
-                cookies="FALLBACK",
+                pool=[{"name": "a", "cookie": "_m_h5_tk=ca_9999999999999; c=1", "enabled": False}],
+                cookies="_m_h5_tk=fb_9999999999999; c=1",
             )
         )
         used: list = []
@@ -167,7 +167,7 @@ class TestCookiePoolRotationExtra(unittest.TestCase):
             monitor.run_once()
         finally:
             storage.close()
-        self.assertEqual(used, ["FALLBACK", "FALLBACK"])
+        self.assertEqual(used, ["_m_h5_tk=fb_9999999999999; c=1", "_m_h5_tk=fb_9999999999999; c=1"])
 
 
 # ---------------------------------------------------------------------- #

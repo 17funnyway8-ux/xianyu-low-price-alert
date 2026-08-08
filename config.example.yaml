@@ -52,10 +52,16 @@ monitor:
   # 闲鱼登录态 Cookie（形如 "cookie2=xxx; _m_h5_tk=yyy_1700000000000"）。
   # 使用 mtop 抓取时**必填**：匿名请求必定被风控拦截，拿不到任何商品数据。
   # 请用 `python -m xianyu_alert.cli login` 或图形界面「Cookie 管理」→「如何获取 Cookie？」手动步骤填写。
+  # v1.8：`cli login` 保存前会自动校验（过期/缺 _m_h5_tk/无法解密 → 拒绝保存）；
+  #       `cli cookie status` 可只检测不写入（脱敏回显，适合脚本巡检）。
   # v3 起 GUI 保存会以 DPAPI 密文（dpapi1: 前缀）落盘，加载时自动解密；
   # 明文也兼容（向后兼容），但建议加密。
   cookies: ""
   # cookies_encrypted: false   # 是否已加密（由保存路径自动维护，一般无需手改）
+
+  # --- v1.8 Cookie 过期自动检测/提醒（可选）---
+  # cookie_alert_enabled: true   # Cookie 过期/即将过期时是否通过全部通知通道提醒（默认 true）
+  # cookie_check_interval_seconds: 0   # 健康检测节流秒数；0 = 每轮检测（默认，纯本地零开销）
 
   # --- v3.2 多账号 Cookie 池（可选）---
   # 可配置多个闲鱼账号 Cookie，监控时**按轮次轮换取用**（分摊风控）。

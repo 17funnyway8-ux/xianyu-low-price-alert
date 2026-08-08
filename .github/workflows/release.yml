@@ -1,0 +1,196 @@
+# =============================================================================
+# 闲鱼低价提醒工具 · 双平台 CI（自动构建 + 发布 Release）
+#
+# 触发：
+#   - push 打 tag v*（如 v1.8.0）→ 构建两个平台产物并发布 GitHub Release
+#   - workflow_dispatch 手动触发（兜底）：可填 tag 直接发布；留空则只构建验证
+#
+# 流程：
+#   build-windows ─┐
+#                  ├─> release（创建 Release，上传英文名资产）
+#   build-macos ───┘
+#
+# 设计要点（对齐 docs/维护交接文档.md §6）：
+#   - Windows 标准版 spec：onefile + windowed，spec 内已排除 PySide6/playwright，
+#     upx=False（两坑均在 spec 内处理，CI 无需额外配置）
+#   - macOS：必须在 arm64 runner（macos-14）上构建（spec target_arch='arm64'，
+#     PyInstaller 不支持交叉打包）；构建后 ad-hoc 签名
+#   - 资产一律英文名：gh 上传中文文件名会变 default.exe（§6.4 教训）
+#   - build/icon.icns 已入库；工作流内含「缺失才生成」兜底步骤
+# =============================================================================
+
+name: Build & Release (Windows + macOS)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布 tag（如 v1.8.0）；留空则只构建不发布'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Windows：跑测试 + PyInstaller onefile exe
+  # ---------------------------------------------------------------------------
+  build-windows:
+    name: Build Windows exe
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # tag push 用 ref_name；workflow_dispatch 手动填 tag 时用输入值
+      ASSET_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies (runtime + build, 不含 PySide6/playwright)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Run tests (全 mock，无外网依赖)
+        run: python -m unittest discover -s tests
+
+      - name: Build exe (PyInstaller standard spec)
+        run: python -m PyInstaller "build/闲鱼低价提醒工具.spec" --noconfirm
+
+      - name: Verify exe exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/闲鱼低价提醒工具.exe")) {
+            throw "构建失败：dist/闲鱼低价提醒工具.exe 不存在"
+          }
+
+      - name: Rename to English asset name (gh 中文名会变 default.exe)
+        shell: pwsh
+        run: |
+          Copy-Item "dist/闲鱼低价提醒工具.exe" "xianyu-low-price-alert-win64-$env:ASSET_TAG.exe"
+          Get-Item "xianyu-low-price-alert-win64-$env:ASSET_TAG.exe" | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xianyu-low-price-alert-win64
+          path: xianyu-low-price-alert-win64-${{ env.ASSET_TAG }}.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # macOS：跑测试 + 冒烟 + PyInstaller .app + ad-hoc 签名 + zip
+  # 注意：必须在 arm64 runner（macos-14）上构建，spec target_arch='arm64'
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: Build macOS .app (arm64)
+    runs-on: macos-14
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      ASSET_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies (runtime + PySide6 + build)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-macos.txt -r requirements-build.txt
+
+      - name: Run tests (全 mock，无外网依赖)
+        run: python -m unittest discover -s tests
+
+      - name: Offline smoke test (mock 冒烟)
+        run: python -m xianyu_alert.cli once --config mock_smoke.yaml
+
+      - name: Ensure icon.icns (已入库；缺失时兜底生成)
+        run: |
+          if [ ! -f build/icon.icns ]; then
+            echo "==> build/icon.icns 缺失，从 icon.ico 生成（兜底）"
+            python build/make_icns.py --input icon.ico --output-dir build/iconset
+            bash build/make_icns.sh build/iconset build/icon.icns
+          else
+            echo "==> build/icon.icns 已存在，直接使用"
+          fi
+
+      # 不要加 --clean：fresh runner 无旧缓存，且避免清理 PyInstaller 缓存问题
+      - name: Build .app (PyInstaller macOS spec, arm64/windowed)
+        run: python -m PyInstaller "build/macos_闲鱼低价提醒工具.spec" --noconfirm
+
+      - name: Ad-hoc sign (自用无需开发者证书)
+        run: codesign --force --deep --sign - "dist/闲鱼低价提醒工具.app"
+
+      - name: Verify app + signature + arch
+        run: |
+          test -d "dist/闲鱼低价提醒工具.app" || { echo "错误：.app 未生成"; exit 1; }
+          codesign --verify --deep "dist/闲鱼低价提醒工具.app" || { echo "错误：codesign --verify 未通过"; exit 1; }
+          file "dist/闲鱼低价提醒工具.app/Contents/MacOS/闲鱼低价提醒工具"
+
+      - name: Package zip (English asset name)
+        run: ditto -c -k --keepParent "dist/闲鱼低价提醒工具.app" "xianyu-low-price-alert-macos-arm64-${{ env.ASSET_TAG }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xianyu-low-price-alert-macos-arm64
+          path: xianyu-low-price-alert-macos-arm64-${{ env.ASSET_TAG }}.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Release：等两个构建 job 成功后创建 Release 并上传英文名资产
+  #   - tag push：用当前 tag
+  #   - workflow_dispatch 填了 tag：用输入 tag
+  #   - workflow_dispatch 未填 tag：跳过发布（仅用于构建验证兜底）
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos]
+    if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts (merge 到同一目录)
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -la release-assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: release-assets/*
+          draft: false
+          generate_release_notes: true

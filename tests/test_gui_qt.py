@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QMessageBox
     from PySide6.QtCore import QCoreApplication
     import yaml  # noqa: E402
 
@@ -459,6 +459,88 @@ class TestMessageDispatch(unittest.TestCase):
                 # state running False → 按钮恢复
                 app_win._handle_ui_message("state", {"running": False})
                 self.assertTrue(app_win.tab_run.btn_start.isEnabled())
+            finally:
+                app_win.close()
+                _APP.processEvents()
+
+
+@unittest.skipUnless(QT_AVAILABLE, "PySide6 不可用，跳过 Qt 测试")
+class TestV18GuiControls(unittest.TestCase):
+    """v1.8（A6）：Qt 一键刷新入口 / Cookie 管理刷新能力 / mtime 检测。"""
+
+    def test_tab_config_has_refresh_button_and_signal(self) -> None:
+        from xianyu_alert.gui import config_to_form
+        from xianyu_alert.gui_qt.tab_config import MonitorConfigTab
+
+        with tempfile.TemporaryDirectory() as tmp:
+            form = config_to_form(_make_config_dict(tmp))
+            tab = MonitorConfigTab(form)
+            self.assertEqual(tab.btn_refresh_cookie.text(), "🔄 一键刷新 Cookie")
+            emitted: list = []
+            tab.refresh_cookie_requested.connect(lambda: emitted.append(True))
+            tab.btn_refresh_cookie.click()
+            _APP.processEvents()
+            self.assertEqual(emitted, [True])
+
+    def test_refresh_cookie_dialog_validates(self) -> None:
+        from xianyu_alert.gui_qt.dialogs import RefreshCookieDialog
+
+        dlg = RefreshCookieDialog()
+        dlg.edit_cookie.setPlainText("cookie2=only")  # 缺 _m_h5_tk
+        with mock.patch("xianyu_alert.gui_qt.dialogs.QMessageBox.critical") as crit:
+            dlg._on_save()
+        self.assertTrue(crit.called)
+        self.assertEqual(dlg.cookie(), "")  # 未保存
+
+        dlg.edit_cookie.setPlainText("_m_h5_tk=t; c=1")  # 无时间戳 → ok（历史样本兼容）
+        dlg._on_save()
+        self.assertEqual(dlg.cookie(), "_m_h5_tk=t; c=1")
+
+    def test_cookie_dialog_has_refresh_and_auto_disable(self) -> None:
+        from xianyu_alert.gui_qt.dialogs import CookieDialog
+
+        dlg = CookieDialog(
+            cookie_pool=[
+                {"name": "a", "cookie": "_m_h5_tk=t; c=1", "enabled": True},
+            ]
+        )
+        self.assertEqual(dlg.btn_refresh.text(), "🔄 刷新选中")
+        self.assertEqual(dlg.btn_disable_expired.text(), "⏹ 自动停用过期项")
+        # 自动停用：过期条目被停用（确认 mock）
+        expired = "_m_h5_tk=abc_1000000000000; c=1"
+        dlg._pool.append({"name": "bad", "cookie": expired, "enabled": True})
+        with mock.patch("xianyu_alert.gui_qt.dialogs.QMessageBox.question", return_value=QMessageBox.Yes):
+            dlg._on_auto_disable()
+        bad = next(e for e in dlg._pool if e["name"] == "bad")
+        self.assertFalse(bad["enabled"])  # enabled=false 保留条目
+        good = next(e for e in dlg._pool if e["name"] == "a")
+        self.assertTrue(good["enabled"])
+
+    def test_app_mtime_detection(self) -> None:
+        from xianyu_alert.gui_qt.app import XianyuAlertQtApp
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = _write_config(tmp)
+            app_win = XianyuAlertQtApp(config_path=config_path)
+            try:
+                self.assertIsNotNone(app_win._config_mtime)
+                # 外部修改 → 弹重载询问（mock Yes）→ 关键词重载
+                _write_config(tmp)  # 重新写入（内容相同，但显式拨快 mtime 模拟外部修改）
+                import time as _time
+
+                os.utime(config_path, (_time.time() + 2, _time.time() + 2))
+                with mock.patch(
+                    "xianyu_alert.gui_qt.app.QMessageBox.question", return_value=QMessageBox.Yes
+                ) as q:
+                    app_win._check_config_mtime()
+                self.assertTrue(q.called)
+                # 本进程保存 → 快照更新，不再触发
+                app_win._touch_config_mtime()
+                with mock.patch(
+                    "xianyu_alert.gui_qt.app.QMessageBox.question", return_value=QMessageBox.Yes
+                ) as q2:
+                    app_win._check_config_mtime()
+                self.assertFalse(q2.called)
             finally:
                 app_win.close()
                 _APP.processEvents()

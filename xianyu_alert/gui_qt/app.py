@@ -43,6 +43,7 @@ from ..gui import (
     about_full_text,
     blacklist_alert_row,
     channel_is_complete,
+    config_file_mtime,
     make_sample_product,
     normalize_channel_options,
     save_raw_config,
@@ -94,6 +95,8 @@ class XianyuAlertQtApp(QMainWindow):
         self.setMinimumSize(880, 600)
 
         self._load_form()
+        #: v1.8（C22）：config.yaml 的 mtime 快照，用于检测外部修改
+        self._config_mtime: Optional[float] = config_file_mtime(self.config_path)
         self._build_tabs()
         self._build_menu_bar()
         self._build_status_bar()
@@ -136,6 +139,7 @@ class XianyuAlertQtApp(QMainWindow):
         # 页签 → 主窗口信号接线
         self.tab_config.save_requested.connect(self._save_config)
         self.tab_config.cookie_changed.connect(self._refresh_cookie_light)
+        self.tab_config.refresh_cookie_requested.connect(self.on_refresh_cookie)
         self.tab_notify.test_requested.connect(self._test_channel)
         self.tab_run.start_requested.connect(self.on_start)
         self.tab_run.stop_requested.connect(self.on_stop)
@@ -223,6 +227,8 @@ class XianyuAlertQtApp(QMainWindow):
 
         self._raw_config = data
         self._storage_path = str(data.get("storage", {}).get("path") or DEFAULT_DB_PATH)
+        # v1.8（C22）：本进程保存后更新 mtime 快照，避免触发「外部修改」重载提示
+        self._touch_config_mtime()
         enabled = [c["type"] for c in data.get("notify", {}).get("channels", [])]
         self.tab_run.append_log(
             "INFO",
@@ -254,6 +260,75 @@ class XianyuAlertQtApp(QMainWindow):
                 "开始监控后真实抓取将失败。\n\n"
                 "请点击「Cookie 管理」→「如何获取 Cookie？」按手动步骤补充登录态。",
             )
+
+    # ------------------------------------------------------------------ #
+    # v1.8（C7/C17/C22）：一键刷新 Cookie + config 外部修改检测
+    # ------------------------------------------------------------------ #
+    def on_refresh_cookie(self) -> None:
+        """「🔄 一键刷新 Cookie」：引导式刷新 → 校验 → 加密回写 → 内存态同步。
+
+        打开 RefreshCookieDialog（三步）；校验通过后更新 tab_config 单值 Cookie，
+        再走 `_save_config()` 统一加密落盘（Fernet）+ 状态灯即时变绿（C17）。
+        """
+        from .dialogs import RefreshCookieDialog
+
+        dlg = RefreshCookieDialog(parent=self)
+        if dlg.exec() != RefreshCookieDialog.Accepted:
+            return
+        new_cookie = dlg.cookie()
+        self.tab_config.set_single_cookie(new_cookie)
+        try:
+            self._save_config()
+        except Exception as exc:  # noqa: BLE001 - 保存失败给出提示
+            QMessageBox.critical(self, "保存失败", f"刷新 Cookie 保存失败：{exc}")
+            return
+        self.tab_run.append_log(
+            "INFO",
+            f"[{datetime.now():%H:%M:%S}] ✅ Cookie 已更新并加密保存，下一轮将生效（脱敏："
+            f"{self._mask(new_cookie)}）",
+        )
+        QMessageBox.information(self, "刷新成功", "Cookie 已更新并加密保存，下一轮将生效。")
+
+    @staticmethod
+    def _mask(cookie: str) -> str:
+        """Cookie 脱敏回显（C19）。"""
+        from .. import secure
+
+        return secure.mask_cookie(cookie) or "（空）"
+
+    def _touch_config_mtime(self) -> None:
+        """本进程保存后更新 mtime 快照，避免「自己保存」触发重载提示。"""
+        self._config_mtime = config_file_mtime(self.config_path)
+
+    def _check_config_mtime(self) -> None:
+        """比对磁盘 mtime 与快照；外部修改 → 弹「是否重载？」询问（C22）。"""
+        current = config_file_mtime(self.config_path)
+        if current is None or self._config_mtime is None:
+            return
+        if abs(current - self._config_mtime) > 0.001:
+            proceed = QMessageBox.question(
+                self,
+                "配置文件已被外部修改",
+                f"检测到配置文件已被外部修改：\n{os.path.abspath(self.config_path)}\n\n是否立即重载？",
+            )
+            if proceed == QMessageBox.Yes:
+                try:
+                    self._reload_config_from_disk()
+                except Exception as exc:  # noqa: BLE001 - 重载失败只记日志
+                    self.tab_run.append_log("ERROR", f"[{datetime.now():%H:%M:%S}] 重载配置失败：{exc}")
+            self._touch_config_mtime()
+
+    def _reload_config_from_disk(self) -> None:
+        """从磁盘重载配置到内存态并刷新页签（C22 用户确认后调用）。"""
+        self._load_form()
+        self._storage_path = str(self._form.get("storage_path") or DEFAULT_DB_PATH)
+        self.tab_config.reload_from_form(self._form)
+        self.tab_notify.reload_from_form(self._form)
+        self.tab_run.append_log(
+            "INFO",
+            f"[{datetime.now():%H:%M:%S}] 检测到配置文件被外部修改，已重载：{os.path.abspath(self.config_path)}",
+        )
+        self._touch_config_mtime()
 
     # ------------------------------------------------------------------ #
     # 菜单动作
@@ -387,11 +462,15 @@ class XianyuAlertQtApp(QMainWindow):
             self.tab_run.append_log(level, text)
 
     def _tick(self) -> None:
-        """每秒状态刷新：倒计时 / 状态栏。"""
+        """每秒状态刷新：倒计时 / 状态栏 / config 外部修改检测（C22）。"""
         if self._worker is not None and self._worker.isRunning():
             next_run = getattr(self._worker, "_next_run_at", 0.0)
             self.tab_run.set_next_run_at(next_run)
         self.tab_run.refresh_status(time.monotonic())
+        try:
+            self._check_config_mtime()
+        except Exception as exc:  # noqa: BLE001 - mtime 检测失败不影响主流程
+            logger.debug("config mtime 检测异常：%s", exc)
 
     # ------------------------------------------------------------------ #
     # 通知通道测试

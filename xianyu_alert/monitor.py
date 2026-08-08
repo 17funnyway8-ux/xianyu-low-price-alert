@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -28,6 +30,17 @@ from .notifier import Notifier
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
+
+#: v1.8：Cookie 过期提醒触发状态集（共享知识 4）。
+#: expiring 单独用「即将过期」文案，其余统一用「已过期/无效，请刷新」文案。
+_COOKIE_ALERT_STATES = {"expired", "expiring", "missing", "no_token", "invalid_encrypt"}
+
+#: v1.8：过期/即将过期提醒的刷新指引（不含 Cookie 明文，C19）。
+_COOKIE_ALERT_GUIDE = (
+    "请打开 https://www.goofish.com 登录后重新获取 Cookie，"
+    "并在 GUI 点击「🔄 一键刷新 Cookie」或运行 "
+    "`python -m xianyu_alert.cli login` 更新。"
+)
 
 
 @dataclass
@@ -77,6 +90,8 @@ class Monitor:
         self.last_result: RoundResult = RoundResult()
         #: 已执行轮数（多 Cookie 池轮换的轮次序号来源，从 0 开始递增）
         self._round_no: int = 0
+        #: v1.8：上次 Cookie 健康检测的 monotonic 时间戳（节流用，0=从未检测）
+        self._last_cookie_check_at: float = 0.0
 
     # ------------------------------------------------------------------ #
     def _resolve_cookie(self, round_index: int = 0) -> str:
@@ -106,6 +121,117 @@ class Monitor:
             logger.debug("切换 Cookie 失败（继续使用旧 Cookie）：%s", exc)
 
     # ------------------------------------------------------------------ #
+    def _check_cookie_health_and_alert(self, round_index: int = 0) -> None:
+        """周期检测「本轮将使用的 Cookie」健康并推送提醒（v1.8，去抖）。
+
+        流程（共享知识 4/5/8，检测零网络）：
+          1. fetcher 非 mtop 或 `cookie_alert_enabled=false` → no-op（零成本）；
+          2. 节流：`cookie_check_interval_seconds > 0` 且距上次检测不足 → no-op；
+          3. 解析本轮 Cookie → `detect_cookie_health`；
+          4. 单条去抖：仅状态跃迁（含首次检测，prev=None）时
+             `safe_notify_message` 推送全部通道，meta 表持久化；
+             `expiring` → 「即将过期」文案；其余 → 「已过期/无效」文案；
+             恢复 ok 时写回 ok（再次失效将重新提醒）；
+          5. 池汇总去抖：池健康条目数 < 启用条目数 → 跃迁推送
+             「池中有 N 条 Cookie 已过期/无效」；
+          6. 任何异常 catch 后只 warning，不打断监测循环（C2③）。
+
+        Args:
+            round_index: 本轮使用的轮次序号（已 resolve 的 Cookie 对应序号）。
+        """
+        try:
+            if self.config.fetcher.type != "mtop":
+                return
+            if not getattr(self.config.monitor, "cookie_alert_enabled", True):
+                return
+            throttle = int(getattr(self.config.monitor, "cookie_check_interval_seconds", 0) or 0)
+            now = time.monotonic()
+            if throttle > 0 and self._last_cookie_check_at > 0 and (
+                now - self._last_cookie_check_at
+            ) < throttle:
+                return
+            self._last_cookie_check_at = now
+
+            from .cookie import detect_cookie_health, pool_enabled_cookies, pool_usable_cookies
+            from .notifier import notify_plain_message
+            from .storage import _META_COOKIE_ALERT_PREFIX, _META_COOKIE_POOL_ALERT_KEY
+
+            cookie = self._resolve_cookie(round_index)
+            # 健康检测与去抖指纹以「实际账号身份」为准：当健康过滤导致 resolve
+            # 返回空串时（单值/池条目已过期），回退到配置中的源 Cookie（池条目
+            # 或单值）计算指纹——保证「过期 → 刷新 → 再过期」能按账号身份重新
+            # 提醒（C4），而不是把所有失效都归并到空串指纹上（那会漏报第二轮）。
+            #
+            # 边界（QA 观察项 2）：`invalid_encrypt` 单值场景下指纹退化为空串——
+            # config.py 解析阶段已把无法解密的密文丢弃为 `monitor.cookies=""`，
+            # 本方法看不到密文原文（v1.7 既有行为）。用户可见结果正确：仍收到
+            # missing 状态提醒、文案含刷新指引、不含明文；仅设计文档 §9 第 3 条
+            # 「invalid_encrypt 用密文原文计算指纹」在单值路径无法生效。
+            identity = cookie
+            if not identity:
+                pool_cookies = pool_enabled_cookies(self.config.monitor.cookie_pool or [])
+                if pool_cookies:
+                    identity = pool_cookies[int(round_index) % len(pool_cookies)]
+                else:
+                    identity = str(getattr(self.config.monitor, "cookies", "") or "")
+            state, _reason = detect_cookie_health(identity)
+
+            # 单条去抖 key：cookie_alert_state:<sha1(身份明文)[:12]>（共享知识 3）
+            fingerprint = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:12]
+            meta_key = _META_COOKIE_ALERT_PREFIX + fingerprint
+
+            if state in _COOKIE_ALERT_STATES:
+                prev = self.storage.get_meta_value(meta_key)
+                if state != prev:
+                    if state == "expiring":
+                        title = "闲鱼 Cookie 即将过期"
+                    else:
+                        title = "闲鱼 Cookie 已过期/无效"
+                    notify_plain_message(self.notifiers, title, _COOKIE_ALERT_GUIDE)
+                    self.storage.set_meta_value(meta_key, state)
+            else:
+                # 恢复 ok：写回 ok，再次失效将重新提醒
+                self.storage.set_meta_value(meta_key, "ok")
+
+            # 池汇总（C12）：池健康条目数 < 启用条目数 → degraded 跃迁提醒
+            pool = self.config.monitor.cookie_pool or []
+            enabled_cookies = pool_enabled_cookies(pool)
+            usable_cookies = pool_usable_cookies(pool)
+            enabled_count = len(enabled_cookies)
+            degraded = enabled_count > 0 and len(usable_cookies) < enabled_count
+            degraded_count = enabled_count - len(usable_cookies)
+
+            prev_pool_raw = self.storage.get_meta_value(_META_COOKIE_POOL_ALERT_KEY)
+            prev_degraded = False
+            if prev_pool_raw:
+                try:
+                    prev_pool = json.loads(prev_pool_raw)
+                except json.JSONDecodeError:
+                    prev_pool = {}
+                prev_degraded = bool(prev_pool.get("degraded", False)) if isinstance(prev_pool, dict) else False
+
+            if degraded != prev_degraded:
+                if degraded:
+                    notify_plain_message(
+                        self.notifiers,
+                        "闲鱼 Cookie 池部分失效",
+                        f"池中有 {degraded_count} 条 Cookie 已过期/无效。\n{_COOKIE_ALERT_GUIDE}",
+                    )
+                self.storage.set_meta_value(
+                    _META_COOKIE_POOL_ALERT_KEY,
+                    json.dumps(
+                        {
+                            "degraded": degraded,
+                            "count": degraded_count,
+                            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 - 检测/提醒失败不打断监测循环（C2③）
+            logger.warning("Cookie 健康检测/提醒失败：%s", exc)
+
+    # ------------------------------------------------------------------ #
     def preflight_cookie(self) -> str:
         """启动预检：检查 Cookie 是否缺失 / 过期（只警告，不阻断运行）。
 
@@ -119,9 +245,17 @@ class Monitor:
         """
         if self.config.fetcher.type != "mtop":
             return ""
-        from .cookie import cookie_expiry_status
+        from .cookie import cookie_expiry_status, pool_enabled_cookies
 
         cookie = self._resolve_cookie(0)
+        if not cookie:
+            # v1.8：健康过滤导致 resolve 返回空串（如单值/池条目已过期）时，
+            # 回退到源 Cookie 身份检测，保证预检仍提示「过期」而非「未配置」。
+            pool_cookies = pool_enabled_cookies(self.config.monitor.cookie_pool or [])
+            if pool_cookies:
+                cookie = pool_cookies[0 % len(pool_cookies)]
+            else:
+                cookie = str(getattr(self.config.monitor, "cookies", "") or "")
         status = cookie_expiry_status(cookie)
         messages = {
             "missing": "未配置登录 Cookie，mtop 真实抓取将失败，请先获取 Cookie。",
@@ -160,6 +294,9 @@ class Monitor:
         cookie = self._resolve_cookie(self._round_no)
         self._apply_cookie(cookie)
         self._round_no += 1
+        # v1.8：resolve 后、关键词循环前，对「本轮将使用的 Cookie」做健康检测
+        # 与过期提醒（fetcher!=mtop / 开关关 → no-op；去抖见方法内部）。
+        self._check_cookie_health_and_alert(self._round_no - 1)
 
         result = RoundResult()
 

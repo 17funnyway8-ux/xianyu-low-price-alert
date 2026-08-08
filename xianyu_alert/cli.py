@@ -27,11 +27,12 @@ from .cookie import (
     acquire_via_playwright,
     acquire_via_prompt,
     ensure_cookie_encrypted,
-    save_cookies_to_config,
+    save_cookies_validated,
 )
 from .fetcher import Fetcher, build_fetcher
 from .monitor import Monitor
 from .notifier import Notifier, build_notifiers
+from .singleton import acquire_instance_lock, lock_holder_pid, release_instance_lock
 from .storage import Storage
 
 logger = logging.getLogger("xianyu_alert")
@@ -108,6 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
         ("login", "获取闲鱼 Cookie 并写入 monitor.cookies（半自动/粘贴/脚本三种模式）"),
         ("shortcut", "在桌面创建快捷方式（指向本程序 / 打包后的 exe）"),
         ("gui", "启动图形界面（推荐不熟悉命令行的用户）"),
+        ("cookie", "Cookie 相关子命令（当前支持 status：只检测不写入）"),
     ):
         sub = subparsers.add_parser(name, help=help_text)
         sub.add_argument(
@@ -129,6 +131,17 @@ def build_parser() -> argparse.ArgumentParser:
             )
         if name == "shortcut":
             sub.add_argument("--name", default="闲鱼低价提醒工具", help="快捷方式名称（不含 .lnk）")
+        if name == "cookie":
+            # v1.8：`cli cookie status` —— 只检测健康状态，不写入任何配置
+            cookie_subs = sub.add_subparsers(dest="cookie_command")
+            sub_status = cookie_subs.add_parser(
+                "status", help="只检测并打印单值 + Cookie 池健康状态（不写入，适合脚本/ssh 巡检）"
+            )
+            sub_status.add_argument(
+                "-c", "--config", default=DEFAULT_CONFIG_PATH,
+                help=f"配置文件路径（默认 {DEFAULT_CONFIG_PATH}）",
+            )
+            sub_status.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
     return parser
 
@@ -217,8 +230,12 @@ def cmd_login(args: argparse.Namespace) -> int:
         2. Playwright 半自动：打开浏览器让用户登录后自动提取；
         3. Playwright 不可用时降级为终端粘贴模式。
 
-    打包版（frozen）写入后会自动把明文迁移为 DPAPI 密文；
-    源码模式保持明文（便于调试，加密由 GUI 保存路径负责）。
+    v1.8（C15/C20）：任何模式保存前都经 `save_cookies_validated` 校验——
+    非 `ok` 状态（缺 token / 已过期 / 无法解密）**拒绝保存**并给出可操作原因，
+    配置内容保持不变、退出码非 0。
+
+    login = 「首次登录 + 刷新」双重语义（Q3）：GUI 挂机时也可用本命令刷新 Cookie，
+    login 不参与单实例锁（写 config.yaml 不写 SQLite）。
     """
     config_path: str = args.config
 
@@ -226,23 +243,23 @@ def cmd_login(args: argparse.Namespace) -> int:
     cookie_string = getattr(args, "cookie_string", None)
     if cookie_string is not None:
         try:
-            save_cookies_to_config(config_path, cookie_string)
+            save_cookies_validated(config_path, cookie_string)
         except ValueError as exc:
             logger.error("保存失败：%s", exc)
             return 2
         if paths.is_frozen():
             ensure_cookie_encrypted(config_path)
-        print(f"Cookie 已写入 {config_path} 的 monitor.cookies。")
+        print(f"Cookie 已写入 {config_path} 的 monitor.cookies（已校验并加密保存），可运行 once 验证。")
         return 0
 
     # 模式 2：Playwright 半自动
     try:
         cookie_str = acquire_via_playwright()
-        save_cookies_to_config(config_path, cookie_str)
+        save_cookies_validated(config_path, cookie_str)
         if paths.is_frozen():
             ensure_cookie_encrypted(config_path)
         print(
-            f"已自动写入 {config_path} 的 monitor.cookies（含 _m_h5_tk），"
+            f"已自动写入 {config_path} 的 monitor.cookies（含 _m_h5_tk，已校验并加密保存），"
             "可运行 `python -m xianyu_alert.cli once` 验证。"
         )
         return 0
@@ -258,10 +275,10 @@ def cmd_login(args: argparse.Namespace) -> int:
     # 模式 3：降级为终端粘贴
     try:
         cookie_str = acquire_via_prompt()
-        save_cookies_to_config(config_path, cookie_str)
+        save_cookies_validated(config_path, cookie_str)
         if paths.is_frozen():
             ensure_cookie_encrypted(config_path)
-        print(f"Cookie 已写入 {config_path} 的 monitor.cookies。")
+        print(f"Cookie 已写入 {config_path} 的 monitor.cookies（已校验并加密保存）。")
         return 0
     except ValueError as exc:
         logger.error("%s", exc)
@@ -269,6 +286,51 @@ def cmd_login(args: argparse.Namespace) -> int:
     except (KeyboardInterrupt, EOFError):
         logger.info("已被用户取消。")
         return 130
+
+
+def cmd_cookie_status(args: argparse.Namespace) -> int:
+    """执行 `cookie status` 子命令：只检测健康状态，**不写入**任何配置（C10）。
+
+    打印单值 `monitor.cookies` + Cookie 池各条目的健康状态（`detect_cookie_health`），
+    Cookie 一律 `secure.mask_cookie` 脱敏回显（C19），便于脚本 / ssh 远程巡检。
+
+    Args:
+        args: 已解析参数（含 cookie_command / config / verbose）。
+
+    Returns:
+        0 表示检测完成；用法错误返回 1。
+    """
+    if getattr(args, "cookie_command", None) != "status":
+        print("用法：xianyu-alert cookie status [--config 配置文件路径]")
+        return 1
+
+    from . import secure
+    from .cookie import detect_cookie_health
+
+    config = load_config(args.config)
+    print(f"配置文件：{os.path.abspath(args.config)}")
+    print(f"抓取方式：{config.fetcher.type}")
+
+    single = str(config.monitor.cookies or "")
+    state, reason = detect_cookie_health(single)
+    masked = secure.mask_cookie(single) or "（空）"
+    print(f"单值 Cookie：{masked} → {state}（{reason}）")
+
+    pool = config.monitor.cookie_pool or []
+    if pool:
+        print(f"Cookie 池（共 {len(pool)} 条）：")
+        for item in pool:
+            enabled = bool(getattr(item, "enabled", True))
+            cookie = str(getattr(item, "cookie", "") or "")
+            st, rs = detect_cookie_health(cookie)
+            status_text = "启用" if enabled else "停用"
+            print(
+                f"  - {item.name}（{status_text}）：{secure.mask_cookie(cookie) or '（空）'} "
+                f"→ {st}（{rs}）"
+            )
+    else:
+        print("Cookie 池：未配置")
+    return 0
 
 
 def cmd_shortcut(args: argparse.Namespace) -> int:
@@ -353,8 +415,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         "login": cmd_login,
         "shortcut": cmd_shortcut,
         "gui": cmd_gui,
+        "cookie": cmd_cookie_status,
     }
     handler = handlers[args.command]
+
+    # v1.8 单实例锁（L1/L6）：GUI / run / once 都会打开 SQLite 写库，共用一把锁；
+    # 冲突 → stderr 中文提示 + 退出码 2（不阻塞、不抢锁）。
+    # login / list / shortcut / cookie 不参与锁（login 只写 config.yaml、list/cookie 只读）。
+    lock = None
+    if args.command in ("run", "once", "gui"):
+        lock = acquire_instance_lock()
+        if lock is None:
+            holder = lock_holder_pid()
+            print(f"已有实例运行中（PID {holder or '未知'}），请先退出再运行。", file=sys.stderr)
+            return 2
 
     try:
         return handler(args)
@@ -367,6 +441,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:  # noqa: BLE001 - CLI 顶层兜底
         logger.exception("运行失败：%s", exc)
         return 1
+    finally:
+        release_instance_lock(lock)
 
 
 if __name__ == "__main__":

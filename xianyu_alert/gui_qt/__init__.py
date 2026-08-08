@@ -18,6 +18,8 @@ import os
 import sys
 from typing import Optional
 
+from ..singleton import acquire_instance_lock, lock_holder_pid, release_instance_lock
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["is_available", "main"]
@@ -44,9 +46,9 @@ def main(config_path: str = "") -> int:
         config_path: 配置文件路径；空串时使用 paths.default_config_path()。
 
     Returns:
-        进程退出码（Qt 窗口正常退出为 0）。
+        进程退出码（Qt 窗口正常退出为 0；已有实例冲突返回 1）。
     """
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     if config_path == "":
         from .. import paths
@@ -57,12 +59,26 @@ def main(config_path: str = "") -> int:
     if os.environ.get("QT_QPA_PLATFORM") is None and sys.platform not in ("darwin", "win32"):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-    app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("闲鱼低价提醒工具")
-    app.setOrganizationName("xianyu-alert")
+    # v1.8 单实例锁（L5）：检测到已有实例 → 弹中文提示 + 返回非 0，不抢锁。
+    lock = acquire_instance_lock()
+    if lock is None:
+        app = QApplication.instance() or QApplication(sys.argv)
+        QMessageBox.warning(
+            None,
+            "已有实例正在运行",
+            f"已有实例正在运行（PID {lock_holder_pid() or '未知'}），请先关闭再启动。",
+        )
+        return 1
 
-    from .app import XianyuAlertQtApp
+    try:
+        app = QApplication.instance() or QApplication(sys.argv)
+        app.setApplicationName("闲鱼低价提醒工具")
+        app.setOrganizationName("xianyu-alert")
 
-    window = XianyuAlertQtApp(config_path=config_path)
-    window.show()
-    return app.exec()
+        from .app import XianyuAlertQtApp
+
+        window = XianyuAlertQtApp(config_path=config_path)
+        window.show()
+        return app.exec()
+    finally:
+        release_instance_lock(lock)

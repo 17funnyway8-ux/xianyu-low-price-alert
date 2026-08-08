@@ -261,13 +261,25 @@ class CookieDialog(QDialog):
         self.btn_update = QPushButton("✏️ 更新选中")
         self.btn_delete = QPushButton("🗑 删除选中")
         self.btn_toggle = QPushButton("启用/停用")
+        self.btn_refresh = QPushButton("🔄 刷新选中")
+        self.btn_disable_expired = QPushButton("⏹ 自动停用过期项")
         self.btn_default = QPushButton("⭐ 设为默认")
-        for btn in (self.btn_add, self.btn_update, self.btn_delete, self.btn_toggle, self.btn_default):
+        for btn in (
+            self.btn_add,
+            self.btn_update,
+            self.btn_delete,
+            self.btn_toggle,
+            self.btn_refresh,
+            self.btn_disable_expired,
+            self.btn_default,
+        ):
             btn_row.addWidget(btn)
         self.btn_add.clicked.connect(self._on_add)
         self.btn_update.clicked.connect(self._on_update)
         self.btn_delete.clicked.connect(self._on_delete)
         self.btn_toggle.clicked.connect(self._on_toggle)
+        self.btn_refresh.clicked.connect(self._on_refresh_selected)
+        self.btn_disable_expired.clicked.connect(self._on_auto_disable)
         self.btn_default.clicked.connect(self._on_set_default)
         layout.addLayout(btn_row)
 
@@ -384,6 +396,53 @@ class CookieDialog(QDialog):
         self.list_pool.setCurrentRow(idx)
         self._refresh_detail()
 
+    def _on_refresh_selected(self) -> None:
+        """v1.8（C8）：刷新选中 —— 用编辑框中的新 Cookie 替换选中条目（校验后生效）。"""
+        idx = self._selected_index()
+        if idx < 0:
+            QMessageBox.information(self, "提示", "请先在列表中选择一条 Cookie。")
+            return
+        cookie = self.edit_cookie.text().strip()
+        if not cookie:
+            QMessageBox.warning(self, "Cookie 为空", "请粘贴新的 Cookie 内容。")
+            return
+        from ..cookie import detect_cookie_health
+
+        state, reason = detect_cookie_health(cookie)
+        if state != "ok":
+            QMessageBox.critical(self, "校验失败", f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。")
+            return
+        self._pool[idx]["cookie"] = cookie
+        self._refresh_pool()
+        self.list_pool.setCurrentRow(idx)
+        self._refresh_detail()
+
+    def _on_auto_disable(self) -> None:
+        """v1.8（C13）：自动停用过期项 —— 确认后写 `enabled=false` 保留条目。"""
+        from ..cookie import detect_cookie_health
+
+        invalid_indexes = [
+            i
+            for i, e in enumerate(self._pool)
+            if detect_cookie_health(str(e.get("cookie") or ""))[0] not in ("ok", "expiring")
+        ]
+        if not invalid_indexes:
+            QMessageBox.information(self, "无需处理", "池中没有需要停用的过期条目。")
+            return
+        names = "、".join(str(self._pool[i].get("name") or f"#{i + 1}") for i in invalid_indexes)
+        proceed = QMessageBox.question(
+            self,
+            "确认停用",
+            f"将停用 {len(invalid_indexes)} 条过期/无效 Cookie：\n{names}\n\n"
+            "停用后条目仍保留（enabled=false），可在「启用/停用」中恢复。\n\n继续吗？",
+        )
+        if proceed != QMessageBox.Yes:
+            return
+        for i in invalid_indexes:
+            self._pool[i]["enabled"] = False
+        self._refresh_pool()
+        self._refresh_detail()
+
     def _on_set_default(self) -> None:
         """把选中条目的 Cookie 写回单值字段（monitor.cookies）。"""
         entry = self._selected_entry()
@@ -405,3 +464,73 @@ class CookieDialog(QDialog):
     def result_single_cookie(self) -> str:
         """返回单值 Cookie（确认后读取）。"""
         return self._single_cookie
+
+
+class RefreshCookieDialog(QDialog):
+    """v1.8「🔄 一键刷新 Cookie」引导式对话框（C7）。
+
+    三步：① 手动获取说明；② 粘贴 Cookie 或 Playwright 半自动提取；
+    ③ 校验并保存。校验（`detect_cookie_health` 非 ok）拒绝保存并给出原因（C15/C20），
+    回显走 `secure.mask_cookie` 脱敏（C19）。通过后由主窗口统一加密落盘 + 内存态同步。
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("🔄 一键刷新 Cookie")
+        self.resize(620, 440)
+        self._cookie: str = ""
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(COOKIE_MANUAL_HELP))
+        layout.addWidget(QLabel("把新 Cookie 粘贴到下方（须包含 _m_h5_tk=）："))
+        self.edit_cookie = QPlainTextEdit()
+        self.edit_cookie.setPlaceholderText("粘贴整行 Cookie 请求头…")
+        layout.addWidget(self.edit_cookie, 1)
+
+        self.light_status = QLabel("")
+        layout.addWidget(self.light_status)
+
+        btn_row = QHBoxLayout()
+        self.btn_playwright = QPushButton("🖥 Playwright 半自动提取")
+        self.btn_playwright.clicked.connect(self._on_playwright)
+        btn_row.addWidget(self.btn_playwright)
+        btn_row.addStretch(1)
+        self.btn_save = QPushButton("✅ 校验并保存")
+        self.btn_save.clicked.connect(self._on_save)
+        btn_row.addWidget(self.btn_save)
+        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(self.btn_cancel)
+        layout.addLayout(btn_row)
+
+    def _on_playwright(self) -> None:
+        """Playwright 半自动提取（可选依赖，失败提示安装或改用手动粘贴）。"""
+        from ..cookie import PlaywrightUnavailable, acquire_via_playwright
+
+        try:
+            cookie_str = acquire_via_playwright()
+        except PlaywrightUnavailable as exc:
+            QMessageBox.warning(self, "Playwright 不可用", str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - 提取失败给出提示
+            QMessageBox.warning(self, "提取失败", f"自动提取 Cookie 失败：{exc}")
+            return
+        self.edit_cookie.setPlainText(cookie_str)
+
+    def _on_save(self) -> None:
+        """校验并保存（不通过不落盘）。"""
+        from .. import secure
+        from ..cookie import detect_cookie_health
+
+        cookie = self.edit_cookie.toPlainText().strip()
+        state, reason = detect_cookie_health(cookie)
+        if state != "ok":
+            QMessageBox.critical(self, "校验失败", f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。")
+            return
+        self._cookie = cookie
+        self.light_status.setText(f"校验通过（脱敏：{secure.mask_cookie(cookie)}）")
+        self.accept()
+
+    def cookie(self) -> str:
+        """返回校验通过的 Cookie（确认后读取）。"""
+        return self._cookie

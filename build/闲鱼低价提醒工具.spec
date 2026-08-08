@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""标准版 PyInstaller 打包配置（主推交付物）。
+"""标准版 PyInstaller 打包配置（主推交付物，v1.8.0）。
 
 特性：
     - onefile + windowed：双击即用，无需安装 Python / 依赖 / playwright；

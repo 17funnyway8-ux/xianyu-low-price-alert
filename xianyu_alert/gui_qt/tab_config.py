@@ -61,10 +61,12 @@ class MonitorConfigTab(QWidget):
     Signals:
         save_requested(): 用户点击「保存配置」（主窗口统一执行保存）。
         cookie_changed(): Cookie 池 / 单值 Cookie 被修改（主窗口刷新状态灯）。
+        refresh_cookie_requested(): 用户点击「🔄 一键刷新 Cookie」（主窗口处理）。
     """
 
     save_requested = Signal()
     cookie_changed = Signal()
+    refresh_cookie_requested = Signal()
 
     def __init__(self, form: Dict[str, Any], parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -149,6 +151,10 @@ class MonitorConfigTab(QWidget):
         cookie_layout = QHBoxLayout(group_cookie)
         self.light_cookie = StatusLight("")
         cookie_layout.addWidget(self.light_cookie, 1)
+        # v1.8（C7）：一键刷新入口（信号交给主窗口统一处理保存）
+        self.btn_refresh_cookie = QPushButton("🔄 一键刷新 Cookie")
+        self.btn_refresh_cookie.clicked.connect(self.refresh_cookie_requested.emit)
+        cookie_layout.addWidget(self.btn_refresh_cookie)
         self.btn_cookies = QPushButton("🍪 Cookie 管理…")
         self.btn_cookies.clicked.connect(self._on_manage_cookies)
         cookie_layout.addWidget(self.btn_cookies)
@@ -344,6 +350,34 @@ class MonitorConfigTab(QWidget):
     # ------------------------------------------------------------------ #
     # 表单收集
     # ------------------------------------------------------------------ #
+    def set_single_cookie(self, cookie: str) -> None:
+        """v1.8（C17）：一键刷新后写入单值 Cookie 并刷新状态灯（不落盘）。"""
+        self._cookies = str(cookie or "")
+        self._cookies_undecryptable = False
+        self._refresh_cookie_light()
+        self.cookie_changed.emit()
+
+    def reload_from_form(self, form: Dict[str, Any]) -> None:
+        """v1.8（C22）：外部修改 config.yaml 重载后同步本页签状态。"""
+        form = dict(form or {})
+        self._form = form
+        self._keywords = list(form.get("keywords") or [])
+        self._keyword_enabled = dict(form.get("keyword_enabled") or {})
+        self._keyword_filters = dict(form.get("keyword_filters") or {})
+        self._preset_exclude_keywords = resolve_preset_exclude_keywords(
+            form.get("preset_exclude_keywords")
+        )
+        self._cookies = str(form.get("cookies", "") or "")
+        self._cookies_undecryptable = bool(form.get("cookies_undecryptable", False))
+        self._cookie_pool = [dict(e) for e in (form.get("cookie_pool") or [])]
+        self._storage_path = str(form.get("storage_path") or DEFAULT_DB_PATH)
+        self.spin_interval.setValue(int(form.get("interval", 600)))
+        self.spin_pages.setValue(int(form.get("pages", 1)))
+        self.edit_user_agent.setText(str(form.get("user_agent", "") or ""))
+        self.combo_fetcher.setCurrentText(fetcher_label(form.get("fetcher_type", "mtop")))
+        self._refresh_table()
+        self._refresh_cookie_light()
+
     def collect_config(self) -> Dict[str, Any]:
         """收集本页签全部表单状态（供主窗口组装配置字典）。
 

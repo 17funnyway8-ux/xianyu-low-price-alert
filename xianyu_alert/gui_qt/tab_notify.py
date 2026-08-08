@@ -107,6 +107,27 @@ class NotifyConfigTab(QWidget):
         self._channels[ctype]["enabled"] = enabled
         btn_test.setEnabled(enabled)
 
+    def reload_from_form(self, form: Dict[str, Any]) -> None:
+        """v1.8（C22）：外部修改 config.yaml 重载后同步本页签状态。"""
+        raw_channels = (form or {}).get("channels") or {}
+        for ctype in CHANNEL_ORDER:
+            state = dict(raw_channels.get(ctype) or {})
+            enabled = bool(state.get("enabled", False))
+            options = dict(state.get("options") or {})
+            check, edits = self._widgets[ctype]
+            check.blockSignals(True)
+            check.setChecked(enabled)
+            check.blockSignals(False)
+            for field_name, edit in edits.items():
+                edit.setText(str(options.get(field_name, "")))
+            self._channels[ctype] = {"enabled": enabled, "options": options}
+        if not any(v["enabled"] for v in self._channels.values()):
+            check, _edits = self._widgets["console"]
+            check.blockSignals(True)
+            check.setChecked(True)
+            check.blockSignals(False)
+            self._channels["console"]["enabled"] = True
+
     # ------------------------------------------------------------------ #
     def collect_channels(self) -> Dict[str, Dict[str, Any]]:
         """收集全部通道状态（启用 + 字段值）。

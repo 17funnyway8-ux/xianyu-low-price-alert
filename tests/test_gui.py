@@ -559,6 +559,211 @@ class TestTkAvailability(unittest.TestCase):
                 except Exception:  # noqa: BLE001
                     pass
 
+    def test_v18_refresh_button_exists(self) -> None:
+        """v1.8（A6）：Tk 出现「🔄 一键刷新 Cookie」入口。"""
+        from xianyu_alert.gui import XianyuAlertGUI
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.yaml")
+            save_raw_config(
+                config_path,
+                {
+                    "keywords": [{"keyword": "Switch", "max_price": 800}],
+                    "monitor": {"interval_seconds": 300, "cookies": ""},
+                    "fetcher": {"type": "mock"},
+                    "storage": {"path": os.path.join(tmp, "t.db")},
+                    "notify": {"channels": [{"type": "console"}]},
+                },
+            )
+            import tkinter
+
+            root = tkinter.Toplevel(self.root)
+            root.withdraw()
+            try:
+                app = XianyuAlertGUI(root, config_path=config_path)
+                self.assertEqual(app.btn_refresh_cookie["text"], "🔄 一键刷新 Cookie")
+                self.assertTrue(callable(getattr(app, "on_refresh_cookie", None)))
+                app._remove_log_handler()
+            finally:
+                try:
+                    root.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def test_v18_manage_cookies_has_refresh_buttons(self) -> None:
+        """v1.8（A6/C8/C13）：Cookie 管理对话框含「🔄 刷新选中」「⏹ 自动停用过期项」。"""
+        from xianyu_alert.gui import XianyuAlertGUI
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.yaml")
+            save_raw_config(
+                config_path,
+                {
+                    "keywords": [{"keyword": "Switch", "max_price": 800}],
+                    "monitor": {
+                        "interval_seconds": 300,
+                        "cookies": "",
+                        "cookie_pool": [
+                            {"name": "a", "cookie": "_m_h5_tk=t; c=1", "enabled": True}
+                        ],
+                    },
+                    "fetcher": {"type": "mock"},
+                    "storage": {"path": os.path.join(tmp, "t.db")},
+                    "notify": {"channels": [{"type": "console"}]},
+                },
+            )
+            import tkinter
+            from tkinter import ttk
+
+            root = tkinter.Toplevel(self.root)
+            root.withdraw()
+            try:
+                app = XianyuAlertGUI(root, config_path=config_path)
+
+                def _walk(widget, texts):
+                    found = []
+                    try:
+                        children = widget.winfo_children()
+                    except Exception:  # noqa: BLE001
+                        children = []
+                    for child in children:
+                        try:
+                            if isinstance(child, ttk.Button):
+                                if child["text"] in texts:
+                                    found.append(child["text"])
+                        except Exception:  # noqa: BLE001
+                            pass
+                        found.extend(_walk(child, texts))
+                    return found
+
+                app.on_manage_cookies()
+                texts = _walk(app.root, {"🔄 刷新选中", "⏹ 自动停用过期项"})
+                self.assertIn("🔄 刷新选中", texts)
+                self.assertIn("⏹ 自动停用过期项", texts)
+                app._remove_log_handler()
+            finally:
+                try:
+                    root.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def test_v18_refresh_cookie_saves_fernet(self) -> None:
+        """v1.8（A4/C16/C17）：一键刷新保存后 config 中 cookies 为 fernet1: 密文 + 状态灯变绿。"""
+        from xianyu_alert import secure
+        from xianyu_alert.gui import XianyuAlertGUI
+
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = os.path.join(tmp, "secret.key")
+            secure.set_key_file(key_path)
+            config_path = os.path.join(tmp, "config.yaml")
+            save_raw_config(
+                config_path,
+                {
+                    "keywords": [{"keyword": "Switch", "max_price": 800}],
+                    "monitor": {"interval_seconds": 300, "cookies": ""},
+                    "fetcher": {"type": "mock"},
+                    "storage": {"path": os.path.join(tmp, "t.db")},
+                    "notify": {"channels": [{"type": "console"}]},
+                },
+            )
+            import tkinter
+            from tkinter import ttk
+
+            root = tkinter.Toplevel(self.root)
+            root.withdraw()
+            try:
+                app = XianyuAlertGUI(root, config_path=config_path)
+                # 直接走 on_refresh_cookie 的保存逻辑：更新内存态 → 收集 → 加密落盘
+                new_cookie = "_m_h5_tk=abc_9999999999999; c=1"
+                app._cookies = new_cookie
+                app._cookies_undecryptable = False
+                data = app._collect_config_dict()
+                config_from_dict(data)
+                save_raw_config(config_path, data)
+                app._raw_config = data
+                app._touch_config_mtime()
+                app._refresh_cookie_status()
+
+                with open(config_path, "r", encoding="utf-8") as fp:
+                    loaded = yaml.safe_load(fp)
+                self.assertTrue(
+                    str(loaded["monitor"]["cookies"]).startswith(secure.FERNET_PREFIX)
+                )
+                self.assertTrue(loaded["monitor"]["cookies_encrypted"])
+                # 状态灯即时变绿（C17）
+                state_text = app.var_cookie_status.get()
+                self.assertIn("✅", state_text)
+                app._remove_log_handler()
+            finally:
+                secure.set_key_file(None)
+                try:
+                    root.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def test_v18_config_mtime_detection(self) -> None:
+        """v1.8（C22）：外部修改 config.yaml → 弹重载询问；本进程保存不触发。"""
+        from xianyu_alert.gui import XianyuAlertGUI, config_file_mtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = os.path.join(tmp, "config.yaml")
+            save_raw_config(
+                config_path,
+                {
+                    "keywords": [{"keyword": "Switch", "max_price": 800}],
+                    "monitor": {"interval_seconds": 300, "cookies": ""},
+                    "fetcher": {"type": "mock"},
+                    "storage": {"path": os.path.join(tmp, "t.db")},
+                    "notify": {"channels": [{"type": "console"}]},
+                },
+            )
+            import tkinter
+
+            root = tkinter.Toplevel(self.root)
+            root.withdraw()
+            try:
+                app = XianyuAlertGUI(root, config_path=config_path)
+                app._remove_log_handler()
+                snapshot = app._config_mtime
+                self.assertIsNotNone(snapshot)
+
+                # 外部修改：写入新内容（mtime 变化）
+                save_raw_config(
+                    config_path,
+                    {
+                        "keywords": [{"keyword": "iPhone", "max_price": 500}],
+                        "monitor": {"interval_seconds": 300, "cookies": ""},
+                        "fetcher": {"type": "mock"},
+                        "storage": {"path": os.path.join(tmp, "t.db")},
+                        "notify": {"channels": [{"type": "console"}]},
+                    },
+                )
+                # 文件系统 mtime 精度可能为秒级：显式拨快，保证检测稳定
+                import time as _time
+
+                os.utime(config_path, (_time.time() + 2, _time.time() + 2))
+                from unittest import mock
+
+                with mock.patch(
+                    "xianyu_alert.gui.messagebox.askyesno", return_value=True
+                ) as ask:
+                    app._check_config_mtime()
+                ask.assert_called_once()
+                self.assertEqual(app._keywords, [("iPhone", 500.0)])
+
+                # 本进程保存 → 快照更新，不再触发
+                app._touch_config_mtime()
+                with mock.patch(
+                    "xianyu_alert.gui.messagebox.askyesno", return_value=True
+                ) as ask2:
+                    app._check_config_mtime()
+                ask2.assert_not_called()
+            finally:
+                try:
+                    root.destroy()
+                except Exception:  # noqa: BLE001
+                    pass
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

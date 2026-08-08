@@ -61,6 +61,9 @@ class RecordingNotifier(Notifier):
         self.calls += 1
         self.received.extend(products)
 
+    def notify_message(self, title: str, text: str) -> None:
+        pass
+
 
 class ExplodingNotifier(Notifier):
     """notify 永远抛异常的通道，用于验证 safe_notify 的隔离性。"""
@@ -72,6 +75,9 @@ class ExplodingNotifier(Notifier):
 
     def notify(self, products: List[Product]) -> None:
         self.calls += 1
+        raise RuntimeError("模拟通道故障：网络不可达")
+
+    def notify_message(self, title: str, text: str) -> None:
         raise RuntimeError("模拟通道故障：网络不可达")
 
 

@@ -121,6 +121,50 @@ class TestStorage(unittest.TestCase):
         self.storage.clear_previous_round_ids("Switch")
         self.assertEqual(self.storage.get_previous_round_ids("Switch"), set())
 
+    # ------------------------------------------------------------------ #
+    # v1.8 通用 meta 读写（Cookie 过期提醒去抖状态）
+    # ------------------------------------------------------------------ #
+    def test_meta_value_none_by_default(self) -> None:
+        """未写入的 key 返回 None。"""
+        self.assertIsNone(self.storage.get_meta_value("cookie_alert_state:abc"))
+
+    def test_meta_value_roundtrip(self) -> None:
+        """写入后原样读回，并按 key 隔离。"""
+        self.storage.set_meta_value("cookie_alert_state:abc", "expired")
+        self.assertEqual(self.storage.get_meta_value("cookie_alert_state:abc"), "expired")
+        self.assertIsNone(self.storage.get_meta_value("cookie_alert_state:def"))
+
+    def test_meta_value_upsert(self) -> None:
+        """重复写入同一 key 覆盖旧值（INSERT OR REPLACE 语义）。"""
+        self.storage.set_meta_value("cookie_alert_state:abc", "expired")
+        self.storage.set_meta_value("cookie_alert_state:abc", "ok")
+        self.assertEqual(self.storage.get_meta_value("cookie_alert_state:abc"), "ok")
+
+    def test_meta_value_delete(self) -> None:
+        """delete 幂等：删除后返回 None，重复删除不抛。"""
+        self.storage.set_meta_value("cookie_alert_state:abc", "expired")
+        self.storage.delete_meta_value("cookie_alert_state:abc")
+        self.assertIsNone(self.storage.get_meta_value("cookie_alert_state:abc"))
+        self.storage.delete_meta_value("cookie_alert_state:abc")  # 幂等
+
+    def test_meta_value_persists_across_reopen(self) -> None:
+        """去抖状态跨重启保持（meta 表持久化，C4）。"""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "meta.db")
+            with Storage(db_path) as st:
+                st.set_meta_value("cookie_alert_state:abc", "expired")
+            with Storage(db_path) as st2:
+                self.assertEqual(st2.get_meta_value("cookie_alert_state:abc"), "expired")
+
+    def test_meta_constants_prefix(self) -> None:
+        """常量前缀（共享知识 3）：单条 `cookie_alert_state:` 前缀存在。"""
+        from xianyu_alert.storage import _META_COOKIE_ALERT_PREFIX
+
+        self.assertEqual(_META_COOKIE_ALERT_PREFIX, "cookie_alert_state:")
+
+
     def test_list_notified(self) -> None:
         """list_notified 只返回已提醒的记录。"""
         self.storage.mark_notified(make_product("5001"), self.ts)

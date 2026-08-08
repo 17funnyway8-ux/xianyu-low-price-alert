@@ -70,6 +70,7 @@ from .models import Product
 from .monitor import Monitor
 from .notifier import build_notifier, build_notifiers
 from .shortcut import create_shortcut
+from .singleton import acquire_instance_lock, lock_holder_pid, release_instance_lock
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -191,6 +192,11 @@ DEFAULT_CONFIG_DICT: Dict[str, Any] = {
 #: 功能更新日志（v3.2：「关于」对话框展示版本历史）
 UPDATE_LOG = (
     "## 版本历史\n"
+    "- **v1.8.0** Cookie 过期自动检测与提醒（过期/即将过期推送全部通知通道，状态跃迁去抖）、"
+    "「🔄 一键刷新 Cookie」入口（GUI 校验 + Fernet 加密回写 + 状态灯即时变绿）、"
+    "多 Cookie 池过期条目自动跳过（仅用 ok/expiring 条目轮换）、"
+    "进程单实例锁（GUI / cli run / once 共用一把锁，双开第二实例提示退出）、"
+    "cli login 保存前自动校验（无效 Cookie 拒绝保存）、cli cookie status 只检测不写入\n"
     "- **v1.7.0** 关键词可启用/停用（停用不删除，监控跳过停用词）、"
     "运行日志高亮（新商品/低价命中蓝色加粗、完成绿色、轮次分隔、已下架灰色）、"
     "提醒记录不再显示已售出/下架商品（手动标记 + 详情接口「校验在架」，默认隐藏可切换显示）\n"
@@ -227,6 +233,24 @@ COOKIE_MANUAL_HELP = (
 # ====================================================================== #
 # 纯函数区（不依赖任何 widget，便于单元测试）
 # ====================================================================== #
+def config_file_mtime(path: str) -> Optional[float]:
+    """读取配置文件的修改时间戳（秒）；文件不存在 / 读取失败返回 None。
+
+    v1.8（C22）：GUI 用它在 `_tick` 里检测 config.yaml 是否被外部修改
+    （如挂机时用 `cli login` 刷新 Cookie），本进程保存后需更新快照避免自触发。
+
+    Args:
+        path: 配置文件路径。
+
+    Returns:
+        mtime 秒数；无法读取返回 None。
+    """
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
 def cookie_status(cookie_str: str) -> Tuple[str, str]:
     """判定 Cookie 的状态并给出展示文案（v3 升级为六态）。
 
@@ -1240,6 +1264,8 @@ class XianyuAlertGUI:
 
         # ---- 配置 ----
         self._raw_config: Dict[str, Any] = load_raw_config(self.config_path)
+        #: v1.8（C22）：config.yaml 的 mtime 快照，用于检测外部修改（如挂机时 cli login）
+        self._config_mtime: Optional[float] = config_file_mtime(self.config_path)
         form = config_to_form(self._raw_config)
         self._cookies: str = form["cookies"]
         #: Cookie 原为密文但无法解密（换机/换用户）→ 状态灯显示「无法解密」
@@ -1426,6 +1452,9 @@ class XianyuAlertGUI:
         self.label_cookie.pack(side="left", padx=(0, 10))
         # v3.3：移除「获取 Cookie」按钮（自动登录入口取消）；
         # 手动步骤说明收进「Cookie 管理」对话框的「如何获取 Cookie？」帮助。
+        # v1.8：新增「🔄 一键刷新 Cookie」入口（C7）——引导式三步刷新。
+        self.btn_refresh_cookie = ttk.Button(row3, text="🔄 一键刷新 Cookie", command=self.on_refresh_cookie)
+        self.btn_refresh_cookie.pack(side="left", padx=(8, 0))
         ttk.Button(row3, text="Cookie 管理", command=self.on_manage_cookies).pack(
             side="left", padx=(8, 0)
         )
@@ -1844,12 +1873,88 @@ class XianyuAlertGUI:
                 self.var_countdown.set("下次执行：--:--")
         except Exception:  # noqa: BLE001 - 刷新失败不影响主流程
             pass
+        try:
+            # v1.8（C22）：检测 config.yaml 是否被外部修改（本进程保存会更新快照，不触发）
+            self._check_config_mtime()
+        except Exception:  # noqa: BLE001 - mtime 检测失败不影响主流程
+            pass
         finally:
             if not getattr(self, "_closing", False):
                 try:
                     self._tick_after_id = self.root.after(1000, self._tick)
                 except Exception:  # noqa: BLE001 - 窗口销毁等边缘情况
                     pass
+
+    # ------------------------------------------------------------------ #
+    # v1.8（C22）：config.yaml 外部修改检测 → 提示重载
+    # ------------------------------------------------------------------ #
+    def _touch_config_mtime(self) -> None:
+        """本进程保存后更新 mtime 快照，避免「自己保存」触发重载提示。"""
+        self._config_mtime = config_file_mtime(self.config_path)
+
+    def _check_config_mtime(self) -> None:
+        """比对磁盘 mtime 与快照；外部修改 → 弹「是否重载？」询问（Q7：弹框）。
+
+        用户确认 → 从磁盘重载内存态；拒绝 → 更新快照避免每秒重复弹框。
+        """
+        current = config_file_mtime(self.config_path)
+        if current is None or self._config_mtime is None:
+            return
+        if abs(current - self._config_mtime) > 0.001:
+            proceed = messagebox.askyesno(
+                "配置文件已被外部修改",
+                f"检测到配置文件已被外部修改：\n{os.path.abspath(self.config_path)}\n\n是否立即重载？",
+            )
+            if proceed:
+                try:
+                    self._reload_config_from_disk()
+                except Exception as exc:  # noqa: BLE001 - 重载失败只记日志
+                    self._append_log("ERROR", f"重载配置失败：{exc}")
+            self._touch_config_mtime()
+
+    def _rebuild_keyword_tree(self) -> None:
+        """按内存态重建关键词表格（外部重载 / 重置用）。"""
+        for iid in self.tree_keywords.get_children():
+            self.tree_keywords.delete(iid)
+        for keyword, price in self._keywords:
+            enabled = bool(self._keyword_enabled.get(keyword, True))
+            item = self.tree_keywords.insert(
+                "",
+                "end",
+                values=(
+                    keyword,
+                    f"{price:g}",
+                    keyword_status_text(enabled),
+                    self._filters_summary(keyword),
+                ),
+            )
+            _apply_row_style_if_available(self, item, keyword)
+
+    def _reload_config_from_disk(self) -> None:
+        """从磁盘重载配置到内存态并刷新界面（C22 用户确认后调用）。"""
+        raw = load_raw_config(self.config_path)
+        form = config_to_form(raw)
+        self._raw_config = raw
+        self._cookies = str(form.get("cookies", "") or "")
+        self._cookies_undecryptable = bool(form.get("cookies_undecryptable", False))
+        self._cookie_pool = list(form.get("cookie_pool") or [])
+        self._storage_path = str(form.get("storage_path") or DEFAULT_DB_PATH)
+        self._keywords = list(form.get("keywords") or [])
+        self._keyword_enabled = dict(form.get("keyword_enabled") or {})
+        self._keyword_filters = dict(form.get("keyword_filters") or {})
+        self._preset_exclude_keywords = resolve_preset_exclude_keywords(
+            form.get("preset_exclude_keywords")
+        )
+        # 刷新界面控件
+        self.var_interval.set(str(form.get("interval", 600)))
+        self.var_fetcher.set(fetcher_label(form.get("fetcher_type", "mtop")))
+        self.var_pages.set(str(form.get("pages", 1)))
+        self._rebuild_keyword_tree()
+        self._refresh_cookie_status()
+        self._refresh_first_use_guide()
+        self._refresh_keyword_empty_hint()
+        self._touch_config_mtime()
+        self._append_log("INFO", f"检测到配置文件被外部修改，已重载：{os.path.abspath(self.config_path)}")
 
     def _set_running(self, running: bool) -> None:
         """根据运行状态刷新按钮与状态文案。"""
@@ -2416,6 +2521,8 @@ class XianyuAlertGUI:
 
         self._raw_config = data
         self._storage_path = data["storage"]["path"]
+        # v1.8（C22）：本进程保存后更新 mtime 快照，避免触发「外部修改」重载提示
+        self._touch_config_mtime()
         enabled = [c["type"] for c in data["notify"]["channels"]]
         self._append_log(
             "INFO",
@@ -2528,6 +2635,94 @@ class XianyuAlertGUI:
     # ================================================================== #
     # Cookie 管理（v3.2 多账号 Cookie 池）
     # ================================================================== #
+    def on_refresh_cookie(self) -> None:
+        """「🔄 一键刷新 Cookie」：引导式三步刷新（C7）。
+
+        ① 展示手动获取步骤（COOKIE_MANUAL_HELP）；
+        ② 用户粘贴新 Cookie（或点 Playwright 按钮半自动提取）；
+        ③ 校验（detect_cookie_health 非 ok 拒绝保存，C15）→ Fernet 加密回写
+           config.yaml → 同步内存态 `_cookies` → 状态灯即时变绿（C17）。
+
+        校验失败不落盘，给出可操作原因（C20）。
+        """
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🔄 一键刷新 Cookie")
+        dialog.geometry("640x420")
+        dialog.transient(self.root)
+        dialog.resizable(True, True)
+
+        wrap = ttk.Frame(dialog)
+        wrap.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+
+        ttk.Label(
+            wrap,
+            text=COOKIE_MANUAL_HELP,
+            justify="left",
+            foreground="#555555",
+            wraplength=600,
+        ).pack(fill="x", pady=(0, 6))
+
+        ttk.Label(wrap, text="把新 Cookie 粘贴到下方（须包含 _m_h5_tk=）：").pack(anchor="w")
+        text_cookie = tk.Text(wrap, height=8, wrap="char")
+        text_cookie.pack(fill="both", expand=True, pady=(4, 6))
+
+        def _on_playwright() -> None:
+            """Playwright 半自动提取（可选依赖，失败提示安装或改用手动粘贴）。"""
+            from .cookie import PlaywrightUnavailable, acquire_via_playwright
+
+            try:
+                cookie_str = acquire_via_playwright()
+            except PlaywrightUnavailable as exc:
+                messagebox.showwarning("Playwright 不可用", str(exc), parent=dialog)
+                return
+            except Exception as exc:  # noqa: BLE001 - 提取失败给出提示
+                messagebox.showwarning("提取失败", f"自动提取 Cookie 失败：{exc}", parent=dialog)
+                return
+            text_cookie.delete("1.0", "end")
+            text_cookie.insert("1.0", cookie_str)
+
+        def _on_save() -> None:
+            """校验并保存（不通过不落盘）。"""
+            from .cookie import detect_cookie_health
+
+            new_cookie = text_cookie.get("1.0", "end").strip()
+            state, reason = detect_cookie_health(new_cookie)
+            if state != "ok":
+                messagebox.showerror(
+                    "校验失败",
+                    f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。",
+                    parent=dialog,
+                )
+                return
+            self._cookies = new_cookie
+            self._cookies_undecryptable = False
+            try:
+                data = self._collect_config_dict()  # encrypt_cookies=True → Fernet 回写
+                config_from_dict(data)
+                save_raw_config(self.config_path, data)
+            except (ValueError, ConfigError, OSError) as exc:
+                messagebox.showerror("保存失败", f"写入配置失败：{exc}", parent=dialog)
+                return
+            self._raw_config = data
+            self._touch_config_mtime()
+            self._refresh_cookie_status()
+            self._append_log(
+                "INFO",
+                f"✅ Cookie 已更新并加密保存（脱敏：{secure.mask_cookie(new_cookie) or '（空）'}），下一轮将生效。",
+            )
+            messagebox.showinfo(
+                "刷新成功",
+                "Cookie 已更新并加密保存，下一轮将生效。",
+                parent=dialog,
+            )
+            dialog.destroy()
+
+        btn_row = ttk.Frame(dialog)
+        btn_row.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btn_row, text="🖥 Playwright 半自动提取", command=_on_playwright).pack(side="left")
+        ttk.Button(btn_row, text="✅ 校验并保存", command=_on_save).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="取消", command=dialog.destroy).pack(side="right")
+
     @staticmethod
     def _cookie_health_label(state: str) -> Tuple[str, str]:
         """把 `detect_cookie_health` 状态码映射为（状态灯文案, 颜色）。"""
@@ -2588,8 +2783,16 @@ class XianyuAlertGUI:
         ttk.Button(btn_row, text="✏ 编辑选中", command=lambda: _on_edit_selected()).pack(
             side="left", padx=6
         )
+        # v1.8（C8）：刷新选中 —— 粘贴新 Cookie 替换选中条目（校验后写回内存态）
+        ttk.Button(btn_row, text="🔄 刷新选中", command=lambda: _on_refresh_selected()).pack(
+            side="left", padx=6
+        )
         ttk.Button(btn_row, text="🗑 删除选中", command=lambda: _on_delete()).pack(side="left", padx=6)
         ttk.Button(btn_row, text="⏻ 启用/停用", command=lambda: _on_toggle()).pack(side="left", padx=6)
+        # v1.8（C13）：自动停用过期项 —— 确认后写 enabled=false 保留条目
+        ttk.Button(btn_row, text="⏹ 自动停用过期项", command=lambda: _on_auto_disable()).pack(
+            side="left", padx=6
+        )
         ttk.Button(btn_row, text="🔍 检测全部", command=lambda: _refresh()).pack(side="left", padx=6)
         ttk.Button(btn_row, text="⭐ 设为默认", command=lambda: _on_set_default()).pack(side="left", padx=6)
         # v3.3：手动获取 Cookie 步骤说明（原「获取 Cookie」按钮移除后的保留入口）。
@@ -2758,6 +2961,92 @@ class XianyuAlertGUI:
             item["enabled"] = not bool(item.get("enabled", True))
             _refresh()
 
+        def _on_refresh_selected() -> None:
+            """v1.8（C8）：刷新选中 —— 粘贴新 Cookie 替换选中条目。
+
+            校验（detect_cookie_health 非 ok 拒绝，C15）；通过后更新内存态
+            `self._cookie_pool` 并刷新健康列；落盘由主界面「💾 保存配置」统一完成。
+            """
+            index = _selected_index()
+            if index is None:
+                messagebox.showinfo("提示", "请先在表格中选中要刷新的条目。", parent=dialog)
+                return
+            item = self._cookie_pool[index]
+
+            refresh_dialog = tk.Toplevel(dialog)
+            refresh_dialog.title(f"🔄 刷新 Cookie - {item.get('name', '')}")
+            refresh_dialog.geometry("560x260")
+            refresh_dialog.transient(dialog)
+            refresh_dialog.resizable(False, False)
+
+            frame = ttk.Frame(refresh_dialog, padding=12)
+            frame.pack(fill="both", expand=True)
+            ttk.Label(frame, text="粘贴新的 Cookie 请求头（须包含 _m_h5_tk=）：").pack(anchor="w")
+            text_cookie = tk.Text(frame, height=7, wrap="char")
+            text_cookie.pack(fill="both", expand=True, pady=(2, 6))
+
+            def on_save() -> None:
+                from .cookie import detect_cookie_health
+
+                cookie = text_cookie.get("1.0", "end").strip()
+                if not cookie:
+                    messagebox.showwarning("Cookie 为空", "请粘贴 Cookie 内容。", parent=refresh_dialog)
+                    return
+                state, reason = detect_cookie_health(cookie)
+                if state != "ok":
+                    messagebox.showerror(
+                        "校验失败",
+                        f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。",
+                        parent=refresh_dialog,
+                    )
+                    return
+                item["cookie"] = cookie
+                _refresh()
+                refresh_dialog.destroy()
+                self._append_log(
+                    "INFO",
+                    f"✅ 已刷新 Cookie「{item.get('name', '')}」（脱敏：{secure.mask_cookie(cookie)}），"
+                    "点击主界面「💾 保存配置」落盘。",
+                )
+
+            ttk.Button(frame, text="保存", command=on_save).pack(side="right")
+            ttk.Button(frame, text="取消", command=refresh_dialog.destroy).pack(side="right", padx=(0, 6))
+
+        def _on_auto_disable() -> None:
+            """v1.8（C13）：自动停用过期项 —— 确认后写 `enabled=false` 保留条目。
+
+            对池中检测为 expired / no_token / missing / invalid_encrypt 的条目
+            统一停用（不删除）；写内存态前 `askyesno` 确认，落盘由主界面保存完成。
+            """
+            from .cookie import detect_cookie_health
+
+            invalid_indexes = [
+                i
+                for i, e in enumerate(self._cookie_pool)
+                if detect_cookie_health(str(e.get("cookie") or ""))[0]
+                not in ("ok", "expiring")
+            ]
+            if not invalid_indexes:
+                messagebox.showinfo("无需处理", "池中没有需要停用的过期条目。", parent=dialog)
+                return
+            names = "、".join(
+                str(self._cookie_pool[i].get("name") or f"#{i + 1}") for i in invalid_indexes
+            )
+            if not messagebox.askyesno(
+                "确认停用",
+                f"将停用 {len(invalid_indexes)} 条过期/无效 Cookie：\n{names}\n\n"
+                "停用后条目仍保留（enabled=false），可在「⏻ 启用/停用」中恢复。\n\n继续吗？",
+                parent=dialog,
+            ):
+                return
+            for i in invalid_indexes:
+                self._cookie_pool[i]["enabled"] = False
+            _refresh()
+            self._append_log(
+                "INFO",
+                f"已停用 {len(invalid_indexes)} 条过期/无效 Cookie（保留条目），点击主界面保存落盘。",
+            )
+
         def _on_set_default() -> None:
             """把选中条目设为默认：写入单值 monitor.cookies（立即落盘）。"""
             index = _selected_index()
@@ -2785,6 +3074,8 @@ class XianyuAlertGUI:
             try:
                 save_raw_config(self.config_path, self._raw_config)
                 saved = True
+                # v1.8（C22）：本进程保存后更新 mtime 快照
+                self._touch_config_mtime()
             except OSError as exc:
                 saved = False
                 logger.warning("设为默认 Cookie 写入失败：%s", exc)
@@ -3587,6 +3878,21 @@ class XianyuAlertGUI:
 # ====================================================================== #
 # 入口
 # ====================================================================== #
+def _notify_instance_conflict(holder_pid: str) -> None:
+    """弹「已有实例正在运行」提示（无图形环境时降级为 stderr 打印）。"""
+    text = f"已有实例正在运行（PID {holder_pid or '未知'}），请先关闭再启动。"
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showwarning("已有实例正在运行", text)
+        try:
+            root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001 - 无图形环境降级打印
+        print(text)
+
+
 def main(config_path: str = "config.yaml") -> int:
     """启动图形界面。
 
@@ -3604,28 +3910,38 @@ def main(config_path: str = "config.yaml") -> int:
     except Exception:  # noqa: BLE001
         pass
 
-    try:
-        root = tk.Tk()
-    except Exception as exc:  # noqa: BLE001 - 无图形环境时给出清晰提示
-        print(f"无法创建图形界面窗口：{exc}\n请确认当前环境支持 GUI 显示。")
+    # v1.8 单实例锁（L5）：检测到已有实例 → 弹中文提示 + 返回非 0，不抢锁。
+    # 同进程重复获取幂等（cli.main 已持有时会返回同一对象，不会自锁）。
+    lock = acquire_instance_lock()
+    if lock is None:
+        _notify_instance_conflict(lock_holder_pid())
         return 1
 
     try:
-        XianyuAlertGUI(root, config_path=config_path)
-    except Exception as exc:  # noqa: BLE001 - 构造失败也要给出提示而非白屏
-        logger.exception("图形界面初始化失败：%s", exc)
         try:
-            messagebox.showerror("启动失败", f"图形界面初始化失败：\n{exc}")
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            root.destroy()
-        except Exception:  # noqa: BLE001
-            pass
-        return 1
+            root = tk.Tk()
+        except Exception as exc:  # noqa: BLE001 - 无图形环境时给出清晰提示
+            print(f"无法创建图形界面窗口：{exc}\n请确认当前环境支持 GUI 显示。")
+            return 1
 
-    root.mainloop()
-    return 0
+        try:
+            XianyuAlertGUI(root, config_path=config_path)
+        except Exception as exc:  # noqa: BLE001 - 构造失败也要给出提示而非白屏
+            logger.exception("图形界面初始化失败：%s", exc)
+            try:
+                messagebox.showerror("启动失败", f"图形界面初始化失败：\n{exc}")
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                root.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            return 1
+
+        root.mainloop()
+        return 0
+    finally:
+        release_instance_lock(lock)
 
 
 if __name__ == "__main__":  # pragma: no cover - 手动运行入口

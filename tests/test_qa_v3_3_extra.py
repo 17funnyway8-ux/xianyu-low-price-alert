@@ -344,9 +344,14 @@ class TestVersion(unittest.TestCase):
     def test_version_160(self) -> None:
         from xianyu_alert import __version__
 
-        # v3.7 更新项：关键词启用/停用 + 日志高亮 + 已售出商品隐藏
-        # （由 1.6.0 升级到 1.7.0，故旧断言同步更新）
-        self.assertEqual(__version__, "1.7.0")
+        # v1.8 更新项：Cookie 自动刷新 + 进程单实例锁
+        # （由 1.7.0 升级到 1.8.0，故旧断言同步更新）
+        self.assertEqual(__version__, "1.8.0")
+
+    def test_update_log_has_v180(self) -> None:
+        from xianyu_alert.gui import UPDATE_LOG
+
+        self.assertIn("v1.8.0", UPDATE_LOG)
 
     def test_update_log_has_v170(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
