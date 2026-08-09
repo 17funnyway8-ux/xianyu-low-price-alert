@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest import mock
@@ -24,6 +26,51 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from xianyu_alert import singleton  # noqa: E402
+
+
+def _spawn_lock_holder(lock_path: str) -> subprocess.Popen:
+    """启动真实子进程并让它持有锁（跨平台模拟「另一进程」）。
+
+    POSIX flock 按「打开文件描述」互斥（同进程第二 fd 会冲突），而 Windows
+    msvcrt 字节锁按**进程**归属（同进程第二 fd 可再次加锁）——因此「另一进程」
+    必须用真实子进程，才能跨平台验证冲突语义。
+
+    Args:
+        lock_path: 子进程要持有的锁文件路径。
+
+    Returns:
+        子进程对象；调用方负责 terminate/wait 清理。
+    """
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    child_code = (
+        "import sys, time\n"
+        f"sys.path.insert(0, {project_root!r})\n"
+        "from xianyu_alert import singleton\n"
+        f"lock = singleton.acquire_instance_lock({lock_path!r})\n"
+        "if lock is None:\n"
+        "    raise SystemExit(3)\n"
+        "time.sleep(10)\n"
+    )
+    return subprocess.Popen([sys.executable, "-c", child_code])
+
+
+def _wait_lock_held(lock_path: str, timeout: float = 5.0) -> None:
+    """轮询直到另一进程真正持有锁（或超时抛错）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if singleton.is_running(lock_path):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"等待子进程持有锁超时：{lock_path}")
+
+
+def _terminate_lock_holder(proc: subprocess.Popen) -> None:
+    """终止锁持有子进程（OS 自动释放锁）。"""
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:  # noqa: BLE001 - 强制终止兜底
+        proc.kill()
 
 
 class TestInstanceLock(unittest.TestCase):
@@ -53,20 +100,19 @@ class TestInstanceLock(unittest.TestCase):
         self.assertEqual(os.read(lock.fd, 64).decode("utf-8").strip(), str(os.getpid()))
 
     def test_second_acquire_conflict_returns_none(self) -> None:
-        """模拟另一进程：直接对该 fd 加锁后再次 acquire 返回 None 且不抛异常。"""
-        first = singleton.acquire_instance_lock(self.lock_path)
-        self.assertIsNotNone(first)
-        assert first is not None
+        """真实另一进程持有锁 → 本进程 acquire 返回 None 且不抛异常。
 
-        # 同一进程内模块缓存会幂等返回同一对象，因此要绕过缓存模拟「另一进程」：
-        # 直接打开新 fd 并尝试加锁（等价另一进程的第二把锁）。
-        saved = singleton._held_lock
-        singleton._held_lock = None
+        跨平台语义：POSIX flock 按「打开文件描述」互斥（同进程第二 fd 也会冲突）；
+        Windows msvcrt 字节锁按**进程**归属（同进程第二 fd 可再次加锁，CI 实测）。
+        因此「另一进程」必须用真实子进程，才能跨平台验证冲突。
+        """
+        proc = _spawn_lock_holder(self.lock_path)
         try:
-            second = singleton.acquire_instance_lock(self.lock_path)
+            _wait_lock_held(self.lock_path)
+            # 本进程 acquire → None（跨进程冲突，不抛异常）
+            self.assertIsNone(singleton.acquire_instance_lock(self.lock_path))
         finally:
-            singleton._held_lock = saved
-        self.assertIsNone(second)
+            _terminate_lock_holder(proc)
 
     def test_same_process_acquire_idempotent(self) -> None:
         """同进程重复 acquire 返回同一对象（L4，不自锁）。"""
@@ -120,17 +166,28 @@ class TestInstanceLock(unittest.TestCase):
 
     def test_is_running_detects_only(self) -> None:
         """is_running 只检测不持有：无实例返回 False，有实例返回 True。"""
+        # 无实例 → False
         self.assertFalse(singleton.is_running(self.lock_path))
+
+        # 本进程持有（模块缓存命中）→ True（跨平台：缓存命中直接返回，不探测）
         lock = singleton.acquire_instance_lock(self.lock_path)
         self.assertIsNotNone(lock)
-        # 绕过缓存模拟另一进程视角
-        saved = singleton._held_lock
-        singleton._held_lock = None
+        self.assertTrue(singleton.is_running(self.lock_path))
+        singleton.release_instance_lock(lock)
+
+        # 真实另一进程持有 → True（跨平台；Windows 字节锁按进程归属，
+        # 不能用同进程第二 fd 探测模拟另一进程）
+        proc = _spawn_lock_holder(self.lock_path)
         try:
+            _wait_lock_held(self.lock_path)
             self.assertTrue(singleton.is_running(self.lock_path))
         finally:
-            singleton._held_lock = saved
-        singleton.release_instance_lock(lock)
+            _terminate_lock_holder(proc)
+
+        # 子进程退出后锁由 OS 释放 → False（短暂轮询防释放时序竞态）
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and singleton.is_running(self.lock_path):
+            time.sleep(0.05)
         self.assertFalse(singleton.is_running(self.lock_path))
 
     def test_is_running_other_path_does_not_touch_held_lock(self) -> None:
@@ -143,23 +200,15 @@ class TestInstanceLock(unittest.TestCase):
         self.assertFalse(singleton.is_running(other_path))
         self.assertIs(singleton._held_lock, lock_a)
 
-        # B 被「另一进程」占用 → is_running(B) 返回 True，且 A 仍被持有
-        saved = singleton._held_lock
-        singleton._held_lock = None
+        # B 被「真实另一进程」占用 → is_running(B) 返回 True，且 A 仍被持有
+        # （Windows 字节锁按进程归属，同进程第二 fd 会自锁成功，故用子进程模拟）
+        proc = _spawn_lock_holder(other_path)
         try:
-            lock_b = singleton.acquire_instance_lock(other_path)
-            self.assertIsNotNone(lock_b)
+            _wait_lock_held(other_path)
+            self.assertTrue(singleton.is_running(other_path))
+            self.assertIs(singleton._held_lock, lock_a)  # A 未被误释放
         finally:
-            singleton._held_lock = saved
-        self.assertTrue(singleton.is_running(other_path))
-        self.assertIs(singleton._held_lock, lock_a)  # A 未被误释放
-        # 释放临时 B 锁
-        saved = singleton._held_lock
-        singleton._held_lock = None
-        try:
-            singleton.release_instance_lock(lock_b)
-        finally:
-            singleton._held_lock = saved
+            _terminate_lock_holder(proc)
         singleton.release_instance_lock(lock_a)
 
     def test_acquire_other_path_returns_new_lock(self) -> None:
@@ -222,9 +271,15 @@ class TestPlatformBranches(unittest.TestCase):
         self.assertIsNone(lock)
 
     def test_posix_branch_uses_flock(self) -> None:
-        """POSIX 走 fcntl.flock（LOCK_EX | LOCK_NB）。"""
+        """POSIX 走 fcntl.flock（LOCK_EX | LOCK_NB）。
+
+        注意：`_is_windows()` 同时检查 `sys.platform` 与 `os.name`——真实 Windows 上
+        `os.name == "nt"` 恒为真，仅 mock sys.platform 不足以切到 POSIX 分支，
+        必须连 `os.name` 一起 mock（否则会走 msvcrt 分支、flock 未被调用）。
+        """
         fake_fcntl = mock.MagicMock()
         with mock.patch.object(sys, "platform", "darwin"), \
+             mock.patch("os.name", "posix"), \
              mock.patch.object(singleton, "fcntl", fake_fcntl):
             lock = singleton.acquire_instance_lock(self.lock_path)
         self.assertIsNotNone(lock)
@@ -236,6 +291,7 @@ class TestPlatformBranches(unittest.TestCase):
         fake_fcntl = mock.MagicMock()
         fake_fcntl.flock.side_effect = BlockingIOError(11, "EAGAIN")
         with mock.patch.object(sys, "platform", "darwin"), \
+             mock.patch("os.name", "posix"), \
              mock.patch.object(singleton, "fcntl", fake_fcntl):
             lock = singleton.acquire_instance_lock(self.lock_path)
         self.assertIsNone(lock)

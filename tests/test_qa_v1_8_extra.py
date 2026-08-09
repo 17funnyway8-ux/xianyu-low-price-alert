@@ -25,8 +25,10 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
@@ -42,6 +44,25 @@ from xianyu_alert.storage import (  # noqa: E402
     _META_COOKIE_ALERT_PREFIX,
     _META_COOKIE_POOL_ALERT_KEY,
 )
+
+
+def _spawn_lock_holder(path: str) -> subprocess.Popen:
+    """启动真实子进程并让它持有锁（跨平台模拟「另一进程」）。
+
+    POSIX flock 按「打开文件描述」互斥；Windows msvcrt 字节锁按**进程**归属
+    （同进程第二 fd 可再次加锁）——因此「另一进程」必须用真实子进程。
+    """
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    child_code = (
+        "import sys, time\n"
+        f"sys.path.insert(0, {project_root!r})\n"
+        "from xianyu_alert import singleton\n"
+        f"lock = singleton.acquire_instance_lock({path!r})\n"
+        "if lock is None:\n"
+        "    raise SystemExit(3)\n"
+        "time.sleep(10)\n"
+    )
+    return subprocess.Popen([sys.executable, "-c", child_code])
 
 #: 未来时间戳（有效）
 OK_COOKIE = "_m_h5_tk=abc_9999999999999; c=1"
@@ -427,18 +448,32 @@ class TestV18Singleton(unittest.TestCase):
         lock = self.s.acquire_instance_lock(self.path)
         self.assertIsNotNone(lock)
         self.assertIs(lock, self.s.acquire_instance_lock(self.path))  # 同进程幂等
-        # 本进程持有锁 → is_running 返回 True 且不破坏已持有的锁
+        # 本进程持有锁（模块缓存命中）→ is_running 返回 True 且不破坏已持有的锁
         self.assertTrue(self.s.is_running(self.path))
         self.assertIs(lock, self.s._held_lock)  # 未被 is_running 释放
-
-        saved = self.s._held_lock
-        self.s._held_lock = None
-        try:
-            self.assertTrue(self.s.is_running(self.path))  # 另一进程视角：占用
-        finally:
-            self.s._held_lock = saved
-
         self.s.release_instance_lock(lock)
+
+        # 真实另一进程持有 → is_running 返回 True（跨平台；Windows 字节锁按
+        # 进程归属，同进程第二 fd 探测会自锁成功 → 误判空闲，故用子进程模拟）
+        proc = _spawn_lock_holder(self.path)
+        try:
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                if self.s.is_running(self.path):
+                    break
+                time.sleep(0.05)
+            self.assertTrue(self.s.is_running(self.path), "子进程应已持有锁")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001
+                proc.kill()
+
+        # 子进程退出后锁由 OS 释放 → False（短暂轮询防释放时序竞态）
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and self.s.is_running(self.path):
+            time.sleep(0.05)
         self.assertFalse(self.s.is_running(self.path))
 
     def test_cli_conflict_returns_2(self) -> None:
