@@ -226,6 +226,7 @@ class TestQtStateLogic(unittest.TestCase):
             secure.decrypt_text(expected["monitor"]["cookies"]),
         )
 
+    @unittest.skipUnless(QT_AVAILABLE, "PySide6 不可用，跳过 Qt 测试")
     def test_log_tag_for_text_reused_from_gui(self) -> None:
         """Qt widgets 复用 gui.log_tag_for_text：确认 import 路径与映射一致性。
 
@@ -299,12 +300,14 @@ class TestEntryDispatchExtra(unittest.TestCase):
 
         args = mock.Mock(config="x.yaml")
         with mock.patch.object(sys, "platform", platform), \
+             mock.patch("xianyu_alert.gui_qt.is_available", return_value=True), \
              mock.patch("xianyu_alert.gui_qt.main", return_value=0) as qt, \
              mock.patch("xianyu_alert.gui.main", return_value=0) as tk:
             result = cli.cmd_gui(args)
             return result, qt.called, tk.called
 
     def test_darwin_uses_qt(self) -> None:
+        """darwin 分支 → Qt（is_available 显式 mock，避免依赖本机是否装了 PySide6）。"""
         result, qt_called, tk_called = self._run_cmd_gui("darwin")
         self.assertEqual(result, 0)
         self.assertTrue(qt_called)
@@ -360,6 +363,7 @@ class TestEntryDispatchExtra(unittest.TestCase):
         joined = "\n".join(logs.output)
         self.assertIn("无法加载图形界面模块", joined)
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS 专属：install_launchagent.sh")
     def test_install_launchagent_explicit_path_not_overwritten(self) -> None:
         """Bug #4 边界（Round2 补充）：install_launchagent.sh 显式传参时 APP_PATH 用传入值。
 

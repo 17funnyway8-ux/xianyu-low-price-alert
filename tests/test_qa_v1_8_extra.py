@@ -246,7 +246,12 @@ class TestV18NotifierMessage(unittest.TestCase):
     def test_safe_and_plain(self) -> None:
         from xianyu_alert.notifier import ConsoleNotifier, Notifier, notify_plain_message
 
-        self.assertTrue(ConsoleNotifier().safe_notify_message("标题", "正文"))
+        buffer = io.StringIO()
+        # redirect 到 StringIO：Windows CI 管道 cp1252 无法编码中文，
+        # 直接打到真实 stdout 会抛 UnicodeEncodeError → safe 返回 False
+        with redirect_stdout(buffer):
+            self.assertTrue(ConsoleNotifier().safe_notify_message("标题", "正文"))
+        self.assertIn("标题", buffer.getvalue())
 
         received: list = []
 

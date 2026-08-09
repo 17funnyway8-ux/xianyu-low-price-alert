@@ -47,9 +47,10 @@ class TestInstanceLock(unittest.TestCase):
         assert lock is not None
         self.assertEqual(lock.pid, os.getpid())
         self.assertGreater(lock.fd, 0)
-        # 锁文件已写入当前 PID
-        with open(self.lock_path, "r", encoding="utf-8") as fp:
-            self.assertEqual(fp.read().strip(), str(os.getpid()))
+        # 锁文件已写入当前 PID（Windows 上 msvcrt 锁区不允许第二句柄读取，
+        # 因此用持有锁的同一 fd 读取，跨平台一致）
+        os.lseek(lock.fd, 0, os.SEEK_SET)
+        self.assertEqual(os.read(lock.fd, 64).decode("utf-8").strip(), str(os.getpid()))
 
     def test_second_acquire_conflict_returns_none(self) -> None:
         """模拟另一进程：直接对该 fd 加锁后再次 acquire 返回 None 且不抛异常。"""
@@ -109,7 +110,10 @@ class TestInstanceLock(unittest.TestCase):
         """锁文件中的 PID 可读（冲突提示用）。"""
         lock = singleton.acquire_instance_lock(self.lock_path)
         self.assertIsNotNone(lock)
-        self.assertEqual(singleton.lock_holder_pid(self.lock_path), str(os.getpid()))
+        # Windows 上 msvcrt 锁区不允许第二句柄读取（lock_holder_pid 返回 ""），
+        # 因此持有期间用同一 fd 读取；release 后再用 lock_holder_pid 验证磁盘读取路径。
+        os.lseek(lock.fd, 0, os.SEEK_SET)
+        self.assertEqual(os.read(lock.fd, 64).decode("utf-8").strip(), str(os.getpid()))
         singleton.release_instance_lock(lock)
         # release 后文件内容保留最近持有者 PID（尽力而为）
         self.assertEqual(singleton.lock_holder_pid(self.lock_path), str(os.getpid()))

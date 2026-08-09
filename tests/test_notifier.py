@@ -266,7 +266,12 @@ class TestNotifierMessage(unittest.TestCase):
 
     def test_safe_notify_message_ok(self) -> None:
         notifier = ConsoleNotifier()
-        self.assertTrue(notifier.safe_notify_message("标题", "正文"))
+        buffer = io.StringIO()
+        # redirect 到 StringIO：Windows CI 管道 cp1252 无法编码中文，
+        # 直接打到真实 stdout 会抛 UnicodeEncodeError → safe 返回 False
+        with redirect_stdout(buffer):
+            self.assertTrue(notifier.safe_notify_message("标题", "正文"))
+        self.assertIn("标题", buffer.getvalue())
 
     def test_notify_plain_message_sends_all(self) -> None:
         """notify_plain_message 向全部通知器发送；单个失败不影响其它。"""
