@@ -530,7 +530,7 @@ class TestUiNonBlocking(unittest.TestCase):
         self.assertEqual(received.get("log_item_details"), False, "detail_only=True → 不逐条记录")
 
     def test_monitor_worker_slow_fetch_does_not_block_main_thread(self) -> None:
-        """需求 3 复现：慢 fetch（模拟网络 1.2s）期间主线程不被阻塞。"""
+        """需求 3 复现：慢 fetch 期间主线程不被阻塞（Event gate 确定性模拟）。"""
         cfg = config_from_dict(make_config_dict())
         gui = object.__new__(XianyuAlertGUI)
         gui._stop_event = threading.Event()
@@ -540,12 +540,14 @@ class TestUiNonBlocking(unittest.TestCase):
         gui._push = lambda *a, **k: None
         gui._push_message = lambda *a, **k: None
         fetch_started = threading.Event()
+        fetch_gate = threading.Event()  # 测试控制：不释放则 fetch 一直阻塞（模拟慢网络）
 
         class SlowFetcher:
             name = "slow"
 
             def fetch(self, _keyword: str) -> list:
-                time.sleep(1.2)  # 模拟慢网络请求
+                # 确定性慢网络：阻塞在 Event 上直到测试放行（不依赖真实 sleep 的时钟快慢）
+                fetch_gate.wait(timeout=10.0)
                 return []
 
             def close(self) -> None:
@@ -589,10 +591,19 @@ class TestUiNonBlocking(unittest.TestCase):
             for _ in range(20):
                 time.sleep(0.01)  # 模拟主线程处理 UI 事件
             elapsed = time.monotonic() - start
-            self.assertLess(
-                elapsed, 0.5,
-                f"主线程疑似被慢 fetch 阻塞：20×10ms 的事件循环耗时 {elapsed:.3f}s（应 <0.5s）",
+            # 确定性断言：主线程完成 20 轮事件循环后，worker 仍阻塞在慢 fetch 中
+            # → 证明主线程未被慢 fetch 阻塞（因果断言，不依赖真实时钟快慢；
+            #   CI 慢机器上 20×10ms 可能远超 0.5s，故不再用绝对 0.5s 阈值）
+            self.assertTrue(
+                worker_thread.is_alive(),
+                "主线程完成事件循环后，慢 fetch 应仍在后台线程进行（主线程未被阻塞）",
             )
+            # 宽松兜底：仅拦截主线程被异常长时间卡死（数百倍于正常耗时）
+            self.assertLess(
+                elapsed, 5.0,
+                f"主线程事件循环异常缓慢：20×10ms 耗时 {elapsed:.3f}s",
+            )
+            fetch_gate.set()
             worker_thread.join(timeout=5.0)
         self.assertFalse(worker_thread.is_alive())
         self.assertEqual(gui._round_no, 1)

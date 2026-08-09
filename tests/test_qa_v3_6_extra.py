@@ -338,7 +338,7 @@ class TestButtonSplitExtra(unittest.TestCase):
 # --------------------------------------------------------------------- #
 class TestUiNonBlockingExtra(unittest.TestCase):
     def test_slow_fetch_keeps_main_thread_heartbeat(self) -> None:
-        """慢 fetch（1.2s+）期间：主线程心跳（模拟事件循环）不被阻塞（线程级断言）。"""
+        """慢 fetch 期间：主线程心跳（模拟事件循环）不被阻塞（Event gate 确定性断言）。"""
         cfg = make_config()
         app = SimpleNamespace()
         app._stop_event = threading.Event()
@@ -347,12 +347,15 @@ class TestUiNonBlockingExtra(unittest.TestCase):
         app._next_run_at = 0.0
         app._push = lambda *a, **k: None
         app._push_message = lambda *a, **k: None
+        fetch_started = threading.Event()
+        fetch_gate = threading.Event()  # 测试控制：不释放则 fetch 一直阻塞（模拟慢网络）
 
         class SlowFetcher:
             name = "slow"
 
             def fetch(self, _keyword):
-                time.sleep(1.2)
+                fetch_started.set()
+                fetch_gate.wait(timeout=10.0)  # 确定性慢网络，不依赖真实 sleep 的时钟快慢
                 return []
 
             def close(self):
@@ -366,7 +369,8 @@ class TestUiNonBlockingExtra(unittest.TestCase):
                  lambda *a, **k: SimpleNamespace(
                      last_result=SimpleNamespace(notified_products=[]),
                      preflight_cookie=lambda: None,
-                     run_once=lambda log_item_details=False: 0,
+                     # run_once 真正触发慢 fetch：worker 阻塞在 gate 上直到测试放行
+                     run_once=lambda log_item_details=False: a[1].fetch("Switch") or 0,
                  ),
              ):
             t = threading.Thread(
@@ -375,14 +379,20 @@ class TestUiNonBlockingExtra(unittest.TestCase):
                 daemon=True,
             )
             t.start()
+            self.assertTrue(fetch_started.wait(timeout=2.0), "worker 应进入慢 fetch")
             heartbeat = 0
             deadline = time.monotonic() + 0.5
             while time.monotonic() < deadline:
                 heartbeat += 1  # 模拟主线程 tick 持续运行
                 time.sleep(0.02)
+            # 确定性断言：主线程完成心跳窗口后，worker 仍阻塞在慢 fetch 中
+            # → 证明主线程未被慢 fetch 阻塞（因果断言，不依赖真实时钟快慢）
+            self.assertTrue(t.is_alive(), "主线程 tick 期间，慢 fetch 应仍在后台线程进行")
+            fetch_gate.set()
             t.join(timeout=5)
             self.assertFalse(t.is_alive(), "后台线程应正常结束")
-            self.assertGreaterEqual(heartbeat, 10, "主线程在慢 fetch 期间应持续 tick")
+            # 宽松下限（原 ≥10 在慢 CI 机器上抖动）：仅验证主线程持续 tick
+            self.assertGreaterEqual(heartbeat, 3, "主线程在慢 fetch 期间应持续 tick")
 
     def test_worker_poison_var_not_touched(self) -> None:
         """后台线程一旦触碰 tkinter 控件（毒药对象）即失败 → 验证 0 控件访问。"""
