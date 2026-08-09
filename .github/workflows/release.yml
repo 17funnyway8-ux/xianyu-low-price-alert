@@ -187,6 +187,10 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+          # 只下载发布资产（win64 + macos-arm64），排除 build-docker 的
+          # .dockerbuild 缓存产物（命名如 17funnyway8-ux~xianyu-...~xxxx.dockerbuild，
+          # 不匹配本 pattern → 不会触发下载重试失败）
+          pattern: xianyu-low-price-alert-*
 
       - name: List release assets
         run: ls -la release-assets/
