@@ -1,436 +1,57 @@
 # 闲鱼低价提醒工具（xianyu-alert）
 
-一个可长期后台运行的命令行监测工具：按关键词周期性抓取闲鱼最新商品，筛选出**新出现且价格低于阈值**的商品，去重后通过控制台 / 微信 / 邮件 / Telegram 推送提醒。
+一个自托管的闲鱼「捡漏」监控工具：按关键词周期性抓取最新商品，筛选出**新出现且价格低于阈值**的商品，去重后通过控制台 / 微信 / 邮件 / Telegram / Bark / 企业微信推送提醒。提供 **Docker Web 界面** 与 **Windows / macOS 桌面版** 双形态。
 
 ---
 
-## 一、功能特性
+## ✨ 核心价值
 
-| 需求 | 实现 |
-| --- | --- |
-| 关键词设置 | `config.yaml` 中可配置任意多个关键词 |
-| 价格阈值 | 每个关键词独立配置 `max_price`，**严格小于**该值才提醒 |
-| 排除词（v3.1） | `exclude_keywords`：标题命中任一排除词即跳过（回收 / 置换 / 收购 / 高价回收 / 收） |
-| 必含词（v3.1） | `required_keywords`：标题必须包含全部；v3.3 起 GUI 添加关键词时**必含留空**由用户自填（config 解析层未显式配置时仍按旧行为自动提取） |
-| 循环监测 | 按 `monitor.interval_seconds` 周期抓取，并与上一轮结果比对出「新商品」 |
-| 提醒通知 | 通知内容包含 **商品名称 / 价格 / 商品链接 / 发布时间** 四要素 |
-| 去重机制 | SQLite 持久化 `notified` 标志，同一商品**永不重复提醒**（跨重启有效） |
+- **双形态覆盖全部场景**：Docker Web（随时随地的手机 / 远程管理）+ Windows exe / macOS .app（本机 7×24 挂机），同一套配置与数据。
+- **抓取路径主流且克制**：走闲鱼 mtop 签名接口（行业共识路线），纯 `requests` 轻量实现——镜像仅约 130MB，零外部 API 成本（对比 Playwright 重方案 1GB+）。
+- **精确过滤，少打扰**：关键词 + 独立价格阈值，支持**排除词**（回收 / 置换等）与**必含词**（16G / DDR4 等），双重去重保证同一商品**永不重复提醒**。
+- **多账号 Cookie 池**：按轮次轮换取用，过期自动停用并推送提醒；Cookie **Fernet 加密落盘**（`fernet1:`），磁盘无明文，全接口脱敏。
+- **Web 全功能**：关键词 / 过滤词 / Cookie 池 / 6 种通知通道 / 运行监控（校验在架、售出撤销、黑名单、清空记录）/ SSE 实时日志；远程访问可开 `Bearer` token 认证。
+- **工程可靠**：934 个全 mock 测试（无外网依赖）+ 双平台 CI 自动构建发布 + 进程单实例锁（崩溃自动释放）+ SQLite 热备指引。
 
 ---
 
-## 二、快速开始
+## 🚀 Docker Compose 快速开始（推荐）
 
-### 1. 安装依赖
+Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-```bash
-# 创建虚拟环境（Windows）
-C:\Users\fun\.workbuddy\binaries\python\versions\3.13.12\python.exe -m venv .venv
-.venv\Scripts\pip.exe install -r requirements.txt
-```
-
-依赖：`requests`、`beautifulsoup4`、`PyYAML`（去重存储用标准库 `sqlite3`，无额外依赖）。
-
-### 2. 离线演示（开箱即用，无需网络）
-
-若 `config.yaml` 的 `fetcher.type` 为 **mock**（开发演示用假数据），可直接跑通完整链路：
-
-```bash
-python -m xianyu_alert.cli once --config config.yaml
-```
-
-输出示例：
-
-```
-============================================================
-闲鱼低价提醒｜发现 2 个低价商品
-============================================================
-【1】
-商品名称: Switch 捡漏特价 第0号 九成新
-价格: ¥123.45
-商品链接: https://www.goofish.com/item?id=1234567
-发布时间: 2024-01-01 12:00
-命中关键词: Switch
-...
-```
-
-### 3. 切换到真实抓取
-
-v3.2 起默认抓取方式即 **mtop**（真实抓取）。先获取 Cookie（见下节「获取闲鱼 Cookie」），再编辑 `config.yaml`：
+### 1. 部署（复制下面的精简版 `docker-compose.yml`，或直接用仓库根目录的完整版）
 
 ```yaml
-fetcher:
-  type: "mtop"
-monitor:
-  cookies: "cookie2=...; _m_h5_tk=..."   # 由 `cli login` 自动写入，或手动填写
-  interval_seconds: 600                   # 默认 600 秒（10 分钟），过短易触发风控
+# docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
+services:
+  xianyu-alert:
+    build: .
+    image: xianyu-alert:latest
+    container_name: xianyu-alert
+    restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
+    environment:
+      XY_DATA_DIR: /app/data         # 数据目录（config / 密钥 / SQLite 全部落卷）
+      TZ: Asia/Shanghai              # 提醒记录时间正确
+      # XY_WEB_TOKEN: "change-me-随机串"   # 远程访问时启用 Bearer 认证（见下文）
+    ports:
+      - "127.0.0.1:8080:8080"        # 默认仅本机访问；远程改 "8080:8080"
+    volumes:
+      - ./xianyu-data:/app/data      # ⚠️ 备份时 config.yaml / secret.key / state/ 三件套一起备
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
 ```
 
-然后持续运行：
-
-```bash
-python -m xianyu_alert.cli run --config config.yaml
-```
-
-### 4. 获取闲鱼 Cookie
-
-`login` 子命令可把 Cookie 便捷地写入 `config.yaml` 的 `monitor.cookies`，**同时承担「首次登录」与「挂机刷新」双重语义**（v1.8）：GUI 挂机时可直接用本命令刷新 Cookie，**不参与单实例锁**。保存前会**自动校验**（`detect_cookie_health`）：过期 / 缺 `_m_h5_tk` / 无法解密的 Cookie 会**拒绝保存**（退出码非 0、配置内容不变，C15/C20）。三种方式任选：
-
-**方式 A（推荐 · 半自动）** —— 浏览器登录，自动提取：
-
-```bash
-# 一次性安装可选依赖（仅此功能需要，两条都要执行）
-pip install -r requirements-cookie.txt
-playwright install chromium
-
-# 打开浏览器 → 登录闲鱼 → 检测到 _m_h5_tk 后自动写入配置
-python -m xianyu_alert.cli login --config config.yaml
-```
-
-登录成功后会自动提取全部 Cookie（含 `_m_h5_tk`）并写入 `monitor.cookies`，可用 `once` 验证。等待登录超时为 120 秒。
-
-**方式 B（脚本 / 粘贴）** —— 直接传入或按提示粘贴：
-
-```bash
-# 脚本模式：直接传入 Cookie 请求头字符串（适合自动化 / CI）
-python -m xianyu_alert.cli login --config config.yaml --cookie-string "cookie2=...; _m_h5_tk=..."
-
-# 交互模式：未装 Playwright 时运行 login 会打印安装提示并进入粘贴模式，
-# 把复制的 Cookie 粘贴到终端回车即可存盘
-python -m xianyu_alert.cli login --config config.yaml
-```
-
-**方式 C（纯手工兜底）** —— 从浏览器开发者工具复制：
-
-1. 浏览器登录 [goofish.com](https://www.goofish.com) → 按 `F12` 打开开发者工具 → 切到 **Network** 面板 → 在站内搜索任意关键词；
-2. 找到发往 `h5api.m.goofish.com` 的请求 → 在 Request Headers 中**完整复制 Cookie 请求头的值**（必须包含 `_m_h5_tk`）→ 用方式 B 的 `--cookie-string` 存入。
-
-> 提醒：Cookie 存入后由 **MtopFetcher**（或已废弃的 `WebFetcher`）自动携带。闲鱼商品列表数据走**带签名（sign）的 mtop 接口**，v3.2 起默认即 mtop 真实抓取；`web`（旧版 HTML 解析）对闲鱼实测无效、已标记废弃，GUI 不再展示，仅保留代码供向后兼容。
-
-> v1.8 巡检小工具：`python -m xianyu_alert.cli cookie status --config config.yaml` 可**只检测**单值 + Cookie 池各条健康状态（脱敏回显、不写入任何配置），适合脚本 / ssh 远程巡检。
-
----
-
-## 三、命令行用法
-
-```bash
-python -m xianyu_alert.cli run   [-c config.yaml] [-v] [--max-rounds N]  # 持续监测，Ctrl+C 优雅退出
-python -m xianyu_alert.cli once  [-c config.yaml] [-v]                   # 只跑一轮，适合 cron / 计划任务
-python -m xianyu_alert.cli list  [-c config.yaml] [--limit 50]           # 查看已提醒记录
-python -m xianyu_alert.cli login [-c config.yaml] [--cookie-string "..."] # 获取/刷新 Cookie（保存前自动校验）
-python -m xianyu_alert.cli cookie status [-c config.yaml]                # v1.8：只检测 Cookie 健康（不写入）
-python -m xianyu_alert.cli shortcut [--name "闲鱼低价提醒工具"]          # 在桌面创建快捷方式
-python -m xianyu_alert.cli --version
-```
-
-> **v1.8 单实例锁**：GUI（Tk / Qt）+ `cli run` + `cli once` 共用一把 OS 级进程锁（`state/instance.lock`）——同一数据目录下**只允许一个实例运行**（三者都会写 SQLite）。第二个实例启动会收到中文提示并退出（CLI 退出码 2，GUI 弹框 + 非 0 退出码）；进程崩溃 / kill 后 OS 自动释放锁，**无需人工删锁**。`login`（只写 config.yaml）与 `list` / `cookie status`（只读）不参与锁，挂机时仍可远程刷新 / 巡检。
-
-Windows 计划任务 / Linux cron 示例（每 10 分钟一次）：
-
-```cron
-*/10 * * * * cd /path/to/project && /path/to/.venv/bin/python -m xianyu_alert.cli once
-```
-
----
-
-## 四、配置项说明（config.yaml）
-
-| 配置项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `keywords[].keyword` | str | 必填 | 搜索关键词，不可重复 |
-| `keywords[].max_price` | float | 必填 | 价格阈值（正数），`price < max_price` 才提醒 |
-| `keywords[].exclude_keywords` | list[str] | `[]` | v3.1 排除词：商品标题命中**任一**即跳过（子串匹配，大小写不敏感） |
-| `keywords[].required_keywords` | list[str] | 自动提取 | v3.1 必含词：标题必须**全部包含**；空列表 `[]` = 不强制。未显式配置时自动从主关键词提取「数字+字母」片段（见「关键词过滤」一节） |
-| `monitor.interval_seconds` | int | 600 | 监测间隔（秒），必须 > 0；v3.2 起默认 600（10 分钟），生产建议 600~900 |
-| `monitor.user_agent` | str | 内置 Chrome UA | 请求 UA |
-| `monitor.cookies` | str | `""` | 闲鱼登录态 Cookie；v3 起保存路径可自动 DPAPI 加密（`dpapi1:` 前缀）落盘 |
-| `monitor.cookies_encrypted` | bool | `false` | Cookie 是否已加密（由保存路径自动维护，一般无需手改） |
-| `monitor.cookie_pool` | list | `[]` | v3.2 多账号 Cookie 池：`[{name, cookie, enabled}]`，按轮次轮换取用（池优先、单值兜底），cookie 支持 DPAPI 密文 |
-| `fetcher.type` | `mtop` \| `mock` \| `web` | `mtop` | 抓取器类型；`mtop` 为真实抓取（推荐，默认），`mock` 开发演示用，`web` 已废弃 |
-| `fetcher.page_size` | int | 30 | 仅 mtop：每页拉取条数（1~100） |
-| `fetcher.pages` | int | 1 | 仅 mtop：多页抓取总页数（翻页增加请求频率与风控风险） |
-| `fetcher.page_sleep` | float | 2.0 | 仅 mtop：翻页之间的限速秒数 |
-| `fetcher.mock_products_per_round` | int | 5 | 仅 mock：每轮生成商品数 |
-| `fetcher.mock_fail_rounds` | list[int] | `[]` | 仅 mock：模拟抓取失败的轮次 |
-| `storage.path` | str | `state/xianyu_alert.db` | SQLite 路径，目录自动创建；`:memory:` 表示内存库 |
-| `notify.channels` | list | `[{type: console}]` | 通知通道列表，见下 |
-
-### 通知通道参数
-
-| type | 必填参数 |
-| --- | --- |
-| `console` | 无 |
-| `serverchan` | `sendkey` |
-| `email` | `smtp_host`、`smtp_port`、`username`、`password`、`to`（可选 `use_tls` / `use_ssl`） |
-| `telegram` | `bot_token`、`chat_id` |
-| `bark` | `url`（GET `{url}/{quote(msg)}`，iOS Bark 推送） |
-| `webhook` | `url`（POST JSON，**企业微信机器人**，自动带 `Content-Type: application/json`；在企业微信群「添加群机器人」后复制 Webhook 地址） |
-
-参数不完整的通道会被**自动跳过并打 warning**；若所有通道都不可用，会兜底为 `console`，保证提醒不会静默丢失。
-
----
-
-## 四·五、关键词过滤：排除词 + 必含词（v3.1）
-
-针对「搜到一堆回收商 / 贴牌杂牌帖子」的痛点，每个关键词规则下新增两个过滤字段。
-
-### 1. 排除词 `exclude_keywords`
-
-- 商品标题（含可能的 seller / location 字段）中若出现**任一**排除词（子串匹配），该商品**直接跳过**，不参与价格阈值检查、不会被提醒。
-- 默认空列表 `[]`：**向后兼容**，现有 config.yaml 不写该字段也能照常运行。
-- 典型用法：排除回收商 / 置换商帖子。
-
-```yaml
-keywords:
-  - keyword: "光威 笔记本DDR4 3200 16G"
-    max_price: 300
-    exclude_keywords:
-      - "回收"
-      - "置换"
-      - "收购"
-      - "高价回收"
-      - "收"
-```
-
-> 说明：预置排除词（默认 回收 / 置换 / 收购 / 高价回收 / 收）作为**模板**在 GUI 添加新关键词时自动预置
-> （必含词留空由用户自填），并可在编辑弹窗中增删。
-> **v3.5 起预置词可配置可持久化**：config.yaml 顶层 `preset_exclude_keywords`（缺省回退默认值）；
-> GUI「编辑预置排除词」弹窗可增删（每行一个），保存后写回 config；
-> 添加新关键词 / 点「添加预置排除词」时自动带上**当前配置**的预置词；
-> 显式配置空列表 `[]` = 关闭自动预置。是否保留太宽的词（如「收」）由用户决定。
-
-### 2. 必含词 `required_keywords`
-
-- 商品标题**必须包含全部**必含词，任一缺失即跳过。
-- 空列表 `[]` = 不强制要求（等同关闭该过滤）。
-- **自动提取默认值（config 解析层）**：未显式配置该字段时，用正则从主关键词提取「数字+字母」片段
-  （如 `16G`、`3200`、`DDR4`、`8GB`）作为默认必含词。例如
-  `光威 笔记本DDR4 3200 16G` → 自动得到 `["DDR4", "3200", "16G"]`，
-  保证搜「16G」时不会把 8G 套装当结果提醒。
-  - 纯中文词（如「笔记本」）不提取，避免过滤过严；
-  - 纯单个数字（如「第4号」的 `4`）无区分度，丢弃；
-  - **v3.3 起 GUI 添加新关键词时必含词留空**（不再自动写入），由用户在编辑弹窗中自行填写；
-    config 解析层对旧配置（未显式写该字段）仍保留自动提取，保证向后兼容；
-  - 若自动提取导致误杀合法商品（例如你其实接受 8G×2=16G 套装），
-    在配置里**显式写** `required_keywords` 手动增删即可。
-
-```yaml
-keywords:
-  - keyword: "光威 笔记本DDR4 3200 16G"
-    max_price: 300
-    required_keywords: ["16G", "DDR4", "3200"]   # 也可写 [] 关闭，或删掉本字段走自动提取
-```
-
-### 3. 执行顺序与匹配规则
-
-- 过滤发生在**抓取之后、价格阈值检查之前**（fetcher 保持纯抓取，过滤是业务规则）；
-- 匹配大小写不敏感（统一 lowercase 后比较）：`16G` / `16g` 等价；
-- 优先级：**必含词缺失 → 跳过；排除词命中 → 跳过**；二者可叠加；
-- 被过滤的商品不进入「新商品」判定与已见记录，后续放宽规则时仍可按新商品提醒。
-
-### 4. GUI 操作
-
-「监控配置」页的关键词表格新增「排除 / 必含」摘要列：
-
-- 选中某行 → 点「编辑排除/必含词」→ 弹窗中每行一个关键词编辑排除词 / 必含词 → 保存；
-- 选中某行 → 点「添加预置排除词」→ 一键追加**当前配置**的预置词（默认 回收 / 置换 / 收购 / 高价回收 / 收）；
-- 点「编辑预置排除词」→ 弹窗中每行一个定制预置词模板 → 保存后写回 config（v3.5，持久化）；
-- **v3.3 起**新增关键词时会**自动预置排除词**（v3.5 起为**当前配置**的预置词）、**必含词留空**由用户自行填写（可在编辑弹窗中改）。
-
----
-
-## 五、工作原理
-
-```
-每轮监测（对每个关键词）：
-  1. fetcher.fetch(keyword)                       -> 本轮商品列表
-  2. 关键词过滤（v3.1）                            -> 排除词命中 / 必含词缺失的商品直接跳过
-  3. storage.get_previous_round_ids(keyword)      -> 上一轮商品 ID 集合
-  4. new  = 过滤后本轮中不在上一轮集合里的商品      -> 「新出现」
-  5. hit  = new 中 price < max_price 且 未提醒过   -> 「需要提醒」
-  6. 逐个通知通道发送 hit -> storage.mark_notified
-  7. storage.save_seen(过滤后的本轮商品)
-     storage.set_previous_round_ids(过滤后的 ID 集合)  -> 供下一轮比对
-```
-
-**双保险设计**：
-- 「上一轮 ID 集合」负责判断是否**新出现**（存 `meta` 表，跨重启有效）；
-- 「`notified` 标志」负责**永久去重**（存 `product` 表，唯一约束 `(keyword, product_id)`）。
-
-### 数据表结构
-
-- `product(id, keyword, product_id, title, price, url, publish_time, first_seen, last_seen, notified)`，唯一约束 `(keyword, product_id)`
-- `meta(key, value)`，`key = prev_ids:<关键词>`，`value` 为 JSON 数组
-
----
-
-## 六、项目结构
-
-```
-config.yaml              # 演示配置（默认 mock，可直接运行）
-config.example.yaml      # 完整配置模板（含所有通知通道示例）
-icon.ico                 # 应用图标（从原 exe 提取，见 build/extract_icon.py）
-requirements.txt
-requirements-cookie.txt  # 可选依赖：Cookie 半自动获取（Playwright）
-requirements-build.txt  # 构建期依赖：pyinstaller（仅打包需要）
-README.md
-xianyu_alert/
-  __init__.py            # 版本号 1.5.0
-  paths.py               # frozen/源码路径统一解析（exe 同目录 config/state）
-  secure.py              # Cookie DPAPI 加密 / 解密 / 脱敏（零依赖）
-  models.py              # Product 数据类
-  config.py              # YAML 加载与校验（含 v3.1 排除词 / 必含词解析）
-  filters.py             # v3.1 关键词过滤纯函数（排除词 / 必含词 / 自动提取）
-  fetcher.py             # Fetcher / WebFetcher / MockFetcher / MtopFetcher（多页+过期检测）/ FetchError
-  storage.py             # SQLite 去重与状态存储
-  notifier.py            # Notifier / Console / ServerChan / Email / Telegram / Bark / Webhook + 工厂
-  monitor.py             # 核心监测循环（含 Cookie 启动预检、v3.1 关键词过滤）
-  cookie.py              # Cookie 获取（Playwright 半自动 / 终端粘贴）、过期检测、加密保存
-  shortcut.py            # 桌面快捷方式创建（PowerShell 安全转义）
-  cli.py                 # argparse 命令行入口
-  gui.py                 # Tkinter 图形界面（六态状态灯 / 空状态引导 / 新通道表单 / 快捷方式 / 关于 / v3.1 过滤编辑）
-build/
-  entry.py               # 打包入口：带参数走 CLI，无参数启动 GUI
-  闲鱼低价提醒工具.spec  # 标准版 PyInstaller 配置（排除 playwright）
-  build_full.spec        # 完整版 PyInstaller 配置（含 playwright）
-  build.bat / build_full.bat  # 一键构建脚本
-  extract_icon.py        # 图标提取脚本
-tests/
-  test_models.py
-  test_storage.py
-  test_monitor.py
-  test_notifier.py
-  test_cookie.py
-  test_paths.py
-  test_secure.py
-  test_fetcher_v3.py
-  test_gui.py
-  test_gui_v3.py
-  test_shortcut.py
-```
-
----
-
-## 七、运行测试
-
-测试全部使用 **MockFetcher + 内存 SQLite + mock 的网络请求**，不访问外网：
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-覆盖内容：模型校验、SQLite 去重与持久化、四要素通知格式、Server酱/Telegram/邮件/Bark/Webhook 请求构造、监控主链路（新商品判定 / 阈值过滤 / 去重 / 抓取失败容错 / 多关键词隔离）、**Fernet Cookie 加密（fernet1: 跨平台 + dpapi1: 遗留前缀兼容）**、mtop 多页抓取、路径 frozen 适配与 **macOS 数据目录（XY_DATA_DIR / Application Support）**、GUI 纯函数、**Qt（PySide6）offscreen 逻辑测试**、快捷方式转义。
-
----
-
-## 八、打包为独立 exe（Windows，环境无依赖）
-
-### 8.1 两个版本的区别
-
-| | 标准版（✅ 主推） | 完整版（可选） |
-| --- | --- | --- |
-| 构建配置 | `build/闲鱼低价提醒工具.spec` | `build/build_full.spec` |
-| 产物 | `dist/闲鱼低价提醒工具.exe` | `dist/闲鱼低价提醒工具_完整版.exe` |
-| 体积 | **15~25MB**（排除 playwright） | 100MB+（含 playwright） |
-| 取 Cookie | 手动粘贴 / `login --cookie-string` / GUI 引导（**本就支持**） | 额外支持 GUI「打开浏览器登录」自动获取 |
-| 环境要求 | **双击即用**，无需装 Python / 依赖 | 目标机仍需执行一次 `playwright install chromium`（浏览器内核约 300MB，不由 PyInstaller 打包） |
-| 适用 | 绝大多数普通用户 | 想要自动登录体验、且接受一次性装浏览器内核的用户 |
-
-> 结论：**默认交付标准版**。「环境无依赖」承诺只有标准版能兑现。
-
-### 8.2 构建命令
-
-```bash
-# 一次性安装构建依赖
-python -m pip install -r requirements-build.txt
-
-# 标准版（主推）
-python -m PyInstaller "build/闲鱼低价提醒工具.spec" --noconfirm
-# 或直接双击 build\build.bat
-
-# 完整版（可选）
-python -m PyInstaller "build/build_full.spec" --noconfirm
-# 或直接双击 build\build_full.bat
-```
-
-图标：`icon.ico` 从原 exe 提取（`build/extract_icon.py`，复用 RT_ICON 资产）。
-
-### 8.3 双击使用方法
-
-1. 把 `dist/闲鱼低价提醒工具.exe` 复制到任意目录（或直接双击）；
-2. 首次启动 GUI，在「监控配置」页点击 **Cookie 管理** → **❓ 如何获取 Cookie？** 按手动步骤（登录 goofish.com → F12 → Network → 搜词 → 找 h5api.m.goofish.com 请求 → 复制含 `_m_h5_tk` 的 Cookie 头）粘贴保存；（标准版不含 playwright，自动登录入口已移除，也可用 `python -m xianyu_alert.cli login`）
-3. 添加关键词与价格阈值、勾选通知通道（含 Bark / Webhook）；
-4. 点击 **开始监控**。
-
-路径说明（v3 frozen 适配）：
-- `config.yaml` 生成在 **exe 同目录**；
-- 状态库与日志落在 **exe 同目录 `state/`**（`state/xianyu_alert.db`、`state/xianyu_alert.log`）；
-- Cookie 保存时自动 **DPAPI 加密**（`dpapi1:` 前缀），换机/换用户需重新登录。
-
-命令行能力（同一 exe）：
-```bash
-闲鱼低价提醒工具.exe --version
-闲鱼低价提醒工具.exe --help
-闲鱼低价提醒工具.exe once --config config.yaml   # 跑一轮（windowed 输出见 state\xianyu_alert_cli.log）
-闲鱼低价提醒工具.exe shortcut                      # 在桌面创建快捷方式
-```
-
----
-
-## 八·五、macOS M4 原生适配（PySide6 Qt 版 .app）
-
-> 设计文档：`docs/macOS适配设计文档.md`　|　用户验收：`docs/macOS用户验收清单.md`
-
-### 8.5.1 概览
-
-- **GUI 路线**：macOS 端使用 **PySide6（Qt for macOS）**，新增 `xianyu_alert/gui_qt/` 包；
-  Windows 端 Tkinter 原样保留（零回归），入口按 `sys.platform == "darwin"` 分发。
-- **数据目录**：`paths.data_dir()` —— `XY_DATA_DIR` 环境变量优先 → frozen+darwin 落
-  `~/Library/Application Support/闲鱼低价提醒工具/` → frozen 其它平台落 exe 目录 → 源码落项目根。
-  `config.yaml / state/ / secret.key / 日志` 统一锚定 data_dir。
-- **Cookie 加密**：DPAPI → **Fernet**（cryptography 库），跨平台加解密。新密文前缀
-  `fernet1:`；`dpapi1:` 老密文识别为「无法解密 → 请重新登录」，不保留 DPAPI 代码。
-  对外 4 函数签名不变，调用点零改动。
-- **快捷方式**：`shortcut.supported()` 仅 Windows 返回 True；macOS GUI 不渲染该按钮，
-  CLI `shortcut` 子命令提示不支持（.app 拖入「应用程序」/ Dock 即用）。
-
-### 8.5.2 在 M4 Mac 上构建 .app
-
-```bash
-cd ~/xianyu-alert
-bash build/macos_build.sh          # venv + 依赖 + PyInstaller + ad-hoc 签名 + 自检
-# 产物：dist/闲鱼低价提醒工具.app（arm64，150~300MB）
-# 数据目录：~/Library/Application Support/闲鱼低价提醒工具/
-```
-
-图标：`build/make_icns.py`（ico→iconset PNG，Pillow）+ `build/make_icns.sh`（iconutil 合成 icns，
-仅 macOS）。Info.plist 已含 `NSAppSleepDisabled=true`（防 App Nap，7×24 挂机关键）。
-
-### 8.5.3 可选开机自启（LaunchAgent）
-
-```bash
-bash scripts/install_launchagent.sh      # 登录自启 + 崩溃拉起
-bash scripts/uninstall_launchagent.sh    # 卸载
-```
-
-### 8.5.4 源码模式在 macOS 上运行
-
-```bash
-pip install -r requirements.txt
-pip install -r requirements-macos.txt    # PySide6>=6.6
-python -m xianyu_alert.cli gui           # macOS 自动走 Qt GUI
-```
-
-> 注意：GUI 挂机与 headless daemon（`cli run`）**不可同时运行**（SQLite 单写者）。
-
----
-
-## 八·六、Docker 部署（Web 全功能版，P2/P3）
-
-> 本镜像 = FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试三合一。
-> Web 覆盖桌面版三页签全部能力：关键词/过滤词/预置词、Cookie 池管理、通知通道、
-> 运行监控（校验在架 / 售出撤销 / 黑名单管理 / 清空记录 / 批量操作）、实时日志。
-
-### 8.6.1 一键启动（docker compose）
+### 2. 启动 / 使用
 
 ```bash
 # 启动常驻 Web（首次自动构建镜像）
@@ -442,99 +63,144 @@ curl http://127.0.0.1:8080/healthz
 # 打开 Web 界面
 open http://127.0.0.1:8080/
 
-# 查看日志 / 停止
+# 查看日志 / 停止（SIGTERM 优雅退出）
 docker compose -p xianyu-alert logs -f
-docker compose -p xianyu-alert down        # SIGTERM 优雅退出
+docker compose -p xianyu-alert down
 ```
 
-数据卷：`./xianyu-data:/app/data`，其中 `config.yaml`、`secret.key`、`state/`（SQLite）
-全部自动落卷；删除容器不丢数据。**备份必须三件套一起备份**（见 8.6.4）。
+### 3. 远程访问（可选）
 
-### 8.6.2 老数据迁移（桌面版 → 容器）
+1. 把 `ports` 改为 `"8080:8080"`；
+2. 设置 `XY_WEB_TOKEN` 为强随机串并重启容器；
+3. 此后除 `/healthz`、`/`、`/static/*` 外，全部 API 要求 `Authorization: Bearer <token>`（前端首次访问会弹 token 输入框）；
+4. 进阶：再用 Caddy `basic_auth` 反代或 Tailscale 组网做第二层保护。
 
-把桌面版的三个文件复制到卷对应位置：
+未设 token 时默认仅 `127.0.0.1` 可访问。
+
+> 容器内 CLI 调试：`docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml`。
+> Web 运行中**不可**执行 `once` / `run`（会与 Web 进程抢单实例锁，返回退出码 2）。
+
+### 4. 桌面版 → Docker 数据迁移
+
+把桌面版三件套复制到卷对应位置即可（桌面版数据目录：Windows exe 同目录 / macOS `~/Library/Application Support/闲鱼低价提醒工具/`）：
 
 ```bash
-# 1. 配置文件（含 fernet1: 密文 Cookie）
-cp ~/Library/"Application Support"/闲鱼低价提醒工具/config.yaml ./xianyu-data/config.yaml
-# 2. 加密密钥（缺失 → 已有 Cookie 全部无法解密，需重新粘贴）
-cp ~/Library/"Application Support"/闲鱼低价提醒工具/secret.key ./xianyu-data/secret.key
-# 3. 提醒记录库
-cp ~/Library/"Application Support"/闲鱼低价提醒工具/state/xianyu_alert.db ./xianyu-data/state/xianyu_alert.db
+cp <桌面版>/config.yaml                 ./xianyu-data/config.yaml
+cp <桌面版>/secret.key                  ./xianyu-data/secret.key      # 缺失则存量 Cookie 无法解密
+cp <桌面版>/state/xianyu_alert.db       ./xianyu-data/state/xianyu_alert.db
 ```
 
-> ⚠️ `secret.key` 缺失或换了密钥 → 存量 `fernet1:` 密文 Cookie 无法解密，
-> Web「Cookie 管理」里会显示 `invalid_encrypt`，重新粘贴 Cookie 即可。
-> DPAPI（`dpapi1:`，Windows 老版）密文跨平台不可解，属预期降级。
+> ⚠️ 老版 Windows `dpapi1:` 密文跨平台不可解（预期降级），Web 里重新粘贴 Cookie 即可。
 
-### 8.6.3 登录 Cookie（容器内无浏览器）
+---
 
-Web 端：打开「监控配置 → Cookie 管理（池）」→ 添加/刷新条目，或直接粘贴到单值输入框。
-保存时校验有效性并 **Fernet 加密落盘**，磁盘无明文。
+## 📦 桌面版（Windows / macOS）
 
-CLI 端：`docker exec` 调 `login` 脚本模式（本机浏览器复制 Cookie 后传入）：
+无需 Docker 的轻量选择，双击即用：
 
-```bash
-docker compose -p xianyu-alert exec xianyu-alert python -m xianyu_alert.cli login \
-  --cookie-string "cookie2=...; _m_h5_tk=..."
-```
+- **Windows**：从 [GitHub Releases](https://github.com/17funnyway8-ux/xianyu-low-price-alert/releases) 下载 `xianyu-low-price-alert-win64-<tag>.exe`（onefile，无需安装 Python）。
+- **macOS**：下载 `xianyu-low-price-alert-macos-arm64-<tag>.zip`（.app，M 系列芯片）。
 
-### 8.6.4 备份指引
+使用要点：
 
-`secret.key` + `config.yaml` + `state/xianyu_alert.db` **三件套一起备份**：
+1. 首次启动会生成 `config.yaml`；数据落在 **exe/.app 同目录 `state/`**（macOS 为 `~/Library/Application Support/闲鱼低价提醒工具/`）；
+2. 在 GUI「监控配置」添加关键词与价格阈值，勾选通知通道，填入 Cookie 后点击**开始监控**；
+3. 同数据目录下**只允许一个实例运行**（单实例锁，崩溃后 OS 自动释放，无需人工删锁）。
 
-```bash
-# SQLite 热备（Web 运行中也安全）
-docker compose -p xianyu-alert exec xianyu-alert python -c \
-  "import sqlite3; src=sqlite3.connect('/app/data/state/xianyu_alert.db'); \
-   dst=sqlite3.connect('/app/data/backup_$(date +%F).db'); src.backup(dst); dst.close(); src.close()"
-# 然后把 /app/data 整目录拷贝到备份位置
-cp -r ./xianyu-data ./backup-xianyu-$(date +%F)
-```
-
-### 8.6.5 远程访问（认证，P3-01）
-
-1. `docker-compose.yml` 把 `ports` 改为 `"8080:8080"`；
-2. 设置环境变量 `XY_WEB_TOKEN`（强随机串），重启容器；
-3. 此后除 `/healthz`、`/`、`/static/*` 外全部 API 要求
-   `Authorization: Bearer <token>`（前端首次访问会弹 token 输入框，存 localStorage）；
-4. 进阶：Caddy `basic_auth` 反代或 Tailscale 组网做第二层保护。
-
-未设 token 时默认仅 `127.0.0.1` 可访问（P1 行为不变）。
-
-### 8.6.6 容器内 CLI 约束
-
-镜像内置 `xianyu_alert.cli` 供调试，但 **Web 运行中不可 `once`/`run`**
-（会与 Web 进程抢单实例锁，返回退出码 2）。调试请用只读/写入命令：
+源码模式运行：
 
 ```bash
-docker compose -p xianyu-alert run --rm xianyu-alert cookie status --config config.example.yaml
-docker compose -p xianyu-alert run --rm xianyu-alert list --config config.poc.yaml
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+# macOS GUI 另需：.venv/bin/pip install -r requirements-macos.txt
+.venv/bin/python -m xianyu_alert.cli run   --config config.yaml   # 持续监测
+.venv/bin/python -m xianyu_alert.cli once  --config config.yaml   # 只跑一轮（适合 cron）
+.venv/bin/python -m xianyu_alert.cli gui                          # 启动图形界面
 ```
 
 ---
 
-## 九、⚠️ 重要局限说明（务必阅读）
+## 🔑 获取闲鱼 Cookie
 
-闲鱼（goofish.com）是**强反爬 + 前端 JS 渲染**的站点，`WebFetcher` 属于「尽力而为」实现：
+Cookie 是真实抓取的**必需前提**（保存前会自动校验：过期 / 缺 `_m_h5_tk` 会拒绝保存）。三种方式任选：
 
-1. **数据由 JS 异步加载**：搜索结果主要通过带签名（`sign` / `_m_h5_tk`）的 mtop 接口拉取，纯 `requests` 得到的 HTML 往往只有页面骨架，**大概率解析不到商品卡片**。
-2. **需要登录态**：未携带有效 Cookie 时，接口容易直接返回风控页或空数据。请在 `monitor.cookies` 填入浏览器登录后的 Cookie。
-3. **页面结构会变**：站点 DOM / 内联 JSON 字段随时可能调整，解析选择器可能失效。
-4. **频率限制**：`interval_seconds` 不建议小于 300 秒，过于频繁会触发风控甚至封号。
+- **方式 A（推荐 · 半自动）**：安装可选依赖后自动打开浏览器登录并提取：
 
-程序对此做了优雅降级：
-- 网络异常 / 非 200 / 重试耗尽 → 抛 `FetchError`，被 `Monitor` 捕获，记录 warning 并继续处理其它关键词，**不会崩溃退出**；
-- 请求成功但解析为空 → 返回空列表并打 warning 提示检查 Cookie。
+  ```bash
+  pip install -r requirements-cookie.txt
+  playwright install chromium
+  python -m xianyu_alert.cli login --config config.yaml
+  ```
 
-**如需稳定的生产级抓取**，建议自行替换 `WebFetcher` 实现：
-- 使用 Playwright / Selenium 驱动真实浏览器渲染；
-- 或抓包闲鱼 App / H5 的 mtop 接口并实现签名算法。
+- **方式 B（脚本 / 粘贴）**：浏览器登录后从开发者工具复制 Cookie 请求头，直接传入或粘贴：
 
-只需继承 `xianyu_alert.fetcher.Fetcher` 并实现 `fetch(keyword) -> List[Product]`，即可无缝接入现有的筛选、去重与通知链路。
+  ```bash
+  python -m xianyu_alert.cli login --config config.yaml \
+    --cookie-string "cookie2=...; _m_h5_tk=..."
+  ```
+
+- **方式 C（Web 界面）**：Docker 版无需浏览器——打开「监控配置 → Cookie 管理（池）」添加 / 刷新条目，保存时自动校验并 **Fernet 加密落盘**。
+
+> 巡检小工具：`python -m xianyu_alert.cli cookie status --config config.yaml` 只检测单值 + Cookie 池各条健康状态（脱敏回显、不写入配置），适合脚本 / SSH 远程巡检。
 
 ---
 
-## 十、免责声明
+## ⚙️ 配置要点（config.yaml）
 
-本工具仅供个人学习与自用监测，请遵守目标站点的 robots 协议与服务条款，合理控制请求频率，勿用于商业爬取或对站点造成压力。
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `keywords[].keyword` | 必填 | 搜索关键词，不可重复 |
+| `keywords[].max_price` | 必填 | 价格阈值，`price < max_price` 才提醒 |
+| `keywords[].exclude_keywords` | `[]` | 排除词：标题命中**任一**即跳过（回收 / 置换 / 收购…） |
+| `keywords[].required_keywords` | 自动提取 | 必含词：标题必须**全部包含**（如 `16G`、`DDR4`）；`[]` = 不强制 |
+| `monitor.interval_seconds` | 600 | 监测间隔秒数，生产建议 **600~900**（过短易触发风控） |
+| `monitor.cookies` | `""` | 闲鱼 Cookie，保存时自动 Fernet 加密（`fernet1:`） |
+| `monitor.cookie_pool` | `[]` | 多账号池：`[{name, cookie, enabled}]` 按轮次轮换（池优先、单值兜底） |
+| `fetcher.type` | `mtop` | `mtop` 真实抓取（默认）/ `mock` 离线演示 |
+| `fetcher.pages` | 1 | 多页抓取页数（翻页增加请求频率与风控风险） |
+| `storage.path` | `state/xianyu_alert.db` | SQLite 路径，目录自动创建；`:memory:` 为内存库 |
+| `notify.channels` | `[{type: console}]` | 通知通道列表，见下 |
+
+通知通道：`console`（无参数）· `serverchan`（`sendkey`）· `email`（`smtp_host/smtp_port/username/password/to`）· `telegram`（`bot_token/chat_id`）· `bark`（`url`）· `webhook`（`url`，POST JSON，适配企业微信机器人）。
+
+参数不完整的通道自动跳过并打 warning；所有通道都不可用时兜底为 `console`，保证提醒不静默丢失。完整模板见 `config.example.yaml`。
+
+---
+
+## 🧪 测试 / CI
+
+全部测试使用 MockFetcher + 内存 SQLite + mock 网络请求，**不访问外网**：
+
+```bash
+python -m unittest discover -s tests
+```
+
+934 个测试覆盖模型校验、SQLite 去重持久化、通知构造、监控主链路、Cookie 加密 / 健康检测、多页抓取、路径与 GUI 逻辑。CI（`.github/workflows/release.yml`）在打 `v*` tag 时自动构建 Windows exe + macOS .app 并发布 GitHub Release（含 Docker 镜像构建）。
+
+---
+
+## 🧠 工作原理（30 秒版）
+
+每轮对每个关键词：**抓取** → **关键词过滤**（排除词命中 / 必含词缺失即跳过）→ 与**上一轮结果**比对出「新出现」→ 新商品中 `price < max_price` 且未提醒过的 → 发送通知并标记。双保险去重：`prev_ids` 判断是否新出现（跨重启有效），`notified` 标志保证同一商品永不重复提醒（跨重启有效）。
+
+---
+
+## ⚠️ 注意事项
+
+- **风控**：闲鱼是强反爬站点，接口带签名且需要登录态。请合理控制频率（间隔 ≥ 300 秒）、优先使用多 Cookie 池轮换；页面结构 / 签名随时可能变动，遇到 `RGV587` 或 `FAIL_SYS_*` 错误说明请求过频或 Cookie 失效，稍后再试 / 刷新 Cookie 即可。程序对抓取异常做了优雅降级（单轮失败不中断、不崩溃）。
+- **备份三件套**：`config.yaml`（配置 + 密文 Cookie）+ `secret.key`（Fernet 密钥，**缺失则存量 Cookie 无法解密**）+ `state/xianyu_alert.db`（提醒记录）必须**一起备份**。SQLite 热备示例见 `docker-compose.yml` 注释 / [docs/v1.8_Docker化增量研判与执行方案.md](docs/v1.8_Docker化增量研判与执行方案.md)。
+- **免责声明**：本工具仅供个人学习与自用监测。请遵守目标站点 robots 协议与服务条款，合理控制请求频率，勿用于商业爬取或对站点造成压力；因使用本工具产生的账号风险由使用者自行承担。
+
+---
+
+## 📄 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/维护交接文档.md](docs/维护交接文档.md) | 运维 / 排障 / 交接（最全） |
+| [docs/v1.8_Docker化增量研判与执行方案.md](docs/v1.8_Docker化增量研判与执行方案.md) | Docker 部署细节、备份、迁移 |
+| [docs/v1.8_P2P3_增量PRD_Web全功能与打磨.md](docs/v1.8_P2P3_增量PRD_Web全功能与打磨.md) | Web 全功能版需求 |
+| [docs/macOS适配设计文档.md](docs/macOS适配设计文档.md) | macOS Qt 适配与构建 |
+| [docs/v1.8_增量设计_Cookie刷新与单实例锁.md](docs/v1.8_增量设计_Cookie刷新与单实例锁.md) | Cookie 安全与单实例锁设计 |
+| [docs/项目发展方向调研与建议.md](docs/项目发展方向调研与建议.md) | 产品方向与竞品分析 |
+| `config.example.yaml` | 完整配置模板（含全部通知通道示例） |
+| `docker-compose.yml` | Docker 部署完整注释版 |
