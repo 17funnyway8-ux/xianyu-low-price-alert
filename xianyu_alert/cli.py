@@ -17,7 +17,6 @@ import logging
 import logging.handlers
 import os
 import sys
-from typing import List, Optional
 
 from . import __version__, paths
 from .config import Config, ConfigError, load_config
@@ -48,7 +47,7 @@ LOG_MAX_BYTES = 1_000_000
 LOG_BACKUP_COUNT = 3
 
 
-def install_file_logging() -> Optional[str]:
+def install_file_logging() -> str | None:
     """安装滚动文件日志到 `state/xianyu_alert.log`（frozen 后为 exe 同目录）。
 
     windowed 打包的 exe 没有控制台，文件日志是唯一查错通道。
@@ -172,14 +171,14 @@ def _validate_ranges(args: argparse.Namespace, parser: argparse.ArgumentParser) 
     if args.command == "run":
         max_rounds = getattr(args, "max_rounds", None)
         if max_rounds is not None and max_rounds <= 0:
-            parser.error("--max-rounds 必须为正整数（当前 %s）" % max_rounds)
+            parser.error(f"--max-rounds 必须为正整数（当前 {max_rounds}）")
     if args.command == "list":
         limit = getattr(args, "limit", 50)
         if limit <= 0:
-            parser.error("--limit 必须为正整数（当前 %s）" % limit)
+            parser.error(f"--limit 必须为正整数（当前 {limit}）")
 
 
-def _prepare(config: Config) -> tuple[Fetcher, Storage, List[Notifier]]:
+def _prepare(config: Config) -> tuple[Fetcher, Storage, list[Notifier]]:
     """根据配置构建运行所需的三大组件。
 
     Args:
@@ -431,7 +430,8 @@ def cmd_gui(args: argparse.Namespace) -> int:
             # `from .gui_qt import main` 失败来探测缺失；必须先显式探测
             # is_available()，再调用 main()（main 内部的 QApplication 导入
             # 失败也会被同一 except ImportError 捕获 → 回退 Tk，Bug #2）。
-            from .gui_qt import is_available, main as qt_main
+            from .gui_qt import is_available
+            from .gui_qt import main as qt_main
 
             if not is_available():
                 raise ImportError("PySide6 模块不可用")
@@ -452,7 +452,7 @@ def cmd_gui(args: argparse.Namespace) -> int:
     return gui_main(config_path=args.config)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI 主入口。
 
     Args:

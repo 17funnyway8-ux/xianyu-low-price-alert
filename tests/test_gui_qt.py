@@ -29,9 +29,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PySide6.QtWidgets import QApplication, QMessageBox
-    from PySide6.QtCore import QCoreApplication
     import yaml  # noqa: E402
+    from PySide6.QtWidgets import QApplication, QMessageBox
 
     _APP = QApplication.instance() or QApplication([])
     QT_AVAILABLE = True
@@ -91,7 +90,6 @@ class TestQtLogBridge(unittest.TestCase):
             time.sleep(0.005)
 
     def test_emit_delivers_level_and_text(self) -> None:
-        import logging
 
         self.logger.info("测试日志内容")
         self._pump()
@@ -155,7 +153,6 @@ class TestMonitorWorker(unittest.TestCase):
     """MonitorWorker 启停（mock monitor 全家桶，single_round 一轮即退）。"""
 
     def test_single_round_emits_messages_and_finishes(self) -> None:
-        import threading
 
         from xianyu_alert.config import config_from_dict
         from xianyu_alert.gui_qt import workers
@@ -204,7 +201,6 @@ class TestMonitorWorker(unittest.TestCase):
 
     def test_request_stop_interrupts_wait(self) -> None:
         """request_stop 置位后，循环退出（不依赖真实网络）。"""
-        import threading
 
         from xianyu_alert.config import config_from_dict
         from xianyu_alert.gui_qt import workers

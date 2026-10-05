@@ -17,21 +17,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
 import time
 import webbrowser
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QTabWidget,
-    QMenu,
-    QLabel,
 )
 
 from .. import __version__, paths
@@ -56,9 +55,9 @@ from .tab_notify import NotifyConfigTab
 from .tab_run import RunMonitorTab
 from .workers import (
     CLOSE_JOIN_TIMEOUT,
+    LogBridge,
     MonitorWorker,
     QtLogHandler,
-    LogBridge,
     SoldCheckWorker,
     TestChannelWorker,
 )
@@ -81,13 +80,13 @@ class XianyuAlertQtApp(QMainWindow):
         paths.ensure_data_dir()
 
         # ---- 运行时状态 ----
-        self._raw_config: Dict[str, Any] = {}
-        self._form: Dict[str, Any] = {}
+        self._raw_config: dict[str, Any] = {}
+        self._form: dict[str, Any] = {}
         self._storage_path: str = DEFAULT_DB_PATH
         self._running: bool = False
-        self._worker: Optional[MonitorWorker] = None
-        self._sold_worker: Optional[SoldCheckWorker] = None
-        self._test_workers: List[TestChannelWorker] = []
+        self._worker: MonitorWorker | None = None
+        self._sold_worker: SoldCheckWorker | None = None
+        self._test_workers: list[TestChannelWorker] = []
         self._closing: bool = False
 
         self.setWindowTitle(f"闲鱼低价提醒工具 v{__version__}")
@@ -96,7 +95,7 @@ class XianyuAlertQtApp(QMainWindow):
 
         self._load_form()
         #: v1.8（C22）：config.yaml 的 mtime 快照，用于检测外部修改
-        self._config_mtime: Optional[float] = config_file_mtime(self.config_path)
+        self._config_mtime: float | None = config_file_mtime(self.config_path)
         self._build_tabs()
         self._build_menu_bar()
         self._build_status_bar()
@@ -184,7 +183,7 @@ class XianyuAlertQtApp(QMainWindow):
     # ------------------------------------------------------------------ #
     # 配置收集 / 保存
     # ------------------------------------------------------------------ #
-    def _collect_config_dict(self) -> Dict[str, Any]:
+    def _collect_config_dict(self) -> dict[str, Any]:
         """收集三页签表单 → 配置字典（Cookie 一律 Fernet 加密）。
 
         Raises:
@@ -347,10 +346,8 @@ class XianyuAlertQtApp(QMainWindow):
     def _open_log_dir(self) -> None:
         """打开日志目录（Finder / 资源管理器）。"""
         log_dir = paths.default_state_dir()
-        try:
+        with contextlib.suppress(OSError):
             os.makedirs(log_dir, exist_ok=True)
-        except OSError:
-            pass
         try:
             if sys.platform == "darwin":
                 import subprocess
@@ -511,7 +508,7 @@ class XianyuAlertQtApp(QMainWindow):
     # ------------------------------------------------------------------ #
     # 提醒记录操作（复用 Storage / fetcher 纯逻辑，控件只在主线程）
     # ------------------------------------------------------------------ #
-    def _open_alert_url(self, row: Dict[str, Any]) -> None:
+    def _open_alert_url(self, row: dict[str, Any]) -> None:
         """双击 / 右键打开商品链接。"""
         url = str(row.get("url", "") or "")
         if not url:
@@ -522,7 +519,7 @@ class XianyuAlertQtApp(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "打开失败", f"无法打开链接：{exc}")
 
-    def _toggle_sold(self, row: Dict[str, Any]) -> None:
+    def _toggle_sold(self, row: dict[str, Any]) -> None:
         """标记售出 / 恢复在架（本地 SQLite，主线程执行）。"""
         product_id = str(row.get("product_id", "") or "")
         if not product_id:
@@ -554,10 +551,10 @@ class XianyuAlertQtApp(QMainWindow):
             storage.close()
         self._reload_alerts()
 
-    def _on_toggle_sold(self, row: Dict[str, Any]) -> None:
+    def _on_toggle_sold(self, row: dict[str, Any]) -> None:
         self._toggle_sold(row)
 
-    def _on_blacklist_row(self, row: Dict[str, Any]) -> None:
+    def _on_blacklist_row(self, row: dict[str, Any]) -> None:
         """把提醒记录加入黑名单（弹原因输入框）。"""
         from .dialogs import BlacklistDialog
 
@@ -587,12 +584,12 @@ class XianyuAlertQtApp(QMainWindow):
         )
         self._reload_alerts()
 
-    def _on_check_shelf(self, rows: List[Dict[str, Any]]) -> None:
+    def _on_check_shelf(self, rows: list[dict[str, Any]]) -> None:
         """批量校验在架状态（SoldCheckWorker 后台执行）。"""
         if self._worker_alive():
             QMessageBox.information(self, "正在运行", "监控正在运行中，请先停止后再校验在架状态。")
             return
-        items: List[Dict[str, str]] = []
+        items: list[dict[str, str]] = []
         for row in rows or []:
             pid = str(row.get("product_id", "") or "")
             if not pid:
@@ -677,6 +674,7 @@ class XianyuAlertQtApp(QMainWindow):
             storage.close()
         formatted = []
         for row in rows or []:
+            row = dict(row)  # sqlite3.Row 无 .get()，先转 dict
             formatted.append(
                 {
                     "time": str(row.get("last_seen", "") or ""),
@@ -705,15 +703,16 @@ class XianyuAlertQtApp(QMainWindow):
     # ------------------------------------------------------------------ #
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 命名约定
         """关闭窗口：优雅停止后台线程 + 保存配置。"""
-        if self._worker_alive():
+        worker = self._worker
+        if worker is not None and self._worker_alive():
             proceed = QMessageBox.question(
                 self, "确认退出", "监控正在运行，确定要退出吗？"
             )
             if proceed != QMessageBox.Yes:
                 event.ignore()
                 return
-            self._worker.request_stop()
-            if not self._worker.wait(CLOSE_JOIN_TIMEOUT * 1000):
+            worker.request_stop()
+            if not worker.wait(CLOSE_JOIN_TIMEOUT * 1000):
                 logger.debug("监控线程未在 %ss 内退出，继续关闭", CLOSE_JOIN_TIMEOUT)
         if self._sold_worker is not None and self._sold_worker.isRunning():
             self._sold_worker.request_stop()

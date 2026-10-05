@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -38,7 +38,7 @@ VALID_CHANNEL_TYPES = ("console", "serverchan", "email", "telegram", "bark", "we
 #: 保存后写回 config.yaml 顶层 `preset_exclude_keywords` 字段。
 #: 与 `keywords[].exclude_keywords`（单条关键词的过滤规则）是不同层级，
 #: 前者是模板、后者是结果。
-DEFAULT_PRESET_EXCLUDE_KEYWORDS: List[str] = ["回收", "置换", "收购", "高价回收", "收"]
+DEFAULT_PRESET_EXCLUDE_KEYWORDS: list[str] = ["回收", "置换", "收购", "高价回收", "收"]
 
 
 class ConfigError(ValueError):
@@ -64,8 +64,8 @@ class KeywordRule:
 
     keyword: str
     max_price: float
-    exclude_keywords: List[str] = field(default_factory=list)
-    required_keywords: List[str] = field(default_factory=list)
+    exclude_keywords: list[str] = field(default_factory=list)
+    required_keywords: list[str] = field(default_factory=list)
     enabled: bool = True
 
 
@@ -106,7 +106,7 @@ class MonitorConfig:
     #: cookies 是否以 DPAPI 密文（dpapi1: 前缀）存储；加载时自动解密
     cookies_encrypted: bool = False
     #: 多账号 Cookie 池（v3.2）；元素为 CookiePoolItem，cookie 为明文
-    cookie_pool: List["CookiePoolItem"] = field(default_factory=list)
+    cookie_pool: list[CookiePoolItem] = field(default_factory=list)
     #: v1.8：Cookie 过期/即将过期时是否通过全部通知通道提醒（Q1，默认 true）
     cookie_alert_enabled: bool = True
     #: v1.8：Cookie 健康检测节流秒数；0 = 每轮检测（默认，纯本地零开销）
@@ -122,7 +122,7 @@ class FetcherConfig:
     type: str = "mtop"
     # 以下参数仅 mock 抓取器使用
     mock_products_per_round: int = 5
-    mock_fail_rounds: List[int] = field(default_factory=list)
+    mock_fail_rounds: list[int] = field(default_factory=list)
     # 以下参数仅 mtop 抓取器使用：每页拉取的商品数量
     page_size: int = 30
     #: mtop 多页抓取：共抓取多少页（默认 1 不改变现状；翻页增加风控风险）
@@ -148,7 +148,7 @@ class NotifyChannel:
     """
 
     type: str
-    options: Dict[str, Any] = field(default_factory=dict)
+    options: dict[str, Any] = field(default_factory=dict)
 
     def get(self, key: str, default: Any = None) -> Any:
         """读取通道参数。"""
@@ -159,7 +159,7 @@ class NotifyChannel:
 class NotifyConfig:
     """通知配置。"""
 
-    channels: List[NotifyChannel] = field(default_factory=list)
+    channels: list[NotifyChannel] = field(default_factory=list)
 
 
 @dataclass
@@ -177,17 +177,17 @@ class Config:
             缺省时回退 `DEFAULT_PRESET_EXCLUDE_KEYWORDS`（向后兼容）。
     """
 
-    keywords: List[KeywordRule] = field(default_factory=list)
+    keywords: list[KeywordRule] = field(default_factory=list)
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     fetcher: FetcherConfig = field(default_factory=FetcherConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
-    preset_exclude_keywords: List[str] = field(
+    preset_exclude_keywords: list[str] = field(
         default_factory=lambda: list(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
     )
 
     # ------------------------------------------------------------------ #
-    def keyword_map(self) -> Dict[str, float]:
+    def keyword_map(self) -> dict[str, float]:
         """返回 {关键词: 价格阈值} 的映射，便于快速查阈值。"""
         return {rule.keyword: rule.max_price for rule in self.keywords}
 
@@ -195,7 +195,7 @@ class Config:
 # ---------------------------------------------------------------------- #
 # 解析逻辑
 # ---------------------------------------------------------------------- #
-def _as_dict(value: Any, name: str) -> Dict[str, Any]:
+def _as_dict(value: Any, name: str) -> dict[str, Any]:
     """把配置节点转换为 dict；None 视为空 dict。"""
     if value is None:
         return {}
@@ -204,7 +204,7 @@ def _as_dict(value: Any, name: str) -> Dict[str, Any]:
     return value
 
 
-def _parse_string_list(value: Any, name: str) -> List[str]:
+def _parse_string_list(value: Any, name: str) -> list[str]:
     """解析字符串列表配置；None / 缺失视为空列表。
 
     Args:
@@ -221,7 +221,7 @@ def _parse_string_list(value: Any, name: str) -> List[str]:
         return []
     if not isinstance(value, list):
         raise ConfigError(f"`{name}` 必须是字符串列表，当前为 {type(value).__name__}")
-    result: List[str] = []
+    result: list[str] = []
     for item in value:
         text = str(item).strip()
         if not text:
@@ -231,14 +231,14 @@ def _parse_string_list(value: Any, name: str) -> List[str]:
     return result
 
 
-def _parse_keywords(raw: Any) -> List[KeywordRule]:
+def _parse_keywords(raw: Any) -> list[KeywordRule]:
     """解析并校验 keywords 列表。"""
     if not raw:
         raise ConfigError("`keywords` 不能为空，至少需要配置一个关键词")
     if not isinstance(raw, list):
         raise ConfigError("`keywords` 必须是列表")
 
-    rules: List[KeywordRule] = []
+    rules: list[KeywordRule] = []
     seen: set = set()
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
@@ -300,7 +300,7 @@ def _parse_keywords(raw: Any) -> List[KeywordRule]:
     return rules
 
 
-def _parse_cookie_pool(raw: Any) -> List[CookiePoolItem]:
+def _parse_cookie_pool(raw: Any) -> list[CookiePoolItem]:
     """解析并校验 `monitor.cookie_pool`（v3.2 多 Cookie 管理）。
 
     支持两种 Cookie 存储形态（与 `monitor.cookies` 一致）：
@@ -318,7 +318,7 @@ def _parse_cookie_pool(raw: Any) -> List[CookiePoolItem]:
         return []
     if not isinstance(raw, list):
         raise ConfigError("`monitor.cookie_pool` 必须是列表")
-    items: List[CookiePoolItem] = []
+    items: list[CookiePoolItem] = []
     seen_names: set = set()
     for index, entry in enumerate(raw):
         if not isinstance(entry, dict):
@@ -352,7 +352,7 @@ def _parse_cookie_pool(raw: Any) -> List[CookiePoolItem]:
 
 def serialize_cookie_pool(
     pool: Any, encrypt: bool = True
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """把 Cookie 池序列化为可写盘 YAML 的字典列表（v3.2 / v1.8.1 数据保真修正）。
 
     数据保真（重要）：
@@ -373,7 +373,7 @@ def serialize_cookie_pool(
     Returns:
         [{"name": ..., "cookie": (密文|明文), "enabled": bool}] 列表。
     """
-    result: List[Dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
     for item in pool or []:
         if not isinstance(item, dict):
             continue
@@ -535,7 +535,7 @@ def _parse_notify(raw: Any) -> NotifyConfig:
     if not isinstance(channels_raw, list):
         raise ConfigError("`notify.channels` 必须是列表")
 
-    channels: List[NotifyChannel] = []
+    channels: list[NotifyChannel] = []
     for index, item in enumerate(channels_raw):
         if not isinstance(item, dict):
             raise ConfigError(f"`notify.channels[{index}]` 必须是映射")
@@ -555,7 +555,7 @@ def _parse_notify(raw: Any) -> NotifyConfig:
     return NotifyConfig(channels=channels)
 
 
-def _parse_preset_exclude_keywords(data: Dict[str, Any]) -> List[str]:
+def _parse_preset_exclude_keywords(data: dict[str, Any]) -> list[str]:
     """解析顶层 `preset_exclude_keywords`（v3.5 预置排除词模板）。
 
     - 显式配置（含空列表 = 关闭自动预置）→ 按字符串列表解析；
@@ -572,7 +572,7 @@ def _parse_preset_exclude_keywords(data: Dict[str, Any]) -> List[str]:
     return list(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
 
 
-def config_from_dict(data: Dict[str, Any]) -> Config:
+def config_from_dict(data: dict[str, Any]) -> Config:
     """从已解析的字典构造 Config（便于测试直接注入配置）。
 
     Args:
@@ -595,7 +595,7 @@ def config_from_dict(data: Dict[str, Any]) -> Config:
     )
 
 
-def load_config(path: Optional[str] = None) -> Config:
+def load_config(path: str | None = None) -> Config:
     """加载并校验 YAML 配置文件。
 
     Args:
@@ -615,7 +615,7 @@ def load_config(path: Optional[str] = None) -> Config:
         raise ConfigError(f"配置文件不存在：{os.path.abspath(path)}")
 
     try:
-        with open(path, "r", encoding="utf-8") as fp:
+        with open(path, encoding="utf-8") as fp:
             raw = yaml.safe_load(fp)
     except yaml.YAMLError as exc:
         raise ConfigError(f"配置文件 YAML 解析失败：{exc}") from exc

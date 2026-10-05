@@ -51,7 +51,6 @@ from xianyu_alert.cookie import (  # noqa: E402
 )
 from xianyu_alert.fetcher import MockFetcher  # noqa: E402
 from xianyu_alert.gui import (  # noqa: E402
-    ALERT_COLUMNS,
     DEFAULT_CONFIG_DICT,
     FETCHER_CHOICES,
     UPDATE_LOG,
@@ -64,7 +63,6 @@ from xianyu_alert.gui import (  # noqa: E402
     sort_alert_rows,
 )
 from xianyu_alert.monitor import Monitor  # noqa: E402
-from xianyu_alert.notifier import Notifier  # noqa: E402
 from xianyu_alert.storage import Storage  # noqa: E402
 
 #: 未来时间戳（有效）

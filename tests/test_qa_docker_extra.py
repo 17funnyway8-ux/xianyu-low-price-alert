@@ -23,10 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from xianyu_alert import gui, secure  # noqa: E402
-
 from web import api as web_api  # noqa: E402
 from web.monitor_service import MonitorService  # noqa: E402
+from xianyu_alert import gui, secure  # noqa: E402
 
 _TMP: tempfile.TemporaryDirectory
 
@@ -203,7 +202,7 @@ class QaDockerExtraTestCase(unittest.TestCase):
             json={"action": "add", "name": "主账号", "cookie": cookie_str},
         )
         self.assertEqual(resp.status_code, 200)
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertIn("fernet1:", raw)
         self.assertNotIn("_m_h5_tk=abc_", raw.replace("fernet1:", ""))
         # reload 后运行中 monitor 的 config 引用已替换（下一轮换用新池）

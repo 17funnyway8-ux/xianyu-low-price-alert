@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ def _is_windows() -> bool:
     return sys.platform == "win32" or os.name == "nt"
 
 
-def _resolve_lock_path(lock_path: Optional[str]) -> str:
+def _resolve_lock_path(lock_path: str | None) -> str:
     """解析锁文件路径；None → `paths.default_state_dir()/instance.lock`。
 
     Args:
@@ -102,7 +101,7 @@ class InstanceLock:
             if _is_windows():
                 if msvcrt is not None:
                     os.lseek(self.fd, 0, os.SEEK_SET)
-                    msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
+                    msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             else:
                 if fcntl is not None:
                     fcntl.flock(self.fd, fcntl.LOCK_UN)
@@ -116,7 +115,7 @@ class InstanceLock:
 
 
 #: 模块级缓存：同进程内已持有的锁（幂等，避免入口叠加自锁）
-_held_lock: Optional[InstanceLock] = None
+_held_lock: InstanceLock | None = None
 
 
 def _try_lock(fd: int) -> None:
@@ -135,7 +134,7 @@ def _try_lock(fd: int) -> None:
         os.lseek(fd, 0, os.SEEK_SET)
         if msvcrt is None:
             raise OSError("msvcrt 不可用，无法加锁")
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
         return
     if fcntl is None:
         raise OSError("fcntl 不可用，无法加锁")
@@ -154,8 +153,8 @@ def _write_pid(fd: int) -> None:
 
 
 def acquire_instance_lock(
-    lock_path: Optional[str] = None, strict: bool = False
-) -> Optional[InstanceLock]:
+    lock_path: str | None = None, strict: bool = False
+) -> InstanceLock | None:
     """尝试获取进程级独占锁。
 
     - lock_path=None → `paths.default_state_dir()/instance.lock`（自动建目录）；
@@ -215,7 +214,7 @@ def acquire_instance_lock(
     return _held_lock
 
 
-def release_instance_lock(lock: Optional[InstanceLock]) -> None:
+def release_instance_lock(lock: InstanceLock | None) -> None:
     """释放锁（幂等：None / 已释放均安全）。
 
     进程退出时 OS 自动释放，可不显式调用；显式调用用于 CLI 子命令
@@ -232,7 +231,7 @@ def release_instance_lock(lock: Optional[InstanceLock]) -> None:
     lock.release()
 
 
-def lock_holder_pid(lock_path: Optional[str] = None) -> str:
+def lock_holder_pid(lock_path: str | None = None) -> str:
     """读取当前（或最近）锁持有者 PID（尽力而为，用于冲突提示文案）。
 
     Args:
@@ -243,7 +242,7 @@ def lock_holder_pid(lock_path: Optional[str] = None) -> str:
     """
     path = _resolve_lock_path(lock_path)
     try:
-        with open(path, "r", encoding="utf-8") as fp:
+        with open(path, encoding="utf-8") as fp:
             return fp.read().strip()
     except OSError:
         return ""
@@ -285,7 +284,7 @@ def _probe_is_busy(path: str) -> bool:
     return False
 
 
-def is_running(lock_path: Optional[str] = None) -> bool:
+def is_running(lock_path: str | None = None) -> bool:
     """只检测不持有：非阻塞尝试获取，能获取则立即释放并返回 False（无实例），
     否则返回 True（已有实例在运行）。
 

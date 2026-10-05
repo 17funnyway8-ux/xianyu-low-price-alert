@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict
+from typing import Any
 
 
 class ModelError(ValueError):
@@ -58,7 +58,7 @@ class Product:
     # 构造 / 序列化辅助
     # ------------------------------------------------------------------ #
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], keyword: str = "") -> "Product":
+    def from_dict(cls, data: dict[str, Any], keyword: str = "") -> Product:
         """从字典构造 Product。
 
         Args:
@@ -87,7 +87,7 @@ class Product:
             keyword=data.get("keyword") or keyword,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """转换为普通字典（便于 JSON 序列化 / 日志输出）。"""
         return asdict(self)
 

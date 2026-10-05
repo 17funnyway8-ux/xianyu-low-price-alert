@@ -19,12 +19,11 @@ from __future__ import annotations
 import os
 import sys
 import unittest
-from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from xianyu_alert.config import Config, ConfigError, config_from_dict  # noqa: E402
-from xianyu_alert.fetcher import Fetcher, MockFetcher  # noqa: E402
+from xianyu_alert.fetcher import Fetcher  # noqa: E402
 from xianyu_alert.filters import (  # noqa: E402
     extract_required_keywords,
     hits_exclude_keywords,
@@ -56,10 +55,10 @@ class RecordingNotifier(Notifier):
     name = "recording"
 
     def __init__(self) -> None:
-        self.received: List[Product] = []
+        self.received: list[Product] = []
         self.calls: int = 0
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         self.calls += 1
         self.received.extend(products)
 
@@ -72,10 +71,10 @@ class StubFetcher(Fetcher):
 
     name = "stub"
 
-    def __init__(self, products: List[Product]) -> None:
-        self.products: List[Product] = products
+    def __init__(self, products: list[Product]) -> None:
+        self.products: list[Product] = products
 
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         return list(self.products)
 
 
@@ -94,8 +93,8 @@ def make_product(product_id: str, title: str, price: float = 100.0) -> Product:
 def make_config(
     keyword: str = "光威 笔记本DDR4 3200 16G",
     max_price: float = 300.0,
-    exclude_keywords: List[str] | None = None,
-    required_keywords: List[str] | None = None,
+    exclude_keywords: list[str] | None = None,
+    required_keywords: list[str] | None = None,
 ) -> Config:
     """构造带过滤规则的测试配置。
 
@@ -265,7 +264,7 @@ class TestMonitorFiltering(unittest.TestCase):
         self.storage = Storage(":memory:")
         self.addCleanup(self.storage.close)
 
-    def _run(self, config: Config, products: List[Product]) -> int:
+    def _run(self, config: Config, products: list[Product]) -> int:
         """用固定商品列表跑一轮，返回通知数。"""
         recorder = RecordingNotifier()
         monitor = Monitor(config, StubFetcher(products), self.storage, [recorder])

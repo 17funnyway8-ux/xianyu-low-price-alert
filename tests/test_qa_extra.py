@@ -16,13 +16,12 @@ import os
 import sys
 import tempfile
 import unittest
-from typing import List
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from xianyu_alert.config import Config, config_from_dict  # noqa: E402
-from xianyu_alert.fetcher import FetchError, Fetcher, MockFetcher  # noqa: E402
+from xianyu_alert.fetcher import Fetcher, FetchError, MockFetcher  # noqa: E402
 from xianyu_alert.models import Product  # noqa: E402
 from xianyu_alert.monitor import Monitor  # noqa: E402
 from xianyu_alert.notifier import Notifier, format_message  # noqa: E402
@@ -39,11 +38,11 @@ class StubFetcher(Fetcher):
 
     name = "stub"
 
-    def __init__(self, products: List[Product]) -> None:
-        self.products: List[Product] = products
+    def __init__(self, products: list[Product]) -> None:
+        self.products: list[Product] = products
         self.calls: int = 0
 
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         self.calls += 1
         return list(self.products)
 
@@ -54,10 +53,10 @@ class RecordingNotifier(Notifier):
     name = "recording"
 
     def __init__(self) -> None:
-        self.received: List[Product] = []
+        self.received: list[Product] = []
         self.calls: int = 0
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         self.calls += 1
         self.received.extend(products)
 
@@ -73,7 +72,7 @@ class ExplodingNotifier(Notifier):
     def __init__(self) -> None:
         self.calls: int = 0
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         self.calls += 1
         raise RuntimeError("模拟通道故障：网络不可达")
 
@@ -81,7 +80,7 @@ class ExplodingNotifier(Notifier):
         raise RuntimeError("模拟通道故障：网络不可达")
 
 
-def make_config(max_price: float, keywords: List[str] = None, **fetcher_opts) -> Config:
+def make_config(max_price: float, keywords: list[str] = None, **fetcher_opts) -> Config:
     """构造内存库测试配置。"""
     keywords = keywords or [KEYWORD]
     fetcher = {"type": "mock"}
@@ -375,7 +374,7 @@ class TestFetchFailureTolerance(unittest.TestCase):
 
             name = "selective"
 
-            def fetch(self, keyword: str) -> List[Product]:
+            def fetch(self, keyword: str) -> list[Product]:
                 if keyword == "Switch":
                     raise FetchError("模拟抓取失败")
                 return [make_product("200001", 88.0, keyword=keyword)]
@@ -398,7 +397,7 @@ class TestFetchFailureTolerance(unittest.TestCase):
 
             name = "broken"
 
-            def fetch(self, keyword: str) -> List[Product]:
+            def fetch(self, keyword: str) -> list[Product]:
                 raise ValueError("未预期的解析错误")
 
         monitor = Monitor(
@@ -420,7 +419,7 @@ class TestFetchFailureTolerance(unittest.TestCase):
 
             name = "always-fail"
 
-            def fetch(self, keyword: str) -> List[Product]:
+            def fetch(self, keyword: str) -> list[Product]:
                 raise FetchError("模拟抓取失败")
 
         monitor = Monitor(

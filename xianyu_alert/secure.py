@@ -17,10 +17,8 @@
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,24 +32,24 @@ KEY_FILE_NAME = "secret.key"
 _KEY_FILE_MODE = 0o600
 
 #: 用户显式指定的密钥文件路径（None → 默认 data_dir()/secret.key；测试/高级场景用）
-_KEY_FILE: Optional[str] = None
+_KEY_FILE: str | None = None
 #: 进程内密钥缓存（首次加载后不再读盘；set_key_file 会重置）
-_key_cache: Optional[bytes] = None
+_key_cache: bytes | None = None
 
 try:  # pragma: no cover - 分支由运行环境决定
     from cryptography.fernet import Fernet, InvalidToken
 
     _CRYPTO_UNAVAILABLE = ""
 except Exception as exc:  # noqa: BLE001 - 依赖缺失给出可读降级
-    Fernet = None  # type: ignore[assignment]
-    InvalidToken = Exception  # type: ignore[assignment]
+    Fernet = None  # type: ignore[assignment, misc]
+    InvalidToken = Exception  # type: ignore[assignment, misc]
     _CRYPTO_UNAVAILABLE = str(exc)
 
 
 # ---------------------------------------------------------------------- #
 # 密钥管理
 # ---------------------------------------------------------------------- #
-def set_key_file(path: Optional[str]) -> None:
+def set_key_file(path: str | None) -> None:
     """显式指定密钥文件路径并重置缓存；`None` 恢复默认（data_dir()/secret.key）。
 
     供测试隔离与高级用户使用；重复调用会重新读取磁盘密钥。
@@ -85,7 +83,7 @@ def _write_key_file(key_path: str, key: bytes) -> None:
             logger.debug("设置密钥文件权限失败：%s", key_path)
 
 
-def _load_or_create_key() -> Optional[bytes]:
+def _load_or_create_key() -> bytes | None:
     """加载（或首次生成）Fernet 密钥并缓存。
 
     Returns:

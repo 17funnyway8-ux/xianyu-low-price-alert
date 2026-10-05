@@ -32,7 +32,7 @@ import asyncio
 import json
 import os
 import secrets
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
@@ -60,9 +60,9 @@ SSE_HEARTBEAT_SECONDS = 15.0
 SSE_QUEUE_MAX = 500
 
 
-def ok(data: Optional[Dict[str, Any]] = None, message: str = "") -> Dict[str, Any]:
+def ok(data: dict[str, Any] | None = None, message: str = "") -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """统一成功信封。"""
-    payload: Dict[str, Any] = {"ok": True}
+    payload: dict[str, Any] = {"ok": True}
     if message:
         payload["message"] = message
     if data:
@@ -133,7 +133,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     「统一 JSON 信封」不一致（前端会退化成只能报 "HTTP 404"）。
     """
     detail = getattr(exc, "detail", None)
-    message = str(detail) if detail not in (None, "") else ("HTTP %s" % exc.status_code)
+    message = str(detail) if detail not in (None, "") else (f"HTTP {exc.status_code}")
     return JSONResponse(status_code=exc.status_code, content={"ok": False, "message": message})
 
 
@@ -169,7 +169,7 @@ class NotifyTestBody(BaseModel):
     """通知通道测试请求体。"""
 
     channel_type: str = Field(..., description="通道类型（console/serverchan/email/telegram/bark/webhook）")
-    options: Dict[str, Any] = Field(default_factory=dict, description="通道参数字典")
+    options: dict[str, Any] = Field(default_factory=dict, description="通道参数字典")
 
 
 class BlacklistBody(BaseModel):
@@ -181,23 +181,23 @@ class BlacklistBody(BaseModel):
 class ConfigBody(BaseModel):
     """配置保存请求体：透传前端表单（与 GET /api/config 同构）。"""
 
-    form: Dict[str, Any] = Field(..., description="Web 表单（keywords/channels/…）")
+    form: dict[str, Any] = Field(..., description="Web 表单（keywords/channels/…）")
 
 
 class CookiePoolActionBody(BaseModel):
     """Cookie 池操作请求体（P2-01，action 驱动）。"""
 
     action: str = Field(..., description="add/update/delete/toggle/set_default/refresh_selected/auto_disable_expired")
-    name: Optional[str] = Field(None, description="目标条目名称（add 必填；其余按 name 定位）")
-    new_name: Optional[str] = Field(None, description="update 改名后的新名称")
-    cookie: Optional[str] = Field(None, description="add/update/refresh_selected 的明文 Cookie")
+    name: str | None = Field(None, description="目标条目名称（add 必填；其余按 name 定位）")
+    new_name: str | None = Field(None, description="update 改名后的新名称")
+    cookie: str | None = Field(None, description="add/update/refresh_selected 的明文 Cookie")
     force_missing_token: bool = Field(False, description="add 缺 _m_h5_tk 时前端二次确认后置 true")
 
 
 class CheckShelfBody(BaseModel):
     """校验在架请求体（P2-03，product_ids 上限 30 由服务层截断）。"""
 
-    product_ids: List[str] = Field(..., description="待校验商品 ID 列表（≤30）")
+    product_ids: list[str] = Field(..., description="待校验商品 ID 列表（≤30）")
 
 
 class MonitorDetailOnlyBody(BaseModel):
@@ -216,7 +216,7 @@ def index() -> FileResponse:
 
 
 @app.get("/healthz")
-def healthz(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def healthz(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """健康检查：Web 存活 + monitor 线程状态 + 最近轮次时间。
 
     P2-16 关于弹窗需要：`version`（xianyu_alert.__version__）与
@@ -238,7 +238,7 @@ def healthz(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
 # 配置
 # ---------------------------------------------------------------------- #
 @api_router.get("/config")
-def api_get_config(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_get_config(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """返回配置表单（Cookie 一律脱敏）。"""
     data = gui.load_raw_config(service.config_path)
     form = web_form_from_config(data)
@@ -246,7 +246,7 @@ def api_get_config(service: MonitorService = Depends(get_service)) -> Dict[str, 
 
 
 @api_router.put("/config")
-def api_put_config(body: ConfigBody, service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_put_config(body: ConfigBody, service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """保存配置：校验 → 停止 → 写盘 → 重载 → 热重启（若原在运行）。"""
     try:
         result = service.apply_config(body.form)
@@ -261,7 +261,7 @@ def api_put_config(body: ConfigBody, service: MonitorService = Depends(get_servi
 # monitor 控制
 # ---------------------------------------------------------------------- #
 @api_router.post("/monitor/start")
-def api_monitor_start(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_monitor_start(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """启动 monitor 后台线程。"""
     result = service.start()
     if not result.get("ok"):
@@ -270,14 +270,14 @@ def api_monitor_start(service: MonitorService = Depends(get_service)) -> Dict[st
 
 
 @api_router.post("/monitor/stop")
-def api_monitor_stop(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_monitor_stop(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """停止 monitor 后台线程。"""
     result = service.stop()
     return ok(message=result.get("message", "监测已停止"))
 
 
 @api_router.post("/monitor/run_once")
-def api_monitor_run_once(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_monitor_run_once(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """立即执行一轮监测（monitor 运行时返回 409）。"""
     result = service.run_once()
     if not result.get("ok"):
@@ -286,7 +286,7 @@ def api_monitor_run_once(service: MonitorService = Depends(get_service)) -> Dict
 
 
 @api_router.get("/monitor/status")
-def api_monitor_status(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_monitor_status(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """返回运行状态（前端状态条轮询 2s；含 P2 新增 detail_only 字段）。"""
     return ok(service.status())
 
@@ -294,7 +294,7 @@ def api_monitor_status(service: MonitorService = Depends(get_service)) -> Dict[s
 @api_router.post("/monitor/detail_only")
 def api_monitor_detail_only(
     body: MonitorDetailOnlyBody, service: MonitorService = Depends(get_service)
-) -> Dict[str, Any]:
+) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-11：设置明细日志开关（true=仅展示命中）。"""
     service.set_detail_only(body.enabled)
     return ok({"detail_only": service._detail_only}, message="明细日志已开启" if body.enabled else "明细日志已关闭")
@@ -304,7 +304,7 @@ def api_monitor_detail_only(
 # Cookie
 # ---------------------------------------------------------------------- #
 @api_router.post("/cookie/save")
-def api_cookie_save(body: CookieSaveBody, service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_cookie_save(body: CookieSaveBody, service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """粘贴保存 Cookie：`save_cookies_validated_encrypted` 一次完成
     「校验（拒绝则 400 中文原因）→ 内存 Fernet 加密 → 单次原子写盘」。
 
@@ -338,7 +338,7 @@ def api_cookie_save(body: CookieSaveBody, service: MonitorService = Depends(get_
 
 
 @api_router.get("/cookie/pool")
-def api_cookie_pool(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_cookie_pool(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-01：返回 Cookie 池脱敏列表（name/enabled/health/expire/masked，绝不出明文）。"""
     try:
         result = service.cookie_pool_list()
@@ -350,7 +350,7 @@ def api_cookie_pool(service: MonitorService = Depends(get_service)) -> Dict[str,
 @api_router.post("/cookie/pool")
 def api_cookie_pool_action(
     body: CookiePoolActionBody, service: MonitorService = Depends(get_service)
-) -> Dict[str, Any]:
+) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-01：Cookie 池操作（add/update/delete/toggle/set_default/refresh_selected/auto_disable_expired）。"""
     try:
         result = service.cookie_pool_action(
@@ -366,14 +366,14 @@ def api_cookie_pool_action(
         return fail(f"Cookie 池操作失败：{exc}", status_code=500)
     if not result.get("ok"):
         return fail(result.get("message", "操作失败"), status_code=result.get("code", 400))
-    payload: Dict[str, Any] = {"message": result.get("message", "操作成功")}
+    payload: dict[str, Any] = {"message": result.get("message", "操作成功")}
     if result.get("pool") is not None:
         payload["pool"] = result["pool"]
     return ok(payload)
 
 
 @api_router.post("/cookie/refresh")
-def api_cookie_refresh(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_cookie_refresh(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """用浏览器持久化 profile **免扫码**刷新 Cookie（日常续期的一键入口）。
 
     依赖可选的 Playwright：主镜像（alpine）未安装它，此时返回 400 并给出
@@ -383,7 +383,7 @@ def api_cookie_refresh(service: MonitorService = Depends(get_service)) -> Dict[s
     result = service.refresh_cookie_via_browser()
     if not result.get("ok"):
         return fail(result.get("message", "刷新失败"), status_code=result.get("code", 400))
-    payload: Dict[str, Any] = {"state": result.get("state"), "reason": result.get("reason")}
+    payload: dict[str, Any] = {"state": result.get("state"), "reason": result.get("reason")}
     return ok(payload, message=result.get("message", "Cookie 已刷新"))
 
 
@@ -391,7 +391,7 @@ def api_cookie_refresh(service: MonitorService = Depends(get_service)) -> Dict[s
 # 通知测试
 # ---------------------------------------------------------------------- #
 @api_router.post("/notify/test")
-def api_notify_test(body: NotifyTestBody) -> Dict[str, Any]:
+def api_notify_test(body: NotifyTestBody) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """测试发送：复用 build_notifier + make_sample_product（不落盘）。"""
     ctype = str(body.channel_type or "").strip().lower()
     channel = NotifyChannel(type=ctype, options=dict(body.options or {}))
@@ -416,13 +416,13 @@ def api_list_records(
     sort: str = Query("time", description="排序列：time/keyword/title/price/publish"),
     order: str = Query("desc", description="asc 或 desc"),
     service: MonitorService = Depends(get_service),
-) -> Dict[str, Any]:
+) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """列出提醒记录（默认排除已售出与黑名单；支持 include_sold 与列排序）。"""
     try:
         rows = service.storage.list_notified(limit=limit, include_sold=include_sold)
     except Exception as exc:  # noqa: BLE001 - 数据库异常转 500
         return fail(f"读取提醒记录失败：{exc}", status_code=500)
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
         # 对齐 gui.sort_alert_rows 的列名约定（time/publish）
@@ -454,20 +454,20 @@ def api_check_shelf(
 
 
 @api_router.get("/records/check_shelf/status")
-def api_check_shelf_status(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_check_shelf_status(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-03：校验在架进度（前端轮询 2s）。"""
     return ok(service.check_shelf_status())
 
 
 @api_router.post("/records/check_shelf/cancel")
-def api_check_shelf_cancel(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_check_shelf_cancel(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-03：请求中止校验在架批处理。"""
     result = service.cancel_check_shelf()
     return ok({"cancelled": result.get("cancelled", False)}, message=result.get("message", "已请求中止"))
 
 
 @api_router.post("/records/clear")
-def api_clear_records(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_clear_records(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-05：清空去重记录（product + meta，保留 blacklist；monitor 运行时 409）。"""
     result = service.clear_records()
     if not result.get("ok"):
@@ -476,7 +476,7 @@ def api_clear_records(service: MonitorService = Depends(get_service)) -> Dict[st
 
 
 @api_router.post("/records/{product_id}/sold")
-def api_mark_sold(product_id: str, service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_mark_sold(product_id: str, service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """把某商品全部记录标记为「已售出/下架」（全局，跨关键词）。"""
     pid = str(product_id or "").strip()
     if not pid:
@@ -489,7 +489,7 @@ def api_mark_sold(product_id: str, service: MonitorService = Depends(get_service
 
 
 @api_router.post("/records/{product_id}/unmark")
-def api_unmark_sold(product_id: str, service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_unmark_sold(product_id: str, service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-04：把商品恢复为在架（撤销售出标记，幂等）。"""
     result = service.unmark_record(product_id)
     if not result.get("ok"):
@@ -500,9 +500,9 @@ def api_unmark_sold(product_id: str, service: MonitorService = Depends(get_servi
 @api_router.post("/records/{product_id}/blacklist")
 def api_blacklist(
     product_id: str,
-    body: Optional[BlacklistBody] = None,
+    body: BlacklistBody | None = None,
     service: MonitorService = Depends(get_service),
-) -> Dict[str, Any]:
+) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """把某商品加入临时黑名单（不再提醒 / 不再进提醒记录；P2 前端支持填写原因）。"""
     pid = str(product_id or "").strip()
     if not pid:
@@ -529,7 +529,7 @@ def api_blacklist(
 def api_blacklist_list(
     limit: int = Query(100, ge=1, le=1000, description="最多返回条数"),
     service: MonitorService = Depends(get_service),
-) -> Dict[str, Any]:
+) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-02：列出黑名单（product_id/keyword/reason/created_at，4 字段原样）。"""
     try:
         rows = service.storage.list_blacklist(limit=limit)
@@ -540,7 +540,7 @@ def api_blacklist_list(
 
 
 @api_router.post("/blacklist/{product_id}/restore")
-def api_blacklist_restore(product_id: str, service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+def api_blacklist_restore(product_id: str, service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
     """P2-02：把商品移出黑名单（恢复提醒，幂等）。"""
     pid = str(product_id or "").strip()
     if not pid:
@@ -555,7 +555,7 @@ def api_blacklist_restore(product_id: str, service: MonitorService = Depends(get
 # ---------------------------------------------------------------------- #
 # SSE 实时日志
 # ---------------------------------------------------------------------- #
-def _sse_format(entry: Dict[str, str]) -> str:
+def _sse_format(entry: dict[str, str]) -> str:
     """把一条日志条目格式化为 SSE 事件。"""
     return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
 
@@ -587,7 +587,7 @@ async def sse_events(request: Request, service: MonitorService):
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_SECONDS)
                 yield _sse_format(data)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ": keep-alive\n\n"
     finally:
         service.broadcaster.unsubscribe(sub_id)

@@ -27,10 +27,10 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from web.monitor_service import MonitorService  # noqa: E402
 from xianyu_alert import secure  # noqa: E402
 from xianyu_alert.config import serialize_cookie_pool  # noqa: E402
 from xianyu_alert.fetcher import MtopFetcher, parse_detail_sold_status  # noqa: E402
-from web.monitor_service import MonitorService  # noqa: E402
 
 #: 一条结构合法、含 _m_h5_tk 的 Cookie（时间戳为未来值，避免过期干扰）
 SAMPLE_COOKIE = "unb=1; _m_h5_tk=abcdef1234_4102444800000"

@@ -44,7 +44,7 @@ def enum_windows(pid: int) -> list:
 
 
 def main() -> int:
-    proc = subprocess.Popen([EXE], cwd=os.path.dirname(EXE))
+    subprocess.Popen([EXE], cwd=os.path.dirname(EXE))
     time.sleep(6)
     pids_before = find_exe_pids()
     print("启动后 exe PID:", pids_before, flush=True)

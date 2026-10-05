@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import yaml
 
@@ -88,7 +89,7 @@ class LoginTimeout(Exception):
 # ---------------------------------------------------------------------- #
 # 纯函数：Cookie 头拼装
 # ---------------------------------------------------------------------- #
-def build_cookie_header(cookies: List[Dict[str, Any]]) -> str:
+def build_cookie_header(cookies: list[dict[str, Any]]) -> str:
     """把 Playwright 风格的 cookie 列表拼成 Cookie 请求头字符串。
 
     Args:
@@ -98,7 +99,7 @@ def build_cookie_header(cookies: List[Dict[str, Any]]) -> str:
     Returns:
         `name=value; name2=value2` 格式的字符串；空列表返回空串。
     """
-    parts: List[str] = []
+    parts: list[str] = []
     for cookie in cookies or []:
         if not isinstance(cookie, dict):
             continue
@@ -113,7 +114,7 @@ def build_cookie_header(cookies: List[Dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------- #
 # Cookie 过期检测（_m_h5_tk 内嵌时间戳）
 # ---------------------------------------------------------------------- #
-def cookie_token_timestamp(cookie_str: str) -> Optional[int]:
+def cookie_token_timestamp(cookie_str: str) -> int | None:
     """解析 `_m_h5_tk` 内嵌的 13 位毫秒时间戳。
 
     闲鱼的 `_m_h5_tk` 值形如 `xxx_1785488087003`：下划线后半段是
@@ -154,7 +155,7 @@ def cookie_has_token(cookie_str: str) -> bool:
     return _M_H5_TK_PATTERN.search(str(cookie_str or "")) is not None
 
 
-def cookie_expiry_status(cookie_str: str, now_ms: Optional[int] = None) -> str:
+def cookie_expiry_status(cookie_str: str, now_ms: int | None = None) -> str:
     """判定 Cookie 过期状态（纯函数，便于单测）。
 
     返回状态：
@@ -199,7 +200,7 @@ HEALTH_EXPIRING = "expiring"
 HEALTH_NO_TOKEN = "no_token"
 HEALTH_MISSING = "missing"
 HEALTH_INVALID_ENCRYPT = "invalid_encrypt"
-HEALTH_STATES: Tuple[str, ...] = (
+HEALTH_STATES: tuple[str, ...] = (
     HEALTH_OK,
     HEALTH_EXPIRED,
     HEALTH_EXPIRING,
@@ -257,7 +258,7 @@ def detect_cookie_health(cookie_str: str) -> tuple[str, str]:
     return HEALTH_OK, "有效（含 _m_h5_tk 且未过期）"
 
 
-def pool_enabled_cookies(pool: Any) -> List[str]:
+def pool_enabled_cookies(pool: Any) -> list[str]:
     """返回 Cookie 池中**启用且非空**条目的明文 Cookie 列表（保序）。
 
     供轮换与预检复用。条目既可以是 `CookiePoolItem` dataclass，
@@ -270,7 +271,7 @@ def pool_enabled_cookies(pool: Any) -> List[str]:
     Returns:
         启用条目的 Cookie 字符串列表；池为空 / 无启用条目时返回空列表。
     """
-    result: List[str] = []
+    result: list[str] = []
     for item in pool or []:
         try:
             enabled = bool(getattr(item, "enabled", True))
@@ -282,7 +283,7 @@ def pool_enabled_cookies(pool: Any) -> List[str]:
     return result
 
 
-def pool_usable_cookies(pool: Any) -> List[str]:
+def pool_usable_cookies(pool: Any) -> list[str]:
     """返回 Cookie 池中**「启用 + 非空 + 健康」**条目的明文 Cookie 列表（保序）。
 
     健康定义（v1.8，C11）：`detect_cookie_health` 状态 ∈ {ok, expiring}。
@@ -296,7 +297,7 @@ def pool_usable_cookies(pool: Any) -> List[str]:
     Returns:
         健康条目的 Cookie 字符串列表（保序）；池为空 / 无健康条目时返回空列表。
     """
-    usable: List[str] = []
+    usable: list[str] = []
     for cookie in pool_enabled_cookies(pool):
         try:
             state, _reason = detect_cookie_health(cookie)
@@ -367,9 +368,9 @@ def save_cookies_to_config(config_path: str, cookie_str: str) -> None:
         raise ValueError("Cookie 字符串不能为空")
 
     # 读取现有配置（文件不存在时从空结构开始，保证 login 可先于其它配置执行）
-    data: Dict[str, Any] = {}
+    data: dict[str, Any] = {}
     try:
-        with open(config_path, "r", encoding="utf-8") as fp:
+        with open(config_path, encoding="utf-8") as fp:
             loaded = yaml.safe_load(fp)
         if isinstance(loaded, dict):
             data = loaded
@@ -447,9 +448,9 @@ def save_cookies_validated_encrypted(config_path: str, cookie_str: str) -> None:
         raise ValueError("Cookie 加密不可用（Fernet 密钥缺失或不可用），未保存任何改动，请检查安装。")
 
     # 读取现有配置（文件不存在时从空结构开始），仅更新 monitor.cookies 字段
-    data: Dict[str, Any] = {}
+    data: dict[str, Any] = {}
     try:
-        with open(config_path, "r", encoding="utf-8") as fp:
+        with open(config_path, encoding="utf-8") as fp:
             loaded = yaml.safe_load(fp)
         if isinstance(loaded, dict):
             data = loaded
@@ -473,10 +474,8 @@ def save_cookies_validated_encrypted(config_path: str, cookie_str: str) -> None:
             yaml.safe_dump(data, fp, allow_unicode=True, sort_keys=False, default_flow_style=False)
         os.replace(tmp_path, config_path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
     logger.info("已把 Cookie 加密写入 %s 的 monitor.cookies（fernet1: 密文）", config_path)
 
@@ -499,9 +498,9 @@ def save_cookies_encrypted(config_path: str, cookie_str: str) -> None:
     if not cookie_str:
         raise ValueError("Cookie 字符串不能为空")
 
-    data: Dict[str, Any] = {}
+    data: dict[str, Any] = {}
     try:
-        with open(config_path, "r", encoding="utf-8") as fp:
+        with open(config_path, encoding="utf-8") as fp:
             loaded = yaml.safe_load(fp)
         if isinstance(loaded, dict):
             data = loaded
@@ -537,7 +536,7 @@ def ensure_cookie_encrypted(config_path: str) -> bool:
         True 表示执行了明文→密文迁移；否则返回 False（已加密/为空/失败）。
     """
     try:
-        with open(config_path, "r", encoding="utf-8") as fp:
+        with open(config_path, encoding="utf-8") as fp:
             loaded = yaml.safe_load(fp)
     except FileNotFoundError:
         return False
@@ -600,8 +599,8 @@ def profile_ready() -> bool:
 
 
 def acquire_via_playwright(
-    timeout: Optional[float] = None,
-    headless: Optional[bool] = None,
+    timeout: float | None = None,
+    headless: bool | None = None,
 ) -> str:
     """用**持久化 profile** 打开闲鱼并提取 Cookie（免扫码优先）。
 
@@ -697,7 +696,7 @@ def acquire_via_playwright(
                 while time.monotonic() < deadline:
                     cookies = context.cookies()
                     if any(c.get("name") == REQUIRED_COOKIE_NAME for c in cookies):
-                        header = build_cookie_header(cookies)
+                        header = build_cookie_header([dict(c) for c in cookies])
                         logger.info(
                             "已检测到 %s，共提取 %d 个 Cookie（profile: %s）",
                             REQUIRED_COOKIE_NAME,

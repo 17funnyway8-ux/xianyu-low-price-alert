@@ -17,18 +17,15 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sqlite3
 import sys
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import xianyu_alert.gui as g  # noqa: E402
-from xianyu_alert.config import ConfigError, config_from_dict  # noqa: E402
+from xianyu_alert.config import config_from_dict  # noqa: E402
 from xianyu_alert.fetcher import (  # noqa: E402
     MTOP_DETAIL_API_NAME,
     MtopFetcher,
@@ -584,7 +581,7 @@ class TestSoldOutGuiHelpers(unittest.TestCase):
             {"time": "t", "keyword": "Switch", "title": "y", "price": "¥2",
              "publish": "p", "url": "u", "product_id": "P2", "sold": False}
         )
-        items = gui.tree_alerts.get_children() if hasattr(gui.tree_alerts, "get_children") else list(gui.tree_alerts.rows)
+        gui.tree_alerts.get_children() if hasattr(gui.tree_alerts, "get_children") else list(gui.tree_alerts.rows)
         self.assertEqual(gui._alert_sold.get("i0"), True)
         self.assertEqual(gui._alert_sold.get("i1"), False)
         self.assertEqual(gui.tree_alerts.tags.get("i0"), ("sold",))

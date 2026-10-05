@@ -18,10 +18,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from xianyu_alert import gui, secure  # noqa: E402
-
 from web import api as web_api  # noqa: E402
 from web.monitor_service import MonitorService  # noqa: E402
+from xianyu_alert import gui, secure  # noqa: E402
 
 _TMP: tempfile.TemporaryDirectory
 
@@ -206,7 +205,7 @@ class WebApiTestCase(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertIn("masked", data)
         # 落盘为 fernet1: 密文，绝不含明文
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertIn("fernet1:", raw)
         self.assertNotIn("_m_h5_tk=abc_", raw.replace("fernet1:", ""))
         # 服务内存中已解密可读（cookie_status 不再是 missing）
@@ -229,7 +228,7 @@ class WebApiTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 500)
         saved = gui.load_raw_config(self.config_path)
         self.assertEqual(saved["monitor"].get("cookies", ""), "")  # 原样，无明文
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertNotIn("_m_h5_tk=abc_", raw)
 
     def test_cookie_save_encrypt_degraded_rejected_no_plaintext(self) -> None:
@@ -243,7 +242,7 @@ class WebApiTestCase(unittest.TestCase):
         self.assertIn("加密不可用", resp.json()["message"])
         saved = gui.load_raw_config(self.config_path)
         self.assertEqual(saved["monitor"].get("cookies", ""), "")
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertNotIn("_m_h5_tk=abc_", raw)
 
     # ------------------------------------------------------------------ #
@@ -387,7 +386,7 @@ class WebApiTestCase(unittest.TestCase):
         # P3：未配置任何 Cookie → 默认账号为空串
         self.assertEqual(data["default_name"], "")
         self.assertFalse(data["default_is_pool"])
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertNotIn("cookie_pool", raw)  # 未写任何池条目
 
     def test_cookie_pool_add_requires_token_confirmation(self) -> None:
@@ -398,7 +397,7 @@ class WebApiTestCase(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("_m_h5_tk", resp.json()["message"])
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertNotIn("cookie2=abc", raw)
 
     def test_cookie_pool_add_force_and_encrypted(self) -> None:
@@ -417,7 +416,7 @@ class WebApiTestCase(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertIn("pool", data)
         # 落盘为密文
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertIn("fernet1:", raw)
         self.assertNotIn("_m_h5_tk=t_1700000000000", raw.replace("fernet1:", ""))
         # 列表脱敏回显
@@ -481,7 +480,7 @@ class WebApiTestCase(unittest.TestCase):
             json={"action": "refresh_selected", "name": "小号", "cookie": "cookie2=bad"},
         )
         self.assertEqual(resp.status_code, 400)
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertNotIn("cookie2=bad", raw)
 
     # ------------------------------------------------------------------ #

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..gui import ALERT_COLUMNS, format_countdown
+from ..gui import format_countdown
 from .widgets import AlertTable, LogView
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class RunMonitorTab(QWidget):
     sold_toggle_requested = Signal(dict)
     open_url_requested = Signal(dict)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._running = False
         self._mode = ""
@@ -128,7 +128,7 @@ class RunMonitorTab(QWidget):
         """追加一条日志（主线程槽函数）。"""
         self.log_view.append_log(level, text)
 
-    def append_alert(self, record: Dict[str, Any]) -> None:
+    def append_alert(self, record: dict[str, Any]) -> None:
         """追加一条提醒记录到表格（主线程槽函数，插到顶部）。"""
         entry = dict(record)
         entry.setdefault("sold", False)
@@ -167,11 +167,11 @@ class RunMonitorTab(QWidget):
         """读取「仅展示符合的低价」勾选（主线程读取为普通 bool）。"""
         return self.check_detail_only.isChecked()
 
-    def current_alert_rows(self) -> List[Dict[str, Any]]:
+    def current_alert_rows(self) -> list[dict[str, Any]]:
         """返回当前展示的提醒记录行（校验在架用，主线程读取）。"""
         return self.table_alerts.all_rows()
 
-    def reload_alerts(self, rows: List[Dict[str, Any]]) -> None:
+    def reload_alerts(self, rows: list[dict[str, Any]]) -> None:
         """整体重载提醒记录（校验在架 / 标记售出后由主窗口调用）。"""
         self.table_alerts.replace_rows(rows)
 
