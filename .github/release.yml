@@ -1,0 +1,18 @@
+# Release notes 分类配置（GitHub 原生能力，配合 release.yml 的
+# generate_release_notes: true 使用）。
+# 说明：本仓库当前未使用标签体系，因此按 conventional commits 前缀兜底；
+# 一旦引入标签（bug / enhancement / documentation），下面的 labels 规则会自动生效。
+changelog:
+  categories:
+    - title: 破坏性变更
+      labels: ["breaking-change"]
+    - title: 新增功能
+      labels: [enhancement, feature]
+    - title: 缺陷修复
+      labels: [bug, fix]
+    - title: 文档
+      labels: [documentation]
+    - title: 依赖与构建
+      labels: [dependencies, ci]
+    - title: 其他变更
+      labels: ["*"]
