@@ -1,0 +1,109 @@
+# ===========================================================
+# CI —— push / PR 触发的质量门禁（引入于 M1）
+# ===========================================================
+# 三个 job：
+#   quality   ruff + mypy（约 30 秒，快速失败）
+#   test      三平台矩阵（ubuntu / windows / macos）跑全量单测
+#   coverage  ubuntu 上跑覆盖率并卡门槛（整体 + 核心包）
+#
+# 依赖统一走 requirements-dev.txt，避免「流水线漏装测试依赖」类事故
+# （v1.8.2 首次发布时因漏装 pytest 导致 Release 失败，已记录在案）。
+# ===========================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint & Type check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
+
+      - name: Ruff lint（配置见 ruff.toml）
+        run: ruff check xianyu_alert web tests scripts
+
+      - name: Mypy type check（配置见 mypy.ini）
+        run: mypy
+
+      - name: Dependency audit（pip-audit，仅提示不阻断）
+        continue-on-error: true
+        run: pip-audit -r requirements.txt -r requirements-web.txt
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
+
+      - name: Unit tests（全 mock，无外网依赖）
+        run: python -m unittest discover -s tests
+
+  coverage:
+    name: Coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
+
+      - name: Run tests with coverage
+        run: coverage run --source=xianyu_alert,web -m unittest discover -s tests
+
+      - name: 整体覆盖率（防倒退，门槛 56%，目标 70%）
+        run: coverage report --skip-empty --fail-under=56
+
+      - name: 核心包覆盖率（门槛 77%，目标 80%；不含 GUI 层）
+        run: |
+          coverage report \
+            --include="*/xianyu_alert/*,*/web/*" \
+            --omit="*/gui.py,*/gui_qt/*" \
+            --fail-under=77
