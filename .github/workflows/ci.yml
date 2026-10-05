@@ -74,8 +74,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
 
+      - name: Install xvfb（仅 Linux：Tk GUI 测试需要虚拟显示）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
       - name: Unit tests（全 mock，无外网依赖）
-        run: python -m unittest discover -s tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a python -m unittest discover -s tests
+          else
+            python -m unittest discover -s tests
+          fi
 
   coverage:
     name: Coverage gate
@@ -95,8 +107,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
 
+      - name: Install xvfb（Tk GUI 测试需要虚拟显示）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
       - name: Run tests with coverage
-        run: coverage run --source=xianyu_alert,web -m unittest discover -s tests
+        run: xvfb-run -a coverage run --source=xianyu_alert,web -m unittest discover -s tests
 
       - name: 整体覆盖率（防倒退，门槛 55%，当前 55.6%，目标 70%）
         run: coverage report --skip-empty --fail-under=55
