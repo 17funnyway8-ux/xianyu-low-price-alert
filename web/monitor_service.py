@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import logging
 import os
@@ -31,7 +32,7 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -98,11 +99,11 @@ class SseBroadcaster:
     """
 
     def __init__(self) -> None:
-        self._subscribers: Dict[int, "tuple[asyncio.Queue, asyncio.AbstractEventLoop]"] = {}
+        self._subscribers: dict[int, tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = {}
         self._lock = threading.Lock()
         self._counter = itertools.count(1)
 
-    def subscribe(self, loop: asyncio.AbstractEventLoop) -> "tuple[int, asyncio.Queue]":
+    def subscribe(self, loop: asyncio.AbstractEventLoop) -> tuple[int, asyncio.Queue]:
         """注册一个订阅者，返回 (订阅号, 队列)。"""
         queue: asyncio.Queue = asyncio.Queue(maxsize=500)
         with self._lock:
@@ -115,7 +116,7 @@ class SseBroadcaster:
         with self._lock:
             self._subscribers.pop(sub_id, None)
 
-    def publish(self, data: Dict[str, Any]) -> None:
+    def publish(self, data: dict[str, Any]) -> None:
         """把一条消息广播给全部订阅者（跨线程安全，自身异常绝不外抛）。"""
         with self._lock:
             subs = list(self._subscribers.items())
@@ -129,14 +130,12 @@ class SseBroadcaster:
                 self.unsubscribe(sub_id)
 
     @staticmethod
-    def _safe_put(queue: asyncio.Queue, data: Dict[str, Any]) -> None:
+    def _safe_put(queue: asyncio.Queue, data: dict[str, Any]) -> None:
         """在事件循环线程内执行的投递（队列满时丢最旧，绝不阻塞）。"""
         try:
             if queue.full():
-                try:
+                with contextlib.suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
             queue.put_nowait(data)
         except Exception:  # noqa: BLE001 - 投递失败静默（订阅端可能已断开）
             pass
@@ -154,9 +153,9 @@ class ServiceLogHandler(logging.Handler):
 
     def __init__(self) -> None:
         super().__init__(level=logging.INFO)
-        self._service: "Optional[MonitorService]" = None
+        self._service: MonitorService | None = None
 
-    def set_service(self, service: "Optional[MonitorService]") -> None:
+    def set_service(self, service: MonitorService | None) -> None:
         """切换当前活跃服务（None 表示无服务，日志只进标准输出）。"""
         self._service = service
 
@@ -177,7 +176,7 @@ class ServiceLogHandler(logging.Handler):
 
 
 #: 模块级日志 handler（进程内只挂一次）
-_log_handler: Optional[ServiceLogHandler] = None
+_log_handler: ServiceLogHandler | None = None
 
 
 def _ensure_log_handler() -> ServiceLogHandler:
@@ -198,7 +197,7 @@ def _ensure_log_handler() -> ServiceLogHandler:
 # ---------------------------------------------------------------------- #
 # 表单转换（复用 gui 纯函数；Cookie 一律脱敏，不回传明文）
 # ---------------------------------------------------------------------- #
-def web_form_from_config(data: Dict[str, Any]) -> Dict[str, Any]:
+def web_form_from_config(data: dict[str, Any]) -> dict[str, Any]:
     """把原始配置字典转换为 Web 表单（复用 gui.config_to_form + 脱敏）。
 
     Returns:
@@ -215,7 +214,7 @@ def web_form_from_config(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     form = gui.config_to_form(data)
 
-    keywords: List[Dict[str, Any]] = []
+    keywords: list[dict[str, Any]] = []
     for kw, price in form.get("keywords", []):
         filters = form.get("keyword_filters", {}).get(kw, {}) or {}
         keywords.append(
@@ -279,7 +278,7 @@ def web_form_from_config(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def config_from_web_form(form: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
+def config_from_web_form(form: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     """把 Web 表单转换为可写盘的配置字典（复用 gui.build_config_dict）。
 
     - 关键词/通道/间隔等字段由表单覆盖；
@@ -290,9 +289,9 @@ def config_from_web_form(form: Dict[str, Any], base: Dict[str, Any]) -> Dict[str
       （gui.build_config_dict 不覆盖，这里显式写回）。
     """
     keywords_raw = form.get("keywords") or []
-    keywords: List["tuple[str, float]"] = []
-    keyword_filters: Dict[str, Dict[str, List[str]]] = {}
-    keyword_enabled: Dict[str, bool] = {}
+    keywords: list[tuple[str, float]] = []
+    keyword_filters: dict[str, dict[str, list[str]]] = {}
+    keyword_enabled: dict[str, bool] = {}
     for item in keywords_raw:
         if not isinstance(item, dict):
             continue
@@ -391,31 +390,31 @@ class MonitorService:
             check_same_thread=False，写只在 monitor 线程）。
     """
 
-    def __init__(self, config_path: Optional[str] = None) -> None:
+    def __init__(self, config_path: str | None = None) -> None:
         from xianyu_alert import paths  # 延迟导入，避免模块顶层循环依赖
 
         self.config_path: str = config_path or paths.default_config_path()
         self._lock = threading.RLock()
-        self._config: Optional[Config] = None
-        self._storage: Optional[Storage] = None
-        self._monitor: Optional[Monitor] = None
+        self._config: Config | None = None
+        self._storage: Storage | None = None
+        self._monitor: Monitor | None = None
         self._fetcher: Any = None
-        self._thread: Optional[threading.Thread] = None
-        self._stop_event: Optional[threading.Event] = None
+        self._thread: threading.Thread | None = None
+        self._stop_event: threading.Event | None = None
         self._running: bool = False
         self._round_count: int = 0
         self._notified_count: int = 0
-        self._last_round_at: Optional[datetime] = None
-        self._config_mtime: Optional[float] = None
-        self._logs: Deque[Dict[str, str]] = deque(maxlen=LOG_BUFFER_MAXLEN)
+        self._last_round_at: datetime | None = None
+        self._config_mtime: float | None = None
+        self._logs: deque[dict[str, str]] = deque(maxlen=LOG_BUFFER_MAXLEN)
         self._log_lock = threading.Lock()
         self._broadcaster = SseBroadcaster()
 
         # ---- P2 新增状态：校验在架批处理（与 monitor 线程互斥，R7） ----
         self._check_shelf_lock = threading.Lock()
-        self._check_shelf_thread: Optional[threading.Thread] = None
-        self._check_shelf_cancel: Optional[threading.Event] = None
-        self._check_shelf_state: Dict[str, Any] = {
+        self._check_shelf_thread: threading.Thread | None = None
+        self._check_shelf_cancel: threading.Event | None = None
+        self._check_shelf_state: dict[str, Any] = {
             "running": False,
             "total": 0,
             "done": 0,
@@ -521,7 +520,7 @@ class MonitorService:
                     self._running = False
             logger.info("监测线程已退出")
 
-    def start(self) -> Dict[str, Any]:
+    def start(self) -> dict[str, Any]:
         """启动 monitor 后台线程（幂等：已在运行时直接返回）。
 
         P2 互斥（R7）：校验在架批处理执行中不可启动监测（409 语义）。
@@ -539,7 +538,7 @@ class MonitorService:
             if self._thread is not None and self._thread.is_alive():
                 return {"ok": True, "message": "监测已在运行中"}
             config = self._config
-            if config is None:
+            if config is None or self._storage is None:
                 return {"ok": False, "message": "配置尚未加载"}
             fetcher = build_fetcher(config)
             notifiers = build_notifiers(config)
@@ -565,7 +564,7 @@ class MonitorService:
             )
             return {"ok": True, "message": "监测已启动"}
 
-    def stop(self) -> Dict[str, Any]:
+    def stop(self) -> dict[str, Any]:
         """停止 monitor 后台线程并关闭本轮 fetcher（幂等）。
 
         Storage 由本服务持有（Web 读需要），**不随 stop 关闭**，
@@ -603,7 +602,7 @@ class MonitorService:
             logger.info("监测已停止")
         return {"ok": True, "message": "监测已停止"}
 
-    def run_once(self) -> Dict[str, Any]:
+    def run_once(self) -> dict[str, Any]:
         """立即执行一轮监测（仅在 monitor 未运行时可用）。
 
         Returns:
@@ -613,7 +612,7 @@ class MonitorService:
             if self._thread is not None and self._thread.is_alive():
                 return {"ok": False, "message": "监测正在运行中，无法手动执行单轮", "notified": 0}
             config = self._config
-            if config is None:
+            if config is None or self._storage is None:
                 return {"ok": False, "message": "配置尚未加载", "notified": 0}
             fetcher = build_fetcher(config)
             monitor = Monitor(config, fetcher, self._storage, build_notifiers(config))
@@ -640,13 +639,13 @@ class MonitorService:
             except Exception:  # noqa: BLE001
                 pass
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         """返回运行状态（供 /healthz 与前端状态条轮询）。"""
         with self._lock:
             running = self._running and self._thread is not None and self._thread.is_alive()
             interval = self._config.monitor.interval_seconds if self._config else 0
             last = self._last_round_at
-            next_round_in: Optional[int] = None
+            next_round_in: int | None = None
             if running and last is not None:
                 elapsed = (datetime.now() - last).total_seconds()
                 next_round_in = max(0, int(interval - elapsed))
@@ -687,7 +686,7 @@ class MonitorService:
     # ------------------------------------------------------------------ #
     # 配置热重启
     # ------------------------------------------------------------------ #
-    def apply_config(self, form: Dict[str, Any]) -> Dict[str, Any]:
+    def apply_config(self, form: dict[str, Any]) -> dict[str, Any]:
         """Web 保存配置：校验 → 停止 → 写盘 → 重载 → 重启（若原在运行）。
 
         Args:
@@ -739,7 +738,7 @@ class MonitorService:
             self._logs.append(entry)
         self._broadcaster.publish(entry)
 
-    def recent_logs(self, limit: int = LOG_STATUS_LIMIT) -> List[Dict[str, str]]:
+    def recent_logs(self, limit: int = LOG_STATUS_LIMIT) -> list[dict[str, str]]:
         """返回最近日志（新→旧方向由调用方决定；这里返回最旧→最新便于前端追加）。"""
         with self._log_lock:
             items = list(self._logs)
@@ -776,7 +775,7 @@ class MonitorService:
     # ------------------------------------------------------------------ #
     # P2-03：校验在架（异步批处理，与 monitor 线程互斥 R7）
     # ------------------------------------------------------------------ #
-    def start_check_shelf(self, product_ids: List[str]) -> Dict[str, Any]:
+    def start_check_shelf(self, product_ids: list[str]) -> dict[str, Any]:
         """启动校验在架批处理（异步线程，202 语义）。
 
         校验顺序与 GUI `on_check_on_shelf`（gui.py:3325-3368）一致：
@@ -790,7 +789,7 @@ class MonitorService:
             成功：{"ok": True, "accepted": True, "count": N}；
             失败：{"ok": False, "message": str, "code": int}。
         """
-        ids: List[str] = []
+        ids: list[str] = []
         for pid in product_ids or []:
             p = str(pid or "").strip()
             if p:
@@ -840,7 +839,7 @@ class MonitorService:
         logger.info("校验在架任务已启动：%d 个商品", len(ids))
         return {"ok": True, "accepted": True, "count": len(ids)}
 
-    def cancel_check_shelf(self) -> Dict[str, Any]:
+    def cancel_check_shelf(self) -> dict[str, Any]:
         """请求中止校验批处理（worker 在限速等待处唤醒退出）。"""
         with self._check_shelf_lock:
             cancel_event = self._check_shelf_cancel
@@ -854,12 +853,12 @@ class MonitorService:
         logger.info("已请求中止校验在架任务")
         return {"ok": True, "cancelled": True, "message": "已请求中止校验任务"}
 
-    def check_shelf_status(self) -> Dict[str, Any]:
+    def check_shelf_status(self) -> dict[str, Any]:
         """返回校验批处理进度（前端轮询 2s 用）。"""
         with self._check_shelf_lock:
             return dict(self._check_shelf_state)
 
-    def _check_shelf_worker(self, ids: List[str], cancel_event: threading.Event) -> None:
+    def _check_shelf_worker(self, ids: list[str], cancel_event: threading.Event) -> None:
         """后台线程：build_fetcher(config) → 逐条 check_item_status(pid, timeout=12.0)。
 
         - 判 False → `mark_sold_out_by_id(pid, reason=SOLD_REASON_DETAIL)` + sold+1；
@@ -887,7 +886,12 @@ class MonitorService:
                     logger.info("校验在架已收到中止请求，正在退出…")
                     break
                 try:
-                    status = fetcher.check_item_status(pid, timeout=CHECK_SHELF_ITEM_TIMEOUT)
+                    _check_status = getattr(fetcher, "check_item_status", None)
+                    status = (
+                        _check_status(pid, timeout=CHECK_SHELF_ITEM_TIMEOUT)
+                        if callable(_check_status)
+                        else None
+                    )
                 except Exception as exc:  # noqa: BLE001 - 单条异常不中断批量
                     status = None
                     logger.warning(
@@ -941,7 +945,7 @@ class MonitorService:
     # ------------------------------------------------------------------ #
     # P2-01：Cookie 池管理（读明文/写密文 + reload R1/R4）
     # ------------------------------------------------------------------ #
-    def cookie_pool_list(self) -> Dict[str, Any]:
+    def cookie_pool_list(self) -> dict[str, Any]:
         """读磁盘 config 的 monitor.cookie_pool（解密为明文）→ 逐条 detect_cookie_health
         + mask_cookie 脱敏 + expire 时间 → 返回展示列表（**绝不出明文**，R4）。
 
@@ -958,7 +962,7 @@ class MonitorService:
             }
         """
         items = self._read_pool_plaintext()
-        pool: List[Dict[str, Any]] = []
+        pool: list[dict[str, Any]] = []
         for item in items:
             cookie = str(item.get("cookie") or "")
             raw_cipher = str(item.get("_raw_cipher") or "")
@@ -1009,7 +1013,7 @@ class MonitorService:
         # pool_used：池中是否有「启用 + 非空 + 健康」条目（resolve_cookie_for_round 语义）。
         # 注意 items 是 dict（非 CookiePoolItem），不能用 pool_enabled_cookies（属性访问），
         # 这里直接按 dict 键过滤，与 cookie.pool_usable_cookies 语义对齐。
-        usable: List[str] = []
+        usable: list[str] = []
         for item in items:
             if not bool(item.get("enabled", True)):
                 continue
@@ -1023,7 +1027,7 @@ class MonitorService:
             if state in (HEALTH_OK, HEALTH_EXPIRING):
                 usable.append(ck)
         pool_used = bool(usable)
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "pool_used": pool_used,
             "pool": pool,
             "single": single,
@@ -1037,11 +1041,11 @@ class MonitorService:
     def cookie_pool_action(
         self,
         action: str,
-        name: Optional[str] = None,
-        new_name: Optional[str] = None,
-        cookie: Optional[str] = None,
+        name: str | None = None,
+        new_name: str | None = None,
+        cookie: str | None = None,
         force_missing_token: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """action 分发（add/update/delete/toggle/set_default/refresh_selected/auto_disable_expired）。
 
         所有写路径：内存明文操作 → `serialize_cookie_pool(items, encrypt=True)`
@@ -1068,7 +1072,7 @@ class MonitorService:
                     return True
             return False
 
-        def _persist() -> List[Dict[str, Any]]:
+        def _persist() -> list[dict[str, Any]]:
             """加密写盘 + mtime 重载 + 返回刷新后的池展示列表（只取 pool 数组）。"""
             self._write_pool_encrypted(items)
             self.reload_if_external_changed()
@@ -1182,10 +1186,7 @@ class MonitorService:
                 if state in ("expired", "no_token", "missing", "invalid_encrypt"):
                     item["enabled"] = False
                     disabled += 1
-            if disabled:
-                pool = _persist()
-            else:
-                pool = self.cookie_pool_list()["pool"]
+            pool = _persist() if disabled else self.cookie_pool_list()["pool"]
             return {
                 "ok": True,
                 "message": f"已自动停用 {disabled} 个过期/无效条目（保留条目）",
@@ -1194,7 +1195,7 @@ class MonitorService:
 
         return {"ok": False, "message": f"未知操作：{action}", "code": 400}
 
-    def _read_pool_plaintext(self) -> List[Dict[str, Any]]:
+    def _read_pool_plaintext(self) -> list[dict[str, Any]]:
         """读取磁盘 config 的 monitor.cookie_pool 并逐条解密为明文。
 
         Returns:
@@ -1206,7 +1207,7 @@ class MonitorService:
         data = gui.load_raw_config(self.config_path)
         monitor = data.get("monitor") if isinstance(data, dict) else None
         monitor = monitor if isinstance(monitor, dict) else {}
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         for entry in monitor.get("cookie_pool") or []:
             if not isinstance(entry, dict):
                 continue
@@ -1230,13 +1231,13 @@ class MonitorService:
                 enabled = bool(entry.get("enabled", True))
             except Exception:  # noqa: BLE001 - 脏数据容错
                 enabled = True
-            item: Dict[str, Any] = {"name": name, "cookie": cookie, "enabled": enabled}
+            item: dict[str, Any] = {"name": name, "cookie": cookie, "enabled": enabled}
             if decrypt_failed and raw:
                 item["_raw_cipher"] = raw
             items.append(item)
         return items
 
-    def _write_pool_encrypted(self, items: List[Dict[str, Any]]) -> None:
+    def _write_pool_encrypted(self, items: list[dict[str, Any]]) -> None:
         """把明文池序列化为 fernet1: 密文并**原子写盘**（同目录临时文件 + os.replace）。
 
         磁盘上不存在明文持久化窗口（R4）；写盘后由调用方触发 reload。
@@ -1261,10 +1262,8 @@ class MonitorService:
                 )
             os.replace(tmp_path, self.config_path)
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
         logger.info("Cookie 池已加密写盘（%d 条，fernet1: 密文）", len(serialized))
 
@@ -1297,10 +1296,8 @@ class MonitorService:
                 )
             os.replace(tmp_path, self.config_path)
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
         logger.info("已把默认 Cookie 加密写入 monitor.cookies（fernet1: 密文）")
 
@@ -1375,7 +1372,7 @@ class MonitorService:
     # ------------------------------------------------------------------ #
     # P2-02 / P2-04 / P2-05：黑名单 / 售出撤销 / 清空记录
     # ------------------------------------------------------------------ #
-    def clear_records(self) -> Dict[str, Any]:
+    def clear_records(self) -> dict[str, Any]:
         """清空去重记录（product + meta，**保留 blacklist**）。
 
         monitor 线程运行中 → 409「请先停止监控再清空记录」（对齐 GUI gui.py:3800-3802）。
@@ -1390,7 +1387,7 @@ class MonitorService:
         logger.info("已清空去重记录，共删除 %d 条", int(deleted))
         return {"ok": True, "deleted": int(deleted), "message": f"已清空去重记录，共删除 {deleted} 条"}
 
-    def unmark_record(self, product_id: str) -> Dict[str, Any]:
+    def unmark_record(self, product_id: str) -> dict[str, Any]:
         """把商品恢复为在架（撤销售出标记，幂等）。"""
         pid = str(product_id or "").strip()
         if not pid:
@@ -1402,7 +1399,7 @@ class MonitorService:
     # ------------------------------------------------------------------ #
     # Cookie 免扫码刷新（日常续期的「一键入口」）
     # ------------------------------------------------------------------ #
-    def refresh_cookie_via_browser(self, timeout: Optional[float] = None) -> Dict[str, Any]:
+    def refresh_cookie_via_browser(self, timeout: float | None = None) -> dict[str, Any]:
         """用持久化浏览器 profile **免扫码**刷新 Cookie 并写盘。
 
         这是「日常续期」的一键入口：只要 profile 里的登录态还在，整个过程无需
@@ -1484,7 +1481,7 @@ class MonitorService:
 # 模块级单例访问器
 # ---------------------------------------------------------------------- #
 #: 进程内唯一 MonitorService 实例（首次访问时懒创建；测试可自行构造并替换）
-_service_instance: Optional[MonitorService] = None
+_service_instance: MonitorService | None = None
 
 
 def get_service() -> MonitorService:

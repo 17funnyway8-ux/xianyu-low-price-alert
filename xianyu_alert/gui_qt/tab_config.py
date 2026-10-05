@@ -15,17 +15,14 @@
 from __future__ import annotations
 
 import logging
-import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -35,18 +32,13 @@ from PySide6.QtWidgets import (
 )
 
 from ..gui import (
-    CHANNEL_ORDER,
     DEFAULT_DB_PATH,
     FETCHER_CHOICES,
-    apply_filter_edit,
     cookie_status,
     fetcher_label,
     fetcher_type_from_label,
     keyword_filter_summary,
     resolve_preset_exclude_keywords,
-    validate_interval,
-    validate_keyword_entry,
-    validate_pages,
 )
 from ..shortcut import supported as shortcut_supported
 from .dialogs import CookieDialog, KeywordEditDialog, PresetWordsDialog
@@ -68,21 +60,21 @@ class MonitorConfigTab(QWidget):
     cookie_changed = Signal()
     refresh_cookie_requested = Signal()
 
-    def __init__(self, form: Dict[str, Any], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, form: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._form = dict(form or {})
         #: 运行时状态（从 form 初始化）
-        self._keywords: List[Tuple[str, float]] = list(self._form.get("keywords") or [])
-        self._keyword_enabled: Dict[str, bool] = dict(self._form.get("keyword_enabled") or {})
-        self._keyword_filters: Dict[str, Dict[str, List[str]]] = dict(
+        self._keywords: list[tuple[str, float]] = list(self._form.get("keywords") or [])
+        self._keyword_enabled: dict[str, bool] = dict(self._form.get("keyword_enabled") or {})
+        self._keyword_filters: dict[str, dict[str, list[str]]] = dict(
             self._form.get("keyword_filters") or {}
         )
-        self._preset_exclude_keywords: List[str] = resolve_preset_exclude_keywords(
+        self._preset_exclude_keywords: list[str] = resolve_preset_exclude_keywords(
             self._form.get("preset_exclude_keywords")
         )
         self._cookies: str = str(self._form.get("cookies", "") or "")
         self._cookies_undecryptable: bool = bool(self._form.get("cookies_undecryptable", False))
-        self._cookie_pool: List[Dict[str, Any]] = [
+        self._cookie_pool: list[dict[str, Any]] = [
             dict(e) for e in (self._form.get("cookie_pool") or [])
         ]
         self._storage_path: str = str(self._form.get("storage_path") or DEFAULT_DB_PATH)
@@ -233,7 +225,7 @@ class MonitorConfigTab(QWidget):
         old_filters = self._keyword_filters.get(selected) or {}
         dlg = KeywordEditDialog(
             keyword=selected,
-            price=dict(self._keywords)[selected] if selected in dict(self._keywords) else 0.0,
+            price=dict(self._keywords).get(selected, 0.0),
             exclude=old_filters.get("exclude_keywords") or [],
             required=old_filters.get("required_keywords") or [],
             parent=self,
@@ -357,7 +349,7 @@ class MonitorConfigTab(QWidget):
         self._refresh_cookie_light()
         self.cookie_changed.emit()
 
-    def reload_from_form(self, form: Dict[str, Any]) -> None:
+    def reload_from_form(self, form: dict[str, Any]) -> None:
         """v1.8（C22）：外部修改 config.yaml 重载后同步本页签状态。"""
         form = dict(form or {})
         self._form = form
@@ -378,7 +370,7 @@ class MonitorConfigTab(QWidget):
         self._refresh_table()
         self._refresh_cookie_light()
 
-    def collect_config(self) -> Dict[str, Any]:
+    def collect_config(self) -> dict[str, Any]:
         """收集本页签全部表单状态（供主窗口组装配置字典）。
 
         Returns:

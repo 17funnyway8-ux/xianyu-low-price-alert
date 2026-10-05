@@ -14,7 +14,6 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-import time
 import unittest
 import uuid
 
@@ -22,10 +21,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from xianyu_alert import gui, secure  # noqa: E402
-
 from web import api as web_api  # noqa: E402
 from web.monitor_service import MonitorService  # noqa: E402
+from xianyu_alert import gui, secure  # noqa: E402
 
 _TMP: tempfile.TemporaryDirectory
 #: 本模块测试用的固定 token

@@ -40,9 +40,9 @@ import yaml  # noqa: E402
 
 from xianyu_alert.config import CookiePoolItem, config_from_dict  # noqa: E402
 from xianyu_alert.storage import (  # noqa: E402
-    Storage,
     _META_COOKIE_ALERT_PREFIX,
     _META_COOKIE_POOL_ALERT_KEY,
+    Storage,
 )
 
 
@@ -76,7 +76,7 @@ NO_TOKEN_COOKIE = "cookie2=only"
 
 def _read_yaml(path: str) -> dict:
     """读取 YAML（自动关闭文件）。"""
-    with open(path, "r", encoding="utf-8") as fp:
+    with open(path, encoding="utf-8") as fp:
         return yaml.safe_load(fp)
 
 
@@ -240,7 +240,7 @@ class TestV18NotifierMessage(unittest.TestCase):
             for part, charset in decode_header(subject_line.split(":", 1)[1].strip())
         )
         self.assertEqual(decoded, "标题")
-        self.assertIn(base64.b64encode("正文".encode("utf-8")).decode("ascii"), sent)
+        self.assertIn(base64.b64encode("正文".encode()).decode("ascii"), sent)
 
     @mock.patch("xianyu_alert.notifier.requests.post")
     def test_telegram_and_webhook_message(self, mock_post: mock.MagicMock) -> None:
@@ -485,9 +485,8 @@ class TestV18Singleton(unittest.TestCase):
                 yaml.safe_dump(make_config(), fp, allow_unicode=True, sort_keys=False)
             stderr = io.StringIO()
             with mock.patch("xianyu_alert.cli.acquire_instance_lock", return_value=None), \
-                 mock.patch("xianyu_alert.cli.lock_holder_pid", return_value="42"):
-                with redirect_stderr(stderr):
-                    code = cli.main(["once", "--config", path])
+                 mock.patch("xianyu_alert.cli.lock_holder_pid", return_value="42"), redirect_stderr(stderr):
+                code = cli.main(["once", "--config", path])
             self.assertEqual(code, 2)
             self.assertIn("已有实例运行中", stderr.getvalue())
             self.assertIn("42", stderr.getvalue())
@@ -559,7 +558,7 @@ class TestV18GuiControls(unittest.TestCase):
             cls.root = tkinter.Tk()
             cls.root.withdraw()
         except Exception as exc:  # noqa: BLE001 - 无显示环境跳过
-            raise unittest.SkipTest(f"无 GUI 显示环境：{exc}")
+            raise unittest.SkipTest(f"无 GUI 显示环境：{exc}") from exc
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -570,9 +569,9 @@ class TestV18GuiControls(unittest.TestCase):
                 pass
 
     def _make_app(self):
-        from xianyu_alert.gui import XianyuAlertGUI, save_raw_config
-
         import tkinter
+
+        from xianyu_alert.gui import XianyuAlertGUI, save_raw_config
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "config.yaml")

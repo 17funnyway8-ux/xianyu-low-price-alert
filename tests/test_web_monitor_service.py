@@ -16,10 +16,9 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from web.monitor_service import MonitorService, web_form_from_config  # noqa: E402
 from xianyu_alert import gui, secure  # noqa: E402
 from xianyu_alert.config import ConfigError  # noqa: E402
-
-from web.monitor_service import MonitorService, web_form_from_config  # noqa: E402
 
 _TMP: tempfile.TemporaryDirectory
 
@@ -472,7 +471,7 @@ class MonitorServiceTestCase(unittest.TestCase):
             action="add", name="主账号", cookie=cookie_str
         )
         self.assertTrue(result["ok"])
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertIn("fernet1:", raw)
         self.assertNotIn("_m_h5_tk=abc_", raw.replace("fernet1:", ""))
         # 重新加载后池可用（health=ok 计入轮换）

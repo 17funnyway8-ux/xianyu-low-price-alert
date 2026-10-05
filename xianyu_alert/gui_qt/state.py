@@ -13,13 +13,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
-from ..config import Config, ConfigError, config_from_dict
+from ..config import Config, config_from_dict
 from ..gui import DEFAULT_DB_PATH, build_config_dict, config_to_form, load_raw_config
 
 #: 表单状态的默认结构（与 gui.config_to_form 返回结构一致）
-DEFAULT_FORM: Dict[str, Any] = {
+DEFAULT_FORM: dict[str, Any] = {
     "keywords": [],
     "keyword_enabled": {},
     "keyword_filters": {},
@@ -37,7 +37,7 @@ DEFAULT_FORM: Dict[str, Any] = {
 }
 
 
-def load_form(config_path: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def load_form(config_path: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """读取配置文件并转换为界面表单状态。
 
     Args:
@@ -54,10 +54,10 @@ def load_form(config_path: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
 
 def form_to_config_dict(
-    form: Dict[str, Any],
-    base: Optional[Dict[str, Any]] = None,
-    channels: Optional[Dict[str, Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    form: dict[str, Any],
+    base: dict[str, Any] | None = None,
+    channels: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """把表单状态组装为可写盘配置字典。
 
     Args:
@@ -70,7 +70,7 @@ def form_to_config_dict(
         可直接 yaml.safe_dump 的配置字典（Cookie 以 fernet1: 密文落盘）。
     """
     f = dict(form or {})
-    data = build_config_dict(
+    return build_config_dict(
         keywords=list(f.get("keywords") or []),
         interval_seconds=int(f.get("interval", 600)),
         fetcher_type=str(f.get("fetcher_type", "mtop")),
@@ -85,13 +85,12 @@ def form_to_config_dict(
         preset_exclude_keywords=f.get("preset_exclude_keywords"),
         keyword_enabled=f.get("keyword_enabled"),
     )
-    return data
 
 
 def form_to_config_object(
-    form: Dict[str, Any],
-    base: Optional[Dict[str, Any]] = None,
-    channels: Optional[Dict[str, Dict[str, Any]]] = None,
+    form: dict[str, Any],
+    base: dict[str, Any] | None = None,
+    channels: dict[str, dict[str, Any]] | None = None,
 ) -> Config:
     """把表单状态组装为校验后的 Config 对象（启动监控用）。
 

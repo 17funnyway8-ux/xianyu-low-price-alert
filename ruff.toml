@@ -1,0 +1,37 @@
+# ruff 配置 —— 项目代码规范基线
+# 引入于 M1 阶段（此前仓库无任何 lint 配置）。
+# 规则集原则：优先「能抓真 bug + 可自动修复」的类别。
+
+line-length = 120
+target-version = "py313"
+extend-exclude = ["build", "re_analysis", ".venv"]
+
+[lint]
+select = [
+    "E4",  # import 相关
+    "E7",  # 语句层错误
+    "E9",  # 运行时错误（语法/缩进）
+    "F",   # pyflakes：未定义名、未使用导入/变量
+    "W",   # warning
+    "I",   # import 排序
+    "UP",  # pyupgrade：现代语法
+    "C4",  # comprehension
+    "RET", # return 简化
+    "SIM", # 可简化写法
+    "B",   # flake8-bugbear：可疑写法
+]
+ignore = [
+    # 静默吞异常主题：try/except/pass 的语义化改造纳入 M3 专项
+    # （与 S110/BLE001 一并处理，需要逐个判断"该吞还是该记日志"）。
+    "SIM105",
+    # 长生命周期文件句柄（脚本/测试中 open 后手动 close），需逐个人工确认，M3 处理。
+    "SIM115",
+    # 嵌套 with 合并属纯风格，收益低、改动面大，暂不强制。
+    "SIM117",
+]
+
+[lint.per-file-ignores]
+# 测试里允许较宽松的写法（断言辅助、fixture 命名等）
+"tests/**" = ["B011"]
+# FastAPI 依赖注入惯用 Depends()/Body() 作为默认值
+"web/**" = ["B008"]

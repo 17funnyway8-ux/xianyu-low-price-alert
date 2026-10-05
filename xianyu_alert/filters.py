@@ -14,7 +14,7 @@ lowercase 后做子串匹配，大小写不敏感（`16G` / `16g` 等价；中�
 from __future__ import annotations
 
 import re
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from .models import Product
 
@@ -30,7 +30,7 @@ _REQUIRED_TOKEN_RE = re.compile(r"[A-Za-z]*\d+[A-Za-z]*")
 _EXTRA_TEXT_FIELDS = ("seller", "location", "shop_name")
 
 
-def normalize_keywords(values: Iterable[str]) -> List[str]:
+def normalize_keywords(values: Iterable[str]) -> list[str]:
     """规范化关键词列表：去空白、去空串、去重、保序。
 
     Args:
@@ -39,7 +39,7 @@ def normalize_keywords(values: Iterable[str]) -> List[str]:
     Returns:
         规范化后的字符串列表。
     """
-    seen: List[str] = []
+    seen: list[str] = []
     for value in values or []:
         text = str(value or "").strip()
         if not text:
@@ -49,7 +49,7 @@ def normalize_keywords(values: Iterable[str]) -> List[str]:
     return seen
 
 
-def extract_required_keywords(keyword: str) -> List[str]:
+def extract_required_keywords(keyword: str) -> list[str]:
     """从主关键词自动提取「数字 + 可选单位」片段作为必含词默认值。
 
     例如：
@@ -64,7 +64,7 @@ def extract_required_keywords(keyword: str) -> List[str]:
     Returns:
         提取出的片段列表（可能为空；已去重保序）。
     """
-    tokens: List[str] = []
+    tokens: list[str] = []
     for token in _REQUIRED_TOKEN_RE.findall(str(keyword or "")):
         # 纯单个数字（如「第4号」中的 4）太弱，作为必含词没有区分度，丢弃
         if len(token) == 1 and token.isdigit():
@@ -92,7 +92,7 @@ def product_search_text(product: Product) -> str:
     Returns:
         规范化小写文本，多个字段用空格分隔。
     """
-    parts: List[str] = [product.title]
+    parts: list[str] = [product.title]
     for attr in _EXTRA_TEXT_FIELDS:
         value = getattr(product, attr, "")
         if value:
@@ -111,10 +111,7 @@ def matches_required_keywords(text: str, required_keywords: Iterable[str]) -> bo
         True 表示全部命中（或必含词为空）。
     """
     lowered = str(text or "").lower()
-    for token in normalize_keywords(required_keywords):
-        if token.lower() not in lowered:
-            return False
-    return True
+    return all(token.lower() in lowered for token in normalize_keywords(required_keywords))
 
 
 def hits_exclude_keywords(text: str, exclude_keywords: Iterable[str]) -> bool:
@@ -128,10 +125,7 @@ def hits_exclude_keywords(text: str, exclude_keywords: Iterable[str]) -> bool:
         True 表示命中任一排除词（应跳过该商品）。
     """
     lowered = str(text or "").lower()
-    for token in normalize_keywords(exclude_keywords):
-        if token.lower() in lowered:
-            return True
-    return False
+    return any(token.lower() in lowered for token in normalize_keywords(exclude_keywords))
 
 
 def product_passes_filter(
@@ -152,6 +146,4 @@ def product_passes_filter(
     text = product_search_text(product)
     if not matches_required_keywords(text, required_keywords):
         return False
-    if hits_exclude_keywords(text, exclude_keywords):
-        return False
-    return True
+    return not hits_exclude_keywords(text, exclude_keywords)

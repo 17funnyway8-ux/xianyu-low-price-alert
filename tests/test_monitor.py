@@ -7,7 +7,6 @@ import os
 import sys
 import unittest
 from contextlib import redirect_stdout
-from typing import List
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,10 +28,10 @@ class RecordingNotifier(Notifier):
     name = "recording"
 
     def __init__(self) -> None:
-        self.received: List[Product] = []
+        self.received: list[Product] = []
         self.calls: int = 0
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         self.calls += 1
         self.received.extend(products)
 
@@ -46,9 +45,9 @@ class RecordingMessageNotifier(Notifier):
     name = "recording_message"
 
     def __init__(self) -> None:
-        self.messages: List[tuple] = []
+        self.messages: list[tuple] = []
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         pass
 
     def notify_message(self, title: str, text: str) -> None:
@@ -57,7 +56,7 @@ class RecordingMessageNotifier(Notifier):
 
 def make_config(
     max_price: float = MAX_PRICE,
-    keywords: List[str] = None,
+    keywords: list[str] = None,
     interval: int = 60,
 ) -> Config:
     """构造测试配置。"""
@@ -75,7 +74,7 @@ def make_config(
 
 def make_mtop_config(
     cookie: str = "",
-    pool: List[dict] = None,
+    pool: list[dict] = None,
     alert_enabled: bool = True,
     check_interval: int = 0,
     interval: int = 1,
@@ -230,7 +229,7 @@ class TestMonitor(unittest.TestCase):
         class FixedFetcher(MockFetcher):
             """返回一个价格恰好等于阈值、一个略低于阈值的商品。"""
 
-            def fetch(self, keyword: str) -> List[Product]:
+            def fetch(self, keyword: str) -> list[Product]:
                 return [
                     Product("9001", "刚好等于阈值", MAX_PRICE, "https://x/9001", "刚刚", keyword),
                     Product("9002", "略低于阈值", MAX_PRICE - 0.01, "https://x/9002", "刚刚", keyword),
@@ -260,7 +259,7 @@ class TestMonitor(unittest.TestCase):
         class BrokenNotifier(Notifier):
             name = "broken"
 
-            def notify(self, products: List[Product]) -> None:
+            def notify(self, products: list[Product]) -> None:
                 raise RuntimeError("boom")
 
             def notify_message(self, title: str, text: str) -> None:

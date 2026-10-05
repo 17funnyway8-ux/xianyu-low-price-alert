@@ -203,8 +203,8 @@ class TestQaWebhook(unittest.TestCase):
 
     @mock.patch("xianyu_alert.notifier.requests.post")
     def test_missing_url_channel_skipped_by_factory(self, mock_post: mock.MagicMock) -> None:
-        from xianyu_alert.notifier import build_notifiers
         from xianyu_alert.config import config_from_dict
+        from xianyu_alert.notifier import build_notifiers
 
         config = config_from_dict({
             "keywords": [{"keyword": "Switch", "max_price": 1000}],
@@ -247,7 +247,7 @@ class TestQaMtopMultiPage(unittest.TestCase):
             self.calls: list = []
             self.cookies = TestQaMtopMultiPage.FakeJar()
 
-        def post(self, url: str, **kwargs: object) -> "TestQaMtopMultiPage.FakeResp":
+        def post(self, url: str, **kwargs: object) -> TestQaMtopMultiPage.FakeResp:
             self.calls.append(kwargs)
             if not self.script:
                 raise AssertionError("脚本耗尽")

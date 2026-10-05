@@ -41,7 +41,7 @@ def _write_yaml(path: str, data: dict) -> None:
 
 
 def _read_yaml(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as fp:
+    with open(path, encoding="utf-8") as fp:
         return yaml.safe_load(fp)
 
 
@@ -358,7 +358,7 @@ class TestSaveCookiesValidatedEncrypted(unittest.TestCase):
         cookies = str(data["monitor"]["cookies"])
         self.assertTrue(cookies.startswith("fernet1:"))
         self.assertTrue(data["monitor"]["cookies_encrypted"])
-        raw = open(self.config_path, "r", encoding="utf-8").read()
+        raw = open(self.config_path, encoding="utf-8").read()
         self.assertNotIn("_m_h5_tk=t; c=1", raw.replace("fernet1:", ""))
 
     def test_valid_cookie_with_timestamp_saves_encrypted(self) -> None:
@@ -371,7 +371,7 @@ class TestSaveCookiesValidatedEncrypted(unittest.TestCase):
         save_cookies_validated_encrypted(self.config_path, cookie)
         cookies = str(self._load()["monitor"]["cookies"])
         self.assertTrue(cookies.startswith("fernet1:"))
-        self.assertNotIn(cookie, open(self.config_path, "r", encoding="utf-8").read())
+        self.assertNotIn(cookie, open(self.config_path, encoding="utf-8").read())
 
     def test_expired_cookie_rejected_and_not_saved(self) -> None:
         """过期 Cookie → ValueError 且 config 不变。"""
@@ -403,30 +403,26 @@ class TestSaveCookiesValidatedEncrypted(unittest.TestCase):
     def test_encrypt_degraded_rejected_no_plaintext(self) -> None:
         """加密降级返回明文（cryptography 缺失）→ ValueError 拒绝保存，config 不变。"""
         from xianyu_alert import secure
-
         from xianyu_alert.cookie import save_cookies_validated_encrypted
 
         before = self._load()
         with mock.patch.object(
             secure, "encrypt_text", return_value="_m_h5_tk=t; c=1"
-        ):
-            with self.assertRaises(ValueError) as ctx:
-                save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
+        ), self.assertRaises(ValueError) as ctx:
+            save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
         self.assertIn("加密不可用", str(ctx.exception))
         self.assertEqual(self._load(), before)
 
     def test_encrypt_exception_no_write(self) -> None:
         """encrypt_text 抛异常（IO 级故障）→ 异常上抛，config 不变（无明文残留）。"""
         from xianyu_alert import secure
-
         from xianyu_alert.cookie import save_cookies_validated_encrypted
 
         before = self._load()
         with mock.patch.object(
             secure, "encrypt_text", side_effect=OSError("encrypt boom")
-        ):
-            with self.assertRaises(OSError):
-                save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
+        ), self.assertRaises(OSError):
+            save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=t; c=1")
         self.assertEqual(self._load(), before)
 
     def test_preserves_other_fields(self) -> None:

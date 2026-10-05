@@ -45,13 +45,11 @@ from xianyu_alert.config import (  # noqa: E402
     FetcherConfig,
     MonitorConfig,
     config_from_dict,
-    serialize_cookie_pool,
 )
 from xianyu_alert.cookie import (  # noqa: E402
     HEALTH_EXPIRING,
     HEALTH_INVALID_ENCRYPT,
     HEALTH_NO_TOKEN,
-    HEALTH_OK,
     TOKEN_EXPIRING_SOON_MS,
     TOKEN_TTL_MS,
     cookie_expiry_status,
@@ -209,7 +207,7 @@ class TestDetectHealthExtra(unittest.TestCase):
 
     def test_decrypted_no_token(self) -> None:
         """密文解密后仍缺 _m_h5_tk → no_token。"""
-        cookie = f"_m_h5_tk_enc=xxx; cookie2=1"
+        cookie = "_m_h5_tk_enc=xxx; cookie2=1"
         state, reason = detect_cookie_health(cookie)
         self.assertEqual(state, HEALTH_NO_TOKEN)
         self.assertIn("_m_h5_tk", reason)
@@ -276,7 +274,7 @@ class TestAlertSortExtra(unittest.TestCase):
         # 每个 iid 在排序后仍能映射到原 URL
         for row in sorted_rows:
             self.assertIn(row["iid"], url_map)
-        self.assertEqual(set(r["iid"] for r in sorted_rows), set(url_map.keys()))
+        self.assertEqual({r["iid"] for r in sorted_rows}, set(url_map.keys()))
 
 
 # ---------------------------------------------------------------------- #
@@ -363,7 +361,7 @@ class TestSaveBehaviorExtra(unittest.TestCase):
             try:
                 with mock.patch.object(
                     XianyuAlertGUI, "_append_log"
-                ) as m_log, mock.patch(
+                ), mock.patch(
                     "xianyu_alert.gui.messagebox.showinfo"
                 ) as m_info, mock.patch(
                     "xianyu_alert.gui.messagebox.showwarning"

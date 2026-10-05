@@ -24,11 +24,11 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import xianyu_alert.gui as g  # noqa: E402
 from xianyu_alert.config import (  # noqa: E402
     DEFAULT_PRESET_EXCLUDE_KEYWORDS,
     config_from_dict,
 )
-import xianyu_alert.gui as g  # noqa: E402
 from xianyu_alert.gui import (  # noqa: E402
     CLOSE_JOIN_TIMEOUT,
     PRESET_EXCLUDE_KEYWORDS,

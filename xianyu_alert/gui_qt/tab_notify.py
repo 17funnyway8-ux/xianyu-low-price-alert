@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -41,11 +41,11 @@ class NotifyConfigTab(QWidget):
 
     test_requested = Signal(str)
 
-    def __init__(self, form: Dict[str, Any], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, form: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         form = dict(form or {})
         #: {ctype: {"enabled": bool, "options": {field: str}}}
-        self._channels: Dict[str, Dict[str, Any]] = {}
+        self._channels: dict[str, dict[str, Any]] = {}
         raw_channels = form.get("channels") or {}
         for ctype in CHANNEL_ORDER:
             state = dict(raw_channels.get(ctype) or {})
@@ -57,7 +57,7 @@ class NotifyConfigTab(QWidget):
             self._channels["console"]["enabled"] = True
 
         #: ctype -> (启用勾选框, {field: QLineEdit})
-        self._widgets: Dict[str, tuple] = {}
+        self._widgets: dict[str, tuple] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -75,7 +75,7 @@ class NotifyConfigTab(QWidget):
             card_layout.addWidget(check)
 
             form = QFormLayout()
-            edits: Dict[str, QLineEdit] = {}
+            edits: dict[str, QLineEdit] = {}
             fields = CHANNEL_FIELDS.get(ctype, ())
             for field_name, label, secret, default in fields:
                 edit = QLineEdit(str(state["options"].get(field_name, "")))
@@ -107,7 +107,7 @@ class NotifyConfigTab(QWidget):
         self._channels[ctype]["enabled"] = enabled
         btn_test.setEnabled(enabled)
 
-    def reload_from_form(self, form: Dict[str, Any]) -> None:
+    def reload_from_form(self, form: dict[str, Any]) -> None:
         """v1.8（C22）：外部修改 config.yaml 重载后同步本页签状态。"""
         raw_channels = (form or {}).get("channels") or {}
         for ctype in CHANNEL_ORDER:
@@ -129,16 +129,16 @@ class NotifyConfigTab(QWidget):
             self._channels["console"]["enabled"] = True
 
     # ------------------------------------------------------------------ #
-    def collect_channels(self) -> Dict[str, Dict[str, Any]]:
+    def collect_channels(self) -> dict[str, dict[str, Any]]:
         """收集全部通道状态（启用 + 字段值）。
 
         Returns:
             {ctype: {"enabled": bool, "options": {field: str}}}。
         """
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         for ctype in CHANNEL_ORDER:
             check, edits = self._widgets[ctype]
-            options: Dict[str, str] = {}
+            options: dict[str, str] = {}
             for field_name, edit in edits.items():
                 text = edit.text().strip()
                 if text:
@@ -146,10 +146,10 @@ class NotifyConfigTab(QWidget):
             result[ctype] = {"enabled": check.isChecked(), "options": options}
         return result
 
-    def channel_options(self, ctype: str) -> Dict[str, str]:
+    def channel_options(self, ctype: str) -> dict[str, str]:
         """返回某通道当前字段值（测试发送用）。"""
         check, edits = self._widgets.get(ctype, (None, {}))
-        options: Dict[str, str] = {}
+        options: dict[str, str] = {}
         for field_name, edit in edits.items():
             text = edit.text().strip()
             if text:

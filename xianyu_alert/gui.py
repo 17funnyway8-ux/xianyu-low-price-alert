@@ -30,8 +30,9 @@ import re
 import threading
 import time
 import webbrowser
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import yaml
 
@@ -53,7 +54,6 @@ except ImportError:  # pragma: no cover - 无 tkinter 环境
     TK_AVAILABLE = False
 from .config import (
     DEFAULT_PRESET_EXCLUDE_KEYWORDS,
-    DEFAULT_USER_AGENT,
     VALID_FETCHER_TYPES,
     Config,
     ConfigError,
@@ -122,7 +122,7 @@ SOLD_REASON_DETAIL = "详情接口判定"
 #: v3.5 起可配置：该常量仅作默认值兜底，实际预置词从
 #: `config.yaml` 顶层 `preset_exclude_keywords`（GUI「编辑预置排除词」弹窗可改）读取；
 #: 缺省时回退到 `DEFAULT_PRESET_EXCLUDE_KEYWORDS`（向后兼容）。
-PRESET_EXCLUDE_KEYWORDS: Tuple[str, ...] = tuple(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
+PRESET_EXCLUDE_KEYWORDS: tuple[str, ...] = tuple(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
 
 #: Cookie 状态灯（v3 升级为六态：未配置 / 缺 token / 已过期 / 即将过期 / 无法解密 / 正常）
 COOKIE_STATE_MISSING = "missing"
@@ -135,15 +135,15 @@ COOKIE_STATE_OK = "ok"
 #: 抓取器下拉框：(内部值, 界面显示文案)
 #: v3.2 起：只展示 mtop（默认，★推荐）+ mock（标注「开发演示用」）；
 #:           web 不再展示（代码保留为 legacy，向后兼容旧配置）。
-FETCHER_CHOICES: Tuple[Tuple[str, str], ...] = (
+FETCHER_CHOICES: tuple[tuple[str, str], ...] = (
     ("mtop", "mtop（真实抓取闲鱼，需登录 Cookie）★推荐"),
     ("mock", "mock（开发演示用，本地假数据，无需登录）"),
 )
 
 #: 通知通道展示顺序（v3 新增 bark / webhook）
-CHANNEL_ORDER: Tuple[str, ...] = ("console", "serverchan", "email", "telegram", "bark", "webhook")
+CHANNEL_ORDER: tuple[str, ...] = ("console", "serverchan", "email", "telegram", "bark", "webhook")
 #: 通道中文名
-CHANNEL_LABELS: Dict[str, str] = {
+CHANNEL_LABELS: dict[str, str] = {
     "console": "控制台（打印到日志区，永远可用）",
     "serverchan": "Server酱（微信推送）",
     "email": "邮件（SMTP）",
@@ -152,7 +152,7 @@ CHANNEL_LABELS: Dict[str, str] = {
     "webhook": "企业微信机器人（Webhook）",
 }
 #: 各通道必填字段
-CHANNEL_REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
+CHANNEL_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "console": (),
     "serverchan": ("sendkey",),
     "email": ("smtp_host", "smtp_port", "username", "password", "to"),
@@ -161,7 +161,7 @@ CHANNEL_REQUIRED_FIELDS: Dict[str, Tuple[str, ...]] = {
     "webhook": ("url",),
 }
 #: 各通道字段的界面定义：(字段名, 中文标签, 是否密码框, 默认值)
-CHANNEL_FIELDS: Dict[str, Tuple[Tuple[str, str, bool, str], ...]] = {
+CHANNEL_FIELDS: dict[str, tuple[tuple[str, str, bool, str], ...]] = {
     "console": (),
     "serverchan": (("sendkey", "SendKey", True, ""),),
     "email": (
@@ -180,7 +180,7 @@ CHANNEL_FIELDS: Dict[str, Tuple[Tuple[str, str, bool, str], ...]] = {
 }
 
 #: config.yaml 不存在时使用的内置默认配置（v3.2：间隔 600s、抓取器 mtop）
-DEFAULT_CONFIG_DICT: Dict[str, Any] = {
+DEFAULT_CONFIG_DICT: dict[str, Any] = {
     "keywords": [{"keyword": "Switch", "max_price": 1000}],
     "monitor": {"interval_seconds": 600, "user_agent": "", "cookies": ""},
     "fetcher": {"type": "mtop", "mock_products_per_round": 5, "mock_fail_rounds": []},
@@ -246,7 +246,7 @@ COOKIE_MANUAL_HELP = (
 # ====================================================================== #
 # 纯函数区（不依赖任何 widget，便于单元测试）
 # ====================================================================== #
-def config_file_mtime(path: str) -> Optional[float]:
+def config_file_mtime(path: str) -> float | None:
     """读取配置文件的修改时间戳（秒）；文件不存在 / 读取失败返回 None。
 
     v1.8（C22）：GUI 用它在 `_tick` 里检测 config.yaml 是否被外部修改
@@ -264,7 +264,7 @@ def config_file_mtime(path: str) -> Optional[float]:
         return None
 
 
-def cookie_status(cookie_str: str) -> Tuple[str, str]:
+def cookie_status(cookie_str: str) -> tuple[str, str]:
     """判定 Cookie 的状态并给出展示文案（v3 升级为六态）。
 
     状态码：
@@ -408,7 +408,7 @@ def about_full_text() -> str:
     return f"{about_text()}\n\n{UPDATE_LOG}"
 
 
-def validate_keyword_entry(keyword: Any, price_text: Any) -> Tuple[str, float]:
+def validate_keyword_entry(keyword: Any, price_text: Any) -> tuple[str, float]:
     """校验「关键词 + 价格阈值」输入。
 
     Args:
@@ -437,7 +437,7 @@ def validate_keyword_entry(keyword: Any, price_text: Any) -> Tuple[str, float]:
     return kw, price
 
 
-def parse_keyword_lines(text: Any) -> List[str]:
+def parse_keyword_lines(text: Any) -> list[str]:
     """把多行文本解析为去空、去重的关键词列表（每行一个）。
 
     Args:
@@ -450,8 +450,8 @@ def parse_keyword_lines(text: Any) -> List[str]:
 
 
 def add_preset_excludes(
-    excludes: List[str], preset: Optional[Sequence[str]] = None
-) -> List[str]:
+    excludes: list[str], preset: Sequence[str] | None = None
+) -> list[str]:
     """在现有排除词基础上追加预置排除词（去重保序）。
 
     Args:
@@ -467,7 +467,7 @@ def add_preset_excludes(
     return normalize_keywords(list(excludes or []) + presets)
 
 
-def resolve_preset_exclude_keywords(form_value: Any) -> List[str]:
+def resolve_preset_exclude_keywords(form_value: Any) -> list[str]:
     """解析 GUI 表单中的预置排除词模板（v3.5，BUG-1 修复）。
 
     **只有 `None`（表单缺省/缺失）才回退默认列表**；
@@ -486,10 +486,10 @@ def resolve_preset_exclude_keywords(form_value: Any) -> List[str]:
 
 
 def apply_filter_edit(
-    current: Optional[Dict[str, List[str]]],
+    current: dict[str, list[str]] | None,
     exclude_text: Any,
     required_text: Any,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """把过滤编辑对话框中的多行文本合并为新的过滤规则字典。
 
     Args:
@@ -500,7 +500,7 @@ def apply_filter_edit(
     Returns:
         形如 {"exclude_keywords": [...], "required_keywords": [...]} 的新字典。
     """
-    result: Dict[str, List[str]] = {
+    result: dict[str, list[str]] = {
         "exclude_keywords": [],
         "required_keywords": [],
     }
@@ -510,7 +510,7 @@ def apply_filter_edit(
     return result
 
 
-def keyword_filter_summary(filters: Optional[Dict[str, List[str]]]) -> str:
+def keyword_filter_summary(filters: dict[str, list[str]] | None) -> str:
     """把过滤规则字典格式化为表格摘要文案。
 
     Args:
@@ -522,7 +522,7 @@ def keyword_filter_summary(filters: Optional[Dict[str, List[str]]]) -> str:
     state = filters or {}
     excludes = normalize_keywords(state.get("exclude_keywords"))
     required = normalize_keywords(state.get("required_keywords"))
-    parts: List[str] = []
+    parts: list[str] = []
     if excludes:
         parts.append("排除:" + ",".join(excludes))
     if required:
@@ -530,7 +530,7 @@ def keyword_filter_summary(filters: Optional[Dict[str, List[str]]]) -> str:
     return " ".join(parts) if parts else "—"
 
 
-def _parse_str_list(value: Any) -> List[str]:
+def _parse_str_list(value: Any) -> list[str]:
     """把配置中的列表字段解析为去空去重的字符串列表；非法类型视为空。
 
     供 config_to_form 使用：界面读取路径对脏数据保持容错，绝不抛异常。
@@ -564,7 +564,7 @@ def validate_interval(text: Any) -> int:
     return seconds
 
 
-def normalize_channel_options(ctype: str, options: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_channel_options(ctype: str, options: dict[str, Any]) -> dict[str, Any]:
     """规范化通道参数：去空白、端口转 int、丢弃空值。
 
     Args:
@@ -574,7 +574,7 @@ def normalize_channel_options(ctype: str, options: Dict[str, Any]) -> Dict[str, 
     Returns:
         可直接写入 YAML 的参数字典。
     """
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     for key, value in (options or {}).items():
         text = str(value if value is not None else "").strip()
         if not text:
@@ -589,7 +589,7 @@ def normalize_channel_options(ctype: str, options: Dict[str, Any]) -> Dict[str, 
     return result
 
 
-def channel_is_complete(ctype: str, options: Dict[str, Any]) -> bool:
+def channel_is_complete(ctype: str, options: dict[str, Any]) -> bool:
     """判断某通道的必填参数是否齐全。
 
     Args:
@@ -603,10 +603,7 @@ def channel_is_complete(ctype: str, options: Dict[str, Any]) -> bool:
     if required is None:
         return False
     data = options or {}
-    for field_name in required:
-        if not str(data.get(field_name, "") or "").strip():
-            return False
-    return True
+    return all(str(data.get(field_name, "") or "").strip() for field_name in required)
 
 
 def fetcher_label(ftype: str) -> str:
@@ -631,12 +628,12 @@ def fetcher_type_from_label(label: str) -> str:
     return FETCHER_CHOICES[0][0]
 
 
-def default_channel_options(ctype: str) -> Dict[str, str]:
+def default_channel_options(ctype: str) -> dict[str, str]:
     """返回某通道的默认参数字典（用于初始化界面输入框）。"""
     return {name: default for name, _label, _secret, default in CHANNEL_FIELDS.get(ctype, ())}
 
 
-def config_to_form(data: Any) -> Dict[str, Any]:
+def config_to_form(data: Any) -> dict[str, Any]:
     """把（可能不规范的）配置字典转换为界面表单状态。
 
     对任何脏数据都保持容错：非法项直接忽略并回退到默认值，绝不抛异常。
@@ -652,11 +649,11 @@ def config_to_form(data: Any) -> Dict[str, Any]:
     root = data if isinstance(data, dict) else {}
 
     # ---- 关键词 ----
-    keywords: List[Tuple[str, float]] = []
+    keywords: list[tuple[str, float]] = []
     #: 关键词 -> 是否启用（v3.7；缺省 True，停用不删除）
-    keyword_enabled: Dict[str, bool] = {}
+    keyword_enabled: dict[str, bool] = {}
     #: 关键词 -> {exclude_keywords, required_keywords}（v3.1 过滤规则）
-    keyword_filters: Dict[str, Dict[str, List[str]]] = {}
+    keyword_filters: dict[str, dict[str, list[str]]] = {}
     raw_keywords = root.get("keywords")
     if isinstance(raw_keywords, list):
         for item in raw_keywords:
@@ -713,7 +710,7 @@ def config_to_form(data: Any) -> Dict[str, Any]:
     # 数据保真（v1.8.1）：解密失败时明文为空，但保留原始密文 `_raw_cipher`，
     # 保存配置时由 serialize_cookie_pool 原样回写该密文，避免「密钥变更 /
     # secret.key 未迁移」导致条目在下一次保存时被整条删除。
-    cookie_pool: List[Dict[str, Any]] = []
+    cookie_pool: list[dict[str, Any]] = []
     raw_pool = monitor.get("cookie_pool")
     if isinstance(raw_pool, list):
         for entry in raw_pool:
@@ -736,7 +733,7 @@ def config_to_form(data: Any) -> Dict[str, Any]:
                 enabled = bool(entry.get("enabled", True))
             except Exception:  # noqa: BLE001 - 脏数据容错
                 enabled = True
-            item: Dict[str, Any] = {"name": name, "cookie": decrypted, "enabled": enabled}
+            item: dict[str, Any] = {"name": name, "cookie": decrypted, "enabled": enabled}
             if decrypt_failed:
                 item["_raw_cipher"] = raw_cookie
             cookie_pool.append(item)
@@ -760,7 +757,7 @@ def config_to_form(data: Any) -> Dict[str, Any]:
     storage_path = str(storage.get("path") or DEFAULT_DB_PATH).strip() or DEFAULT_DB_PATH
 
     # ---- notify ----
-    channels: Dict[str, Dict[str, Any]] = {
+    channels: dict[str, dict[str, Any]] = {
         ctype: {"enabled": False, "options": default_channel_options(ctype)}
         for ctype in CHANNEL_ORDER
     }
@@ -810,20 +807,20 @@ def config_to_form(data: Any) -> Dict[str, Any]:
 
 
 def build_config_dict(
-    keywords: Sequence[Tuple[str, float]],
+    keywords: Sequence[tuple[str, float]],
     interval_seconds: int,
     fetcher_type: str,
     cookies: str,
     storage_path: str,
-    channels: Dict[str, Dict[str, Any]],
-    base: Optional[Dict[str, Any]] = None,
+    channels: dict[str, dict[str, Any]],
+    base: dict[str, Any] | None = None,
     pages: int = 1,
     encrypt_cookies: bool = False,
-    keyword_filters: Optional[Dict[str, Dict[str, List[str]]]] = None,
-    cookie_pool: Optional[List[Dict[str, Any]]] = None,
-    preset_exclude_keywords: Optional[Sequence[str]] = None,
-    keyword_enabled: Optional[Dict[str, bool]] = None,
-) -> Dict[str, Any]:
+    keyword_filters: dict[str, dict[str, list[str]]] | None = None,
+    cookie_pool: list[dict[str, Any]] | None = None,
+    preset_exclude_keywords: Sequence[str] | None = None,
+    keyword_enabled: dict[str, bool] | None = None,
+) -> dict[str, Any]:
     """由界面表单状态组装出完整的配置字典（用于写回 config.yaml）。
 
     会在 `base` 的基础上做增量覆盖，从而**保留用户手工添加的其它字段**
@@ -857,16 +854,16 @@ def build_config_dict(
     Returns:
         可直接 yaml.safe_dump 的配置字典。
     """
-    data: Dict[str, Any] = copy.deepcopy(base) if isinstance(base, dict) else {}
+    data: dict[str, Any] = copy.deepcopy(base) if isinstance(base, dict) else {}
 
     if preset_exclude_keywords is not None:
         data["preset_exclude_keywords"] = normalize_keywords(preset_exclude_keywords)
 
     enabled_map = keyword_enabled or {}
     filters = keyword_filters or {}
-    out_keywords: List[Dict[str, Any]] = []
+    out_keywords: list[dict[str, Any]] = []
     for kw, price in (keywords or []):
-        entry: Dict[str, Any] = {"keyword": str(kw), "max_price": float(price)}
+        entry: dict[str, Any] = {"keyword": str(kw), "max_price": float(price)}
         if keyword_filters is not None:
             state = filters.get(str(kw)) or {}
             entry["exclude_keywords"] = normalize_keywords(state.get("exclude_keywords"))
@@ -909,7 +906,7 @@ def build_config_dict(
     storage["path"] = str(storage_path or DEFAULT_DB_PATH)
     data["storage"] = storage
 
-    out_channels: List[Dict[str, Any]] = []
+    out_channels: list[dict[str, Any]] = []
     for ctype in CHANNEL_ORDER:
         state = (channels or {}).get(ctype) or {}
         if not state.get("enabled"):
@@ -918,7 +915,7 @@ def build_config_dict(
         if not channel_is_complete(ctype, options):
             logger.warning("通道 %s 参数不完整，未写入配置", ctype)
             continue
-        entry: Dict[str, Any] = {"type": ctype}
+        entry: dict[str, Any] = {"type": ctype}
         entry.update(options)
         out_channels.append(entry)
 
@@ -929,7 +926,7 @@ def build_config_dict(
     return data
 
 
-def load_raw_config(path: str) -> Dict[str, Any]:
+def load_raw_config(path: str) -> dict[str, Any]:
     """读取 config.yaml 原始字典；文件缺失 / 解析失败时返回内置默认配置。
 
     Args:
@@ -939,7 +936,7 @@ def load_raw_config(path: str) -> Dict[str, Any]:
         配置字典（永远不为空，绝不抛异常）。
     """
     try:
-        with open(path, "r", encoding="utf-8") as fp:
+        with open(path, encoding="utf-8") as fp:
             loaded = yaml.safe_load(fp)
         if isinstance(loaded, dict) and loaded:
             return loaded
@@ -951,7 +948,7 @@ def load_raw_config(path: str) -> Dict[str, Any]:
     return copy.deepcopy(DEFAULT_CONFIG_DICT)
 
 
-def save_raw_config(path: str, data: Dict[str, Any]) -> None:
+def save_raw_config(path: str, data: dict[str, Any]) -> None:
     """把配置字典写回 YAML 文件。
 
     Args:
@@ -1001,9 +998,9 @@ def format_countdown(seconds: float) -> str:
 
 
 #: 提醒记录表的列顺序（与 ttk.Treeview columns 一致）
-ALERT_COLUMNS: Tuple[str, ...] = ("time", "keyword", "title", "price", "publish")
+ALERT_COLUMNS: tuple[str, ...] = ("time", "keyword", "title", "price", "publish")
 #: 提醒记录表的表头中文名
-ALERT_HEADING_TEXTS: Dict[str, str] = {
+ALERT_HEADING_TEXTS: dict[str, str] = {
     "time": "提醒时间",
     "keyword": "关键词",
     "title": "商品名称",
@@ -1013,8 +1010,8 @@ ALERT_HEADING_TEXTS: Dict[str, str] = {
 
 
 def sort_alert_rows(
-    rows: Sequence[Dict[str, Any]], column: str, ascending: bool = True
-) -> List[Dict[str, Any]]:
+    rows: Sequence[dict[str, Any]], column: str, ascending: bool = True
+) -> list[dict[str, Any]]:
     """按列排序提醒记录（纯函数，v3.2 表格点击表头排序）。
 
     - `price` 列：按数值排序（剥离 `¥` / 千分位逗号后 `float` 解析）；
@@ -1036,7 +1033,7 @@ def sort_alert_rows(
         return list(rows)
 
     if column == "price":
-        def parse_price(row: Dict[str, Any]) -> Optional[float]:
+        def parse_price(row: dict[str, Any]) -> float | None:
             """解析价格数值；失败返回 None。"""
             text = str(row.get(column, "") or "").replace("¥", "").replace(",", "").strip()
             try:
@@ -1055,8 +1052,8 @@ def sort_alert_rows(
 
 #: 黑名单相关（v3.6）——提醒记录「🚫 加入黑名单」按钮使用的纯逻辑。
 def blacklist_alert_row(
-    storage: "Storage",
-    row: Dict[str, Any],
+    storage: Storage,
+    row: dict[str, Any],
     reason: str = "",
 ) -> bool:
     """把一条提醒记录加入黑名单（纯逻辑，便于单元测试，GUI 直接复用）。
@@ -1196,7 +1193,7 @@ def _apply_row_style_if_available(obj: Any, item: str, keyword: str) -> None:
             pass
 
 
-def _keyword_enabled_dict(obj: Any) -> Dict[str, bool]:
+def _keyword_enabled_dict(obj: Any) -> dict[str, bool]:
     """读取 / 惰性初始化对象的 `_keyword_enabled` 状态字典（v3.7）。
 
     用 getattr / setattr 而不是实例方法：既有测试常用
@@ -1223,7 +1220,7 @@ class QueueLogHandler(logging.Handler):
     就能显示在图形界面里。
     """
 
-    def __init__(self, target_queue: "queue.Queue", level: int = logging.INFO) -> None:
+    def __init__(self, target_queue: queue.Queue, level: int = logging.INFO) -> None:
         """初始化。
 
         Args:
@@ -1231,7 +1228,7 @@ class QueueLogHandler(logging.Handler):
             level: 处理的最低日志级别。
         """
         super().__init__(level=level)
-        self.target_queue: "queue.Queue" = target_queue
+        self.target_queue: queue.Queue = target_queue
 
     def emit(self, record: logging.LogRecord) -> None:
         """把一条日志放入队列（自身异常绝不向外抛）。"""
@@ -1257,60 +1254,60 @@ class XianyuAlertGUI:
         config_path: 配置文件路径。
     """
 
-    def __init__(self, root: "tk.Tk", config_path: str = "config.yaml") -> None:
+    def __init__(self, root: tk.Tk, config_path: str = "config.yaml") -> None:
         """构造窗口与全部控件。
 
         Args:
             root: Tk 根窗口。
             config_path: 配置文件路径。
         """
-        self.root: "tk.Tk" = root
+        self.root: tk.Tk = root
         self.config_path: str = config_path
 
         # ---- 运行时状态 ----
-        self.ui_queue: "queue.Queue" = queue.Queue()
-        self._worker: Optional[threading.Thread] = None
+        self.ui_queue: queue.Queue = queue.Queue()
+        self._worker: threading.Thread | None = None
         self._stop_event: threading.Event = threading.Event()
         self._mode: str = ""            # "loop" / "once" / ""
         self._round_no: int = 0
         self._alert_total: int = 0
         self._next_run_at: float = 0.0
         self._running: bool = False
-        self._alert_urls: Dict[str, str] = {}
+        self._alert_urls: dict[str, str] = {}
         #: 提醒记录 iid -> 商品 ID（v3.6 黑名单「加入」需要 product_id）
-        self._alert_product_ids: Dict[str, str] = {}
+        self._alert_product_ids: dict[str, str] = {}
         #: 提醒记录 iid -> 是否已标记「售出/下架」（v3.7；显示已下架时用于置灰）
-        self._alert_sold: Dict[str, bool] = {}
+        self._alert_sold: dict[str, bool] = {}
         #: 提醒记录是否显示已售出/下架商品（v3.7；默认隐藏，勾选后显示并置灰）
         self._show_sold: bool = False
         #: 关闭流程标志（v3.5）：置位后 `_poll_queue` / `_tick` 不再重新调度 after，
         #: 避免窗口销毁后回调残留导致进程不退出。
         self._closing: bool = False
         #: 已注册的 after 回调 id（v3.5，关闭时显式取消）
-        self._poll_after_id: Optional[str] = None
-        self._tick_after_id: Optional[str] = None
+        self._poll_after_id: str | None = None
+        self._tick_after_id: str | None = None
 
         # ---- 配置 ----
-        self._raw_config: Dict[str, Any] = load_raw_config(self.config_path)
+        self._raw_config: dict[str, Any] = load_raw_config(self.config_path)
         #: v1.8（C22）：config.yaml 的 mtime 快照，用于检测外部修改（如挂机时 cli login）
-        self._config_mtime: Optional[float] = config_file_mtime(self.config_path)
+        self._config_mtime: float | None = config_file_mtime(self.config_path)
         form = config_to_form(self._raw_config)
         self._cookies: str = form["cookies"]
         #: Cookie 原为密文但无法解密（换机/换用户）→ 状态灯显示「无法解密」
         self._cookies_undecryptable: bool = bool(form.get("cookies_undecryptable", False))
         #: 多 Cookie 池（v3.2）：[{"name", "cookie"(明文), "enabled"}]，内存态
-        self._cookie_pool: List[Dict[str, Any]] = list(form.get("cookie_pool") or [])
+        self._cookie_pool: list[dict[str, Any]] = list(form.get("cookie_pool") or [])
         self._storage_path: str = form["storage_path"]
-        self._keywords: List[Tuple[str, float]] = list(form["keywords"])
+        self._keywords: list[tuple[str, float]] = list(form["keywords"])
         #: 关键词 -> 是否启用（v3.7；停用不删除，保存后写回 config，monitor 跳过）
-        self._keyword_enabled: Dict[str, bool] = dict(form.get("keyword_enabled") or {})
+        self._keyword_enabled: dict[str, bool] = dict(form.get("keyword_enabled") or {})
         #: 关键词 -> {exclude_keywords, required_keywords}（v3.1 过滤规则）
-        self._keyword_filters: Dict[str, Dict[str, List[str]]] = dict(form.get("keyword_filters") or {})
+        self._keyword_filters: dict[str, dict[str, list[str]]] = dict(form.get("keyword_filters") or {})
         #: 预置排除词模板（v3.5）：新关键词自动预置的列表；来源 config 顶层
         #: `preset_exclude_keywords`，缺省（缺失/None）回退默认；GUI「编辑预置排除词」可改。
         #: 注意：显式空列表 [] 表示「关闭自动预置」，必须保留为空，不能用 falsy 判断
         #: 回退默认（BUG-1 修复：`or` → None 判断，见 resolve_preset_exclude_keywords）。
-        self._preset_exclude_keywords: List[str] = resolve_preset_exclude_keywords(
+        self._preset_exclude_keywords: list[str] = resolve_preset_exclude_keywords(
             form.get("preset_exclude_keywords")
         )
 
@@ -1337,7 +1334,7 @@ class XianyuAlertGUI:
     # ================================================================== #
     # 界面构建
     # ================================================================== #
-    def _build_widgets(self, form: Dict[str, Any]) -> None:
+    def _build_widgets(self, form: dict[str, Any]) -> None:
         """构建全部控件。
 
         Args:
@@ -1358,7 +1355,7 @@ class XianyuAlertGUI:
         self._build_tab_run(tab_run)
 
     # ------------------------------------------------------------------ #
-    def _build_tab_config(self, parent: "ttk.Frame", form: Dict[str, Any]) -> None:
+    def _build_tab_config(self, parent: ttk.Frame, form: dict[str, Any]) -> None:
         """构建「监控配置」标签页。"""
         # ---------------- 关键词表格 ----------------
         kw_frame = ttk.LabelFrame(parent, text="关键词与价格阈值（仅当商品价格 < 阈值时提醒）")
@@ -1514,7 +1511,7 @@ class XianyuAlertGUI:
         ).pack(side="left", padx=10)
 
     # ------------------------------------------------------------------ #
-    def _build_tab_notify(self, parent: "ttk.Frame", form: Dict[str, Any]) -> None:
+    def _build_tab_notify(self, parent: ttk.Frame, form: dict[str, Any]) -> None:
         """构建「通知设置」标签页。"""
         canvas_hint = ttk.Label(
             parent,
@@ -1523,10 +1520,10 @@ class XianyuAlertGUI:
         )
         canvas_hint.pack(fill="x", padx=12, pady=(10, 4))
 
-        self.var_channel_enabled: Dict[str, "tk.BooleanVar"] = {}
-        self.var_channel_fields: Dict[str, Dict[str, "tk.StringVar"]] = {}
+        self.var_channel_enabled: dict[str, tk.BooleanVar] = {}
+        self.var_channel_fields: dict[str, dict[str, tk.StringVar]] = {}
 
-        channels_state: Dict[str, Dict[str, Any]] = form["channels"]
+        channels_state: dict[str, dict[str, Any]] = form["channels"]
         for ctype in CHANNEL_ORDER:
             state = channels_state.get(ctype, {"enabled": False, "options": {}})
             frame = ttk.LabelFrame(parent, text=CHANNEL_LABELS[ctype])
@@ -1543,7 +1540,7 @@ class XianyuAlertGUI:
                 command=lambda c=ctype: self.on_test_channel(c),
             ).pack(side="right")
 
-            field_vars: Dict[str, "tk.StringVar"] = {}
+            field_vars: dict[str, tk.StringVar] = {}
             options = state.get("options") or {}
             for name, label, secret, default in CHANNEL_FIELDS[ctype]:
                 row = ttk.Frame(frame)
@@ -1580,7 +1577,7 @@ class XianyuAlertGUI:
         )
 
     # ------------------------------------------------------------------ #
-    def _build_tab_run(self, parent: "ttk.Frame") -> None:
+    def _build_tab_run(self, parent: ttk.Frame) -> None:
         """构建「运行监控」标签页。"""
         # ---------------- 按钮栏 ----------------
         toolbar = ttk.Frame(parent)
@@ -2020,7 +2017,7 @@ class XianyuAlertGUI:
         """返回某关键词过滤规则的表格摘要文案。"""
         return keyword_filter_summary(self._keyword_filters.get(str(keyword)))
 
-    def _collect_keywords(self) -> List[Tuple[str, float]]:
+    def _collect_keywords(self) -> list[tuple[str, float]]:
         """从表格读取当前关键词列表（(关键词, 价格阈值)）。
 
         v3.7 兼容说明：本方法**保持返回 (keyword, price) 二元组不变**
@@ -2028,7 +2025,7 @@ class XianyuAlertGUI:
         `_collect_keyword_rules` 提供（3 元组），`_collect_config_dict`
         走后者，保证 enabled 写入 config。
         """
-        result: List[Tuple[str, float]] = []
+        result: list[tuple[str, float]] = []
         for item in self.tree_keywords.get_children():
             values = self.tree_keywords.item(item, "values")
             if not values or len(values) < 2:
@@ -2039,13 +2036,13 @@ class XianyuAlertGUI:
                 continue
         return result
 
-    def _collect_keyword_rules(self) -> List[Tuple[str, float, bool]]:
+    def _collect_keyword_rules(self) -> list[tuple[str, float, bool]]:
         """从表格读取完整关键词规则（(关键词, 价格阈值, 是否启用)，v3.7）。
 
         启用状态以 `self._keyword_enabled` 为准（缺省 True），与表格「状态」
         列保持一致；停用的关键词仍会被收集，保存后写回 config 供 monitor 跳过。
         """
-        rules: List[Tuple[str, float, bool]] = []
+        rules: list[tuple[str, float, bool]] = []
         for keyword, price in self._collect_keywords():
             enabled = parse_enabled_flag(_keyword_enabled_dict(self).get(str(keyword)), default=True)
             rules.append((keyword, price, enabled))
@@ -2090,7 +2087,7 @@ class XianyuAlertGUI:
             + ("（停用期间不抓取、不提醒）" if not current else "（恢复监控）"),
         )
 
-    def _default_filters(self, keyword: str) -> Dict[str, List[str]]:
+    def _default_filters(self, keyword: str) -> dict[str, list[str]]:
         """返回某关键词的默认过滤规则（v3.3 新行为，v3.5 预置词可配置）。
 
         必含词**留空**（不再从主关键词自动提取，由用户自行在编辑弹窗填写）；
@@ -2368,7 +2365,7 @@ class XianyuAlertGUI:
             pass
         text_exclude.focus_set()
 
-    def _dialog_add_preset(self, text_widget: "tk.Text") -> None:
+    def _dialog_add_preset(self, text_widget: tk.Text) -> None:
         """把当前预置排除词追加到对话框的排除词文本框（去重保序）。"""
         existing = parse_keyword_lines(text_widget.get("1.0", "end"))
         merged = add_preset_excludes(existing, preset=self._preset_exclude_keywords)
@@ -2379,7 +2376,7 @@ class XianyuAlertGUI:
     # ------------------------------------------------------------------ #
     # 预置排除词编辑（v3.5）：可配置、可持久化
     # ------------------------------------------------------------------ #
-    def _apply_preset_edit(self, text: Any) -> List[str]:
+    def _apply_preset_edit(self, text: Any) -> list[str]:
         """应用预置排除词编辑结果（多行文本，每行一个）。
 
         更新内存态 `self._preset_exclude_keywords`，并同步写回
@@ -2462,9 +2459,9 @@ class XianyuAlertGUI:
     # ================================================================== #
     # 配置保存
     # ================================================================== #
-    def _collect_channels(self) -> Dict[str, Dict[str, Any]]:
+    def _collect_channels(self) -> dict[str, dict[str, Any]]:
         """从界面读取通知通道状态。"""
-        channels: Dict[str, Dict[str, Any]] = {}
+        channels: dict[str, dict[str, Any]] = {}
         for ctype in CHANNEL_ORDER:
             options = {
                 name: var.get() for name, var in self.var_channel_fields.get(ctype, {}).items()
@@ -2475,7 +2472,7 @@ class XianyuAlertGUI:
             }
         return channels
 
-    def _collect_config_dict(self) -> Dict[str, Any]:
+    def _collect_config_dict(self) -> dict[str, Any]:
         """从界面收集完整配置字典。
 
         多 Cookie（v3.2）：`mtop` 未配置 Cookie 时**不再拦截保存**——
@@ -2752,7 +2749,7 @@ class XianyuAlertGUI:
         ttk.Button(btn_row, text="取消", command=dialog.destroy).pack(side="right")
 
     @staticmethod
-    def _cookie_health_label(state: str) -> Tuple[str, str]:
+    def _cookie_health_label(state: str) -> tuple[str, str]:
         """把 `detect_cookie_health` 状态码映射为（状态灯文案, 颜色）。"""
         mapping = {
             "ok": ("✅ 有效", "#059669"),
@@ -2835,7 +2832,7 @@ class XianyuAlertGUI:
 
         def _fmt_expire(cookie_str: str) -> str:
             """格式化过期时间；无时间戳 / 无法解析时返回占位文案。"""
-            from .cookie import cookie_token_timestamp, TOKEN_TTL_MS
+            from .cookie import TOKEN_TTL_MS, cookie_token_timestamp
 
             raw = str(cookie_str or "").strip()
             ts = cookie_token_timestamp(raw)
@@ -2872,7 +2869,7 @@ class XianyuAlertGUI:
                 status_text = values[1] if len(values) > 1 else ""
                 tree.item(iid, tags=("disabled",) if status_text == "停用" else ("enabled",))
 
-        def _selected_index() -> Optional[int]:
+        def _selected_index() -> int | None:
             """返回选中行对应的 `_cookie_pool` 下标。"""
             selection = tree.selection()
             if not selection:
@@ -3180,7 +3177,7 @@ class XianyuAlertGUI:
     # ================================================================== #
     # 提醒记录
     # ================================================================== #
-    def _insert_alert_row(self, row: Dict[str, Any], to_top: bool = False) -> None:
+    def _insert_alert_row(self, row: dict[str, Any], to_top: bool = False) -> None:
         """向提醒记录表插入一行。
 
         Args:
@@ -3224,11 +3221,11 @@ class XianyuAlertGUI:
         else:
             self._alert_sort_asc = not self._alert_sort_asc
 
-        col_index = ALERT_COLUMNS.index(column)
-        rows: List[Dict[str, Any]] = []
+        ALERT_COLUMNS.index(column)
+        rows: list[dict[str, Any]] = []
         for item in self.tree_alerts.get_children(""):
             values = self.tree_alerts.item(item, "values") or ()
-            row: Dict[str, Any] = {"iid": item}
+            row: dict[str, Any] = {"iid": item}
             for idx, key in enumerate(ALERT_COLUMNS):
                 row[key] = values[idx] if idx < len(values) else ""
             rows.append(row)
@@ -3268,7 +3265,7 @@ class XianyuAlertGUI:
                         "publish": row["publish_time"] or "未知",
                         "url": row["url"],
                         "product_id": row["product_id"],
-                        "sold": bool(row["sold_out"]) if "sold_out" in row.keys() else False,
+                        "sold": bool(row["sold_out"]) if "sold_out" in row else False,
                     }
                 )
             if rows:
@@ -3365,7 +3362,7 @@ class XianyuAlertGUI:
             messagebox.showinfo("正在运行", "监控正在运行中，请先停止后再校验在架状态。")
             return
         # 主线程一次性读取：只取当前展示的行（隐藏售出时即「在架候选」）
-        items: List[Dict[str, str]] = []
+        items: list[dict[str, str]] = []
         for item in self.tree_alerts.get_children():
             product_id = str(self._alert_product_ids.get(item, "") or "")
             if not product_id:
@@ -3403,7 +3400,7 @@ class XianyuAlertGUI:
 
         def worker() -> None:
             """后台线程：逐条调详情接口，售出则标记；全程不触碰 tkinter 控件。"""
-            sold_ids: List[str] = []
+            sold_ids: list[str] = []
             unknown = 0
             online = 0
             try:
@@ -3412,7 +3409,7 @@ class XianyuAlertGUI:
                 self._push_message("error", "校验失败", f"构造抓取器失败：\n{exc}")
                 self._push("log", ("ERROR", f"[{datetime.now():%H:%M:%S}] 校验在架失败（构造抓取器）：{exc}"))
                 return
-            storage: Optional[Storage] = None
+            storage: Storage | None = None
             try:
                 storage = Storage(config.storage.path)
                 for index, entry in enumerate(items):
@@ -3480,7 +3477,7 @@ class XianyuAlertGUI:
     # ------------------------------------------------------------------ #
     # 临时黑名单（v3.6）：人工剔除噪音/假货/非目标商品
     # ------------------------------------------------------------------ #
-    def _ask_blacklist_reason(self, title: str) -> Optional[str]:
+    def _ask_blacklist_reason(self, title: str) -> str | None:
         """弹出「加入黑名单」原因输入框。
 
         Args:
@@ -3582,7 +3579,7 @@ class XianyuAlertGUI:
         scroll.pack(side="right", fill="y")
         tree.configure(yscrollcommand=scroll.set)
 
-        def _read_blacklist() -> List[Any]:
+        def _read_blacklist() -> list[Any]:
             """从数据库读取黑名单列表（失败弹框并返回空列表）。"""
             try:
                 storage = Storage(self._storage_path)
@@ -3750,7 +3747,7 @@ class XianyuAlertGUI:
                     break
                 self._next_run_at = 0.0
                 self._push("log", ("INFO", f"[{datetime.now():%H:%M:%S}] ===== 第 {self._round_no + 1} 轮监测开始 ====="))
-                hits: List[Product] = []
+                hits: list[Product] = []
                 try:
                     # v3.6：detail_only 由主线程在 _launch_worker 时读好传入，
                     # 后台线程不再访问 tkinter 控件（UI 无响应修复的关键）。

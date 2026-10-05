@@ -19,7 +19,6 @@ from __future__ import annotations
 import os
 import sys
 import unittest
-from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -45,10 +44,10 @@ class RecordingNotifier(Notifier):
     name = "recording"
 
     def __init__(self) -> None:
-        self.received: List[Product] = []
+        self.received: list[Product] = []
         self.calls: int = 0
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         self.calls += 1
         self.received.extend(products)
 
@@ -61,10 +60,10 @@ class StubFetcher(Fetcher):
 
     name = "stub"
 
-    def __init__(self, products: List[Product]) -> None:
-        self.products: List[Product] = list(products)
+    def __init__(self, products: list[Product]) -> None:
+        self.products: list[Product] = list(products)
 
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         return list(self.products)
 
 
@@ -83,8 +82,8 @@ def make_product(product_id: str, title: str, price: float = 250.0, keyword: str
 def make_config(
     keyword: str = "光威 笔记本DDR4 3200 16G",
     max_price: float = 300.0,
-    exclude_keywords: List[str] | None = None,
-    required_keywords: List[str] | None = None,
+    exclude_keywords: list[str] | None = None,
+    required_keywords: list[str] | None = None,
 ) -> Config:
     """构造带过滤规则的测试配置（与 test_filter.py 的 make_config 行为一致）。"""
     entry: dict = {"keyword": keyword, "max_price": max_price}

@@ -13,7 +13,7 @@ import os
 import sys
 import unittest
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -46,8 +46,8 @@ VALID_COOKIE = "cookie2=abc; _m_h5_tk=deadbeefcafe_9999999999999; _m_h5_tk_enc=x
 class FakeCookieJar:
     """极简 cookie jar 替身，兼容 set/get 接口。"""
 
-    def __init__(self, initial: Optional[Dict[str, str]] = None) -> None:
-        self._data: Dict[str, str] = dict(initial or {})
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        self._data: dict[str, str] = dict(initial or {})
 
     def set(self, name: str, value: str, **_kwargs: Any) -> None:
         """写入一个 cookie。"""
@@ -70,7 +70,7 @@ class FakeResponse:
         self._payload = payload
         self.status_code = status_code
         self.cookies = FakeCookieJar({MTOP_TOKEN_COOKIE: set_cookie_token} if set_cookie_token else {})
-        self.headers: Dict[str, str] = {}
+        self.headers: dict[str, str] = {}
         if set_cookie_token:
             self.headers["Set-Cookie"] = f"{MTOP_TOKEN_COOKIE}={set_cookie_token}; Path=/"
 
@@ -84,14 +84,14 @@ class FakeResponse:
 class FakeSession:
     """requests.Session 替身，按脚本依次返回响应。"""
 
-    def __init__(self, script: List[Any]) -> None:
+    def __init__(self, script: list[Any]) -> None:
         """初始化。
 
         Args:
             script: 响应脚本，元素可以是 FakeResponse 或要抛出的 Exception。
         """
-        self.script: List[Any] = list(script)
-        self.calls: List[Dict[str, Any]] = []
+        self.script: list[Any] = list(script)
+        self.calls: list[dict[str, Any]] = []
         self.cookies = FakeCookieJar()
         self.closed = False
 
@@ -116,15 +116,15 @@ def make_item(
     price: Any = "888.00",
     publish_time: Any = "1700000000000",
     ex_price: Any = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """构造一个符合闲鱼实测结构的 resultList 元素。"""
-    ex_content: Dict[str, Any] = {"area": "广东 深圳", "userNickName": "闲鱼用户"}
+    ex_content: dict[str, Any] = {"area": "广东 深圳", "userNickName": "闲鱼用户"}
     if title is not None:
         ex_content["title"] = title
     if ex_price is not None:
         ex_content["price"] = ex_price
 
-    args: Dict[str, Any] = {}
+    args: dict[str, Any] = {}
     if item_id is not None:
         args["item_id"] = item_id
     if price is not None:
@@ -144,7 +144,7 @@ def make_item(
     }
 
 
-def success_response(items: List[Dict[str, Any]], set_cookie_token: str = "") -> FakeResponse:
+def success_response(items: list[dict[str, Any]], set_cookie_token: str = "") -> FakeResponse:
     """构造一个成功的 mtop 响应。"""
     return FakeResponse(
         {"api": "mtop.taobao.idlemtopsearch.pc.search", "ret": ["SUCCESS::调用成功"],
@@ -153,16 +153,15 @@ def success_response(items: List[Dict[str, Any]], set_cookie_token: str = "") ->
     )
 
 
-def make_fetcher(script: List[Any], cookies: str = VALID_COOKIE, **kwargs: Any) -> MtopFetcher:
+def make_fetcher(script: list[Any], cookies: str = VALID_COOKIE, **kwargs: Any) -> MtopFetcher:
     """构造一个注入了 FakeSession 的 MtopFetcher。"""
     session = FakeSession(script)
-    fetcher = MtopFetcher(
+    return MtopFetcher(
         cookies=cookies,
         session=session,
         sleep_func=lambda _seconds: None,
         **kwargs,
     )
-    return fetcher
 
 
 # ---------------------------------------------------------------------- #
@@ -196,7 +195,7 @@ class TestMtopHelpers(unittest.TestCase):
         timestamp = "1700000000000"
         data = '{"keyword":"Switch"}'
         expected = hashlib.md5(
-            f"{token}&{timestamp}&{MTOP_APP_KEY}&{data}".encode("utf-8")
+            f"{token}&{timestamp}&{MTOP_APP_KEY}&{data}".encode()
         ).hexdigest()
         self.assertEqual(mtop_sign(token, timestamp, MTOP_APP_KEY, data), expected)
         # 固定值回归：任何算法改动都会被这条断言抓到

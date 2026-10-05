@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """QA 独立补充用例（v3.6）——不依赖工程师 test_gui_v3_6.py 的实现细节。
 
 覆盖：
@@ -23,8 +22,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import xianyu_alert.gui as gui
 from xianyu_alert.config import (
-    Config, FetcherConfig, KeywordRule, MonitorConfig, NotifyChannel,
-    NotifyConfig, StorageConfig,
+    Config,
+    FetcherConfig,
+    KeywordRule,
+    MonitorConfig,
+    NotifyChannel,
+    NotifyConfig,
+    StorageConfig,
 )
 from xianyu_alert.models import Product
 from xianyu_alert.monitor import Monitor
@@ -194,7 +198,7 @@ class FakeTree:
     def item(self, iid, option=None, values=None):
         if values is not None:
             self._rows[iid] = list(values)
-            return
+            return None
         if option == "values":
             return tuple(self._rows[iid])
         if option is None:

@@ -233,7 +233,7 @@ class TestNotifierMessage(unittest.TestCase):
         )
         self.assertEqual(decoded_subject, "标题")
         # 正文也是 base64 编码
-        self.assertIn(base64.b64encode("正文".encode("utf-8")).decode("ascii"), sent)
+        self.assertIn(base64.b64encode("正文".encode()).decode("ascii"), sent)
 
     @mock.patch("xianyu_alert.notifier.requests.post")
     def test_telegram_message_text(self, mock_post: mock.MagicMock) -> None:

@@ -33,7 +33,6 @@ from xianyu_alert.config import (  # noqa: E402
     ConfigError,
     config_from_dict,
 )
-import xianyu_alert.gui as g  # noqa: E402
 from xianyu_alert.gui import (  # noqa: E402
     CLOSE_JOIN_TIMEOUT,
     POLL_IDLE_INTERVAL_MS,

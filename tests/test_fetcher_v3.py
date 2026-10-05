@@ -10,7 +10,7 @@ import os
 import sys
 import time
 import unittest
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -35,8 +35,8 @@ EXPIRED_COOKIE = "a=1; _m_h5_tk=abc_1700000000000"
 class FakeCookieJar:
     """极简 cookie jar 替身。"""
 
-    def __init__(self, initial: Optional[Dict[str, str]] = None) -> None:
-        self._data: Dict[str, str] = dict(initial or {})
+    def __init__(self, initial: dict[str, str] | None = None) -> None:
+        self._data: dict[str, str] = dict(initial or {})
 
     def set(self, name: str, value: str, **_kwargs: Any) -> None:
         self._data[name] = value
@@ -52,7 +52,7 @@ class FakeResponse:
         self._payload = payload
         self.status_code = status_code
         self.cookies = FakeCookieJar({"_m_h5_tk": set_cookie_token} if set_cookie_token else {})
-        self.headers: Dict[str, str] = {}
+        self.headers: dict[str, str] = {}
         if set_cookie_token:
             self.headers["Set-Cookie"] = f"_m_h5_tk={set_cookie_token}; Path=/"
 
@@ -65,9 +65,9 @@ class FakeResponse:
 class FakeSession:
     """requests.Session 替身，按脚本依次返回响应。"""
 
-    def __init__(self, script: List[Any]) -> None:
-        self.script: List[Any] = list(script)
-        self.calls: List[Dict[str, Any]] = []
+    def __init__(self, script: list[Any]) -> None:
+        self.script: list[Any] = list(script)
+        self.calls: list[dict[str, Any]] = []
         self.cookies = FakeCookieJar()
         self.closed = False
 
@@ -84,14 +84,14 @@ class FakeSession:
         self.closed = True
 
 
-def make_item(item_id: Any = "800123456789", title: Any = "任天堂 Switch", price: Any = "888.00") -> Dict[str, Any]:
+def make_item(item_id: Any = "800123456789", title: Any = "任天堂 Switch", price: Any = "888.00") -> dict[str, Any]:
     """构造一个符合闲鱼实测结构的 resultList 元素。"""
-    ex_content: Dict[str, Any] = {"title": title, "area": "广东 深圳"}
-    args: Dict[str, Any] = {"item_id": item_id, "price": price, "publishTime": "1700000000000"}
+    ex_content: dict[str, Any] = {"title": title, "area": "广东 深圳"}
+    args: dict[str, Any] = {"item_id": item_id, "price": price, "publishTime": "1700000000000"}
     return {"data": {"item": {"main": {"exContent": ex_content, "clickParam": {"args": args}}}}}
 
 
-def success_response(items: List[Dict[str, Any]], set_cookie_token: str = "") -> FakeResponse:
+def success_response(items: list[dict[str, Any]], set_cookie_token: str = "") -> FakeResponse:
     """构造一个成功的 mtop 响应。"""
     return FakeResponse(
         {"ret": ["SUCCESS::调用成功"], "data": {"resultList": items}},
@@ -99,7 +99,7 @@ def success_response(items: List[Dict[str, Any]], set_cookie_token: str = "") ->
     )
 
 
-def make_fetcher(script: List[Any], cookies: str = VALID_COOKIE, **kwargs: Any) -> MtopFetcher:
+def make_fetcher(script: list[Any], cookies: str = VALID_COOKIE, **kwargs: Any) -> MtopFetcher:
     """构造一个注入了 FakeSession 的 MtopFetcher。"""
     session = FakeSession(script)
     kwargs.setdefault("sleep_func", lambda _seconds: None)
@@ -159,7 +159,7 @@ class TestMtopMultiPage(unittest.TestCase):
         """pages=2 时 _search 调两次、页间 sleep 一次、结果合并去重、页码递增。"""
         page1 = [make_item(item_id="1001"), make_item(item_id="1002")]
         page2 = [make_item(item_id="1002"), make_item(item_id="1003")]
-        sleeps: List[float] = []
+        sleeps: list[float] = []
         fetcher = make_fetcher(
             [success_response(page1), success_response(page2)],
             pages=2,

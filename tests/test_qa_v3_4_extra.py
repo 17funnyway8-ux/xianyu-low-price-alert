@@ -23,8 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from xianyu_alert.config import config_from_dict  # noqa: E402
 from xianyu_alert.fetcher import (  # noqa: E402
     Fetcher,
-    MtopFetcher,
     MockFetcher,
+    MtopFetcher,
     build_search_payload,
     format_price_bound,
 )

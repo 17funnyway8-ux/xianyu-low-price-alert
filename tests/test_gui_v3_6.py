@@ -27,7 +27,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import xianyu_alert.gui as g  # noqa: E402
 from xianyu_alert.config import config_from_dict  # noqa: E402
-from xianyu_alert.fetcher import MockFetcher  # noqa: E402
 from xianyu_alert.gui import (  # noqa: E402
     BLACKLIST_REASON_DEFAULT,
     MAX_QUEUE_MESSAGES_PER_POLL,

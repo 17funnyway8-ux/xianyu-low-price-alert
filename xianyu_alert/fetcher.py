@@ -25,14 +25,15 @@ import random
 import re
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any
 from urllib.parse import quote_plus, urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
-from .config import Config, DEFAULT_USER_AGENT
+from .config import DEFAULT_USER_AGENT, Config
 from .models import Product
 
 logger = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ class Fetcher(ABC):
     name: str = "fetcher"
 
     @abstractmethod
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         """按关键词抓取最新商品列表。
 
         Args:
@@ -161,7 +162,7 @@ class Fetcher(ABC):
 
     def close(self) -> None:
         """释放资源（默认无操作，子类可覆盖）。"""
-        return None
+        return
 
     def set_cookies(self, cookie_str: str) -> None:
         """切换抓取器使用的 Cookie（v3.2 多 Cookie 池轮换）。
@@ -174,9 +175,9 @@ class Fetcher(ABC):
         Args:
             cookie_str: 新的 Cookie 请求头字符串（可为空串）。
         """
-        return None
+        return
 
-    def set_max_price(self, max_price: Optional[float]) -> None:
+    def set_max_price(self, max_price: float | None) -> None:
         """设置抓取时的价格上限（v3.4 服务端价格筛选）。
 
         默认实现为无操作；MtopFetcher 覆盖此方法把阈值写入请求体，
@@ -188,7 +189,7 @@ class Fetcher(ABC):
         Args:
             max_price: 价格上限（元）；None 表示不过滤价格。
         """
-        return None
+        return
 
 
 # ---------------------------------------------------------------------- #
@@ -212,7 +213,7 @@ def extract_product_id(url: str) -> str:
     return ""
 
 
-def parse_price(text: str) -> Optional[float]:
+def parse_price(text: str) -> float | None:
     """从任意文本中解析出第一个价格数字（v3 增强版）。
 
     支持：
@@ -267,7 +268,7 @@ def parse_publish_time(text: str) -> str:
 # ---------------------------------------------------------------------- #
 # mtop 工具函数（纯函数，便于单测）
 # ---------------------------------------------------------------------- #
-def parse_cookie_string(cookie_str: str) -> Dict[str, str]:
+def parse_cookie_string(cookie_str: str) -> dict[str, str]:
     """把 `k1=v1; k2=v2` 形式的 Cookie 请求头解析成字典。
 
     Args:
@@ -276,7 +277,7 @@ def parse_cookie_string(cookie_str: str) -> Dict[str, str]:
     Returns:
         {cookie 名: cookie 值} 字典；空输入返回空字典。
     """
-    result: Dict[str, str] = {}
+    result: dict[str, str] = {}
     for part in str(cookie_str or "").split(";"):
         part = part.strip()
         if not part or "=" not in part:
@@ -392,8 +393,8 @@ def build_search_payload(
     keyword: str,
     page_number: int = 1,
     rows_per_page: int = 30,
-    max_price: Optional[float] = None,
-) -> Dict[str, Any]:
+    max_price: float | None = None,
+) -> dict[str, Any]:
     """构造闲鱼 PC 搜索的 mtop 请求体。
 
     v3.3 实证结论（针对「用户实测仍是综合页旧商品」）：
@@ -474,7 +475,7 @@ def format_price_bound(value: float) -> str:
     return str(number)
 
 
-def build_detail_payload(product_id: str) -> Dict[str, Any]:
+def build_detail_payload(product_id: str) -> dict[str, Any]:
     """构造闲鱼商品详情接口（mtop.taobao.idle.pc.detail）的请求体。
 
     v3.7 实机探测：payload 同时传 `itemId` 与 `id` 两个键均可被服务端接受，
@@ -490,7 +491,7 @@ def build_detail_payload(product_id: str) -> Dict[str, Any]:
     return {"itemId": pid, "id": pid}
 
 
-def parse_detail_sold_status(data: Any) -> Optional[bool]:
+def parse_detail_sold_status(data: Any) -> bool | None:
     """从商品详情接口响应的 data 节点解析「是否在线」（纯函数，v3.7）。
 
     实机探测结论（mtop.taobao.idle.pc.detail，2026-08 真实 Cookie）：
@@ -543,10 +544,7 @@ def parse_detail_sold_status(data: Any) -> Optional[bool]:
 
 def _ret_text(payload: Any) -> str:
     """把响应中的 ret 字段拼成一整段文本，便于关键字匹配。"""
-    if isinstance(payload, dict):
-        ret = payload.get("ret")
-    else:
-        ret = payload
+    ret = payload.get("ret") if isinstance(payload, dict) else payload
     if isinstance(ret, (list, tuple)):
         return " ".join(str(x) for x in ret)
     return str(ret or "")
@@ -558,7 +556,7 @@ def _contains_any(text: str, markers: Sequence[str]) -> bool:
     return any(marker.upper() in upper for marker in markers)
 
 
-def parse_mtop_item(item: Any, keyword: str) -> Optional[Product]:
+def parse_mtop_item(item: Any, keyword: str) -> Product | None:
     """把 mtop resultList 中的单个元素解析为 Product。
 
     容错策略：任何一层结构缺失 / 类型不符都不抛异常，直接返回 None
@@ -639,7 +637,7 @@ def parse_mtop_item(item: Any, keyword: str) -> Optional[Product]:
         return None
 
 
-def parse_mtop_result_list(result_list: Any, keyword: str) -> List[Product]:
+def parse_mtop_result_list(result_list: Any, keyword: str) -> list[Product]:
     """批量解析 mtop 的 `data.resultList`。
 
     Args:
@@ -652,7 +650,7 @@ def parse_mtop_result_list(result_list: Any, keyword: str) -> List[Product]:
     if not isinstance(result_list, (list, tuple)):
         return []
 
-    products: List[Product] = []
+    products: list[Product] = []
     seen: set = set()
     for item in result_list:
         product = parse_mtop_item(item, keyword)
@@ -700,8 +698,8 @@ class MtopFetcher(Fetcher):
         page_size: int = 30,
         pages: int = 1,
         page_sleep: float = PAGE_SLEEP,
-        session: Optional[requests.Session] = None,
-        sleep_func: Optional[Callable[[float], None]] = None,
+        session: requests.Session | None = None,
+        sleep_func: Callable[[float], None] | None = None,
     ) -> None:
         """初始化 mtop 抓取器。
 
@@ -728,10 +726,10 @@ class MtopFetcher(Fetcher):
         self.session: requests.Session = session if session is not None else requests.Session()
         self._sleep: Callable[[float], None] = sleep_func or time.sleep
         #: v3.4 服务端价格筛选：价格上限（元），None 表示不过滤
-        self._max_price: Optional[float] = None
+        self._max_price: float | None = None
 
         #: Cookie 字典，作为 token 的权威来源（服务端刷新后就地更新）
-        self._cookie_dict: Dict[str, str] = parse_cookie_string(self.cookies)
+        self._cookie_dict: dict[str, str] = parse_cookie_string(self.cookies)
         #: 本进程内是否吸收过服务端下发的新令牌（供上层决定是否落盘）
         self._token_refreshed: bool = False
         self._sync_session_cookies()
@@ -795,7 +793,7 @@ class MtopFetcher(Fetcher):
         """清除「令牌已刷新」脏标记（落盘成功后由上层调用）。"""
         self._token_refreshed = False
 
-    def set_max_price(self, max_price: Optional[float]) -> None:
+    def set_max_price(self, max_price: float | None) -> None:
         """设置服务端价格筛选上限（v3.4）。
 
         下次 `_search` 构造请求体时会把阈值写入
@@ -929,7 +927,7 @@ class MtopFetcher(Fetcher):
             return True, "Cookie 未包含可解析的 _m_h5_tk 时间戳，无法判断是否过期"
         return True, "Cookie 状态正常"
 
-    def check_item_status(self, product_id: str, timeout: Optional[float] = None) -> Optional[bool]:
+    def check_item_status(self, product_id: str, timeout: float | None = None) -> bool | None:
         """校验单个商品是否仍在架（v3.7 需求 3，方案 B 详情接口判定）。
 
         走闲鱼商品详情接口 `mtop.taobao.idle.pc.detail`（**实测可用**）：
@@ -977,7 +975,7 @@ class MtopFetcher(Fetcher):
     # ------------------------------------------------------------------ #
     # 请求
     # ------------------------------------------------------------------ #
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         """构造 mtop 请求头。"""
         return {
             "User-Agent": self.user_agent,
@@ -989,7 +987,7 @@ class MtopFetcher(Fetcher):
             "Connection": "keep-alive",
         }
 
-    def _build_params(self, timestamp: str, sign: str, api_name: str = MTOP_API_NAME) -> Dict[str, str]:
+    def _build_params(self, timestamp: str, sign: str, api_name: str = MTOP_API_NAME) -> dict[str, str]:
         """构造 mtop query 参数。
 
         Args:
@@ -1014,11 +1012,11 @@ class MtopFetcher(Fetcher):
 
     def _post_once(
         self,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         api_name: str = MTOP_API_NAME,
         api_url: str = MTOP_URL,
-        timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         """用当前 token 签名并发起一次请求（含网络层重试）。
 
         Args:
@@ -1042,7 +1040,7 @@ class MtopFetcher(Fetcher):
         body = {"data": data}
         request_timeout = self.timeout if timeout is None else float(timeout)
 
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
         for attempt in range(1, self.retries + 1):
             try:
                 response = self.session.post(
@@ -1075,7 +1073,7 @@ class MtopFetcher(Fetcher):
                     self._sleep(delay)
         raise FetchError(f"请求闲鱼 mtop 接口失败，已重试 {self.retries} 次：{last_error}")
 
-    def _search(self, keyword: str, page_number: int = 1) -> Dict[str, Any]:
+    def _search(self, keyword: str, page_number: int = 1) -> dict[str, Any]:
         """执行一次搜索，并处理 mtop 的业务返回码。
 
         令牌过期时会用服务端新下发的 `_m_h5_tk` 重算签名**自动重试一次**。
@@ -1139,7 +1137,7 @@ class MtopFetcher(Fetcher):
         raise FetchError("mtop 搜索失败：未获得有效响应")  # pragma: no cover
 
     # ------------------------------------------------------------------ #
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         """按关键词抓取最新发布的商品（支持多页 + 页级容错）。
 
         - 默认 `pages=1` 与旧行为完全一致（单页请求）；
@@ -1166,10 +1164,10 @@ class MtopFetcher(Fetcher):
             keyword, self.page_size, self.pages, self.page_sleep,
         )
 
-        all_products: List[Product] = []
+        all_products: list[Product] = []
         seen: set = set()
         failed_pages = 0
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
 
         for page in range(1, self.pages + 1):
             try:
@@ -1245,7 +1243,7 @@ class WebFetcher(Fetcher):
         timeout: float = 10.0,
         retries: int = 3,
         backoff_base: float = 1.5,
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
     ) -> None:
         """初始化 Web 抓取器。
 
@@ -1269,9 +1267,9 @@ class WebFetcher(Fetcher):
         self.cookies = str(cookie_str or "")
 
     # ------------------------------------------------------------------ #
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         """构造请求头。"""
-        headers: Dict[str, str] = {
+        headers: dict[str, str] = {
             "User-Agent": self.user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -1294,7 +1292,7 @@ class WebFetcher(Fetcher):
         Raises:
             FetchError: 重试耗尽仍失败。
         """
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
         for attempt in range(1, self.retries + 1):
             try:
                 response = self.session.get(url, headers=self._headers(), timeout=self.timeout)
@@ -1325,7 +1323,7 @@ class WebFetcher(Fetcher):
             pass
 
     # ------------------------------------------------------------------ #
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         """抓取指定关键词的商品列表。
 
         Args:
@@ -1352,7 +1350,7 @@ class WebFetcher(Fetcher):
         return products
 
     # ------------------------------------------------------------------ #
-    def parse(self, html: str, keyword: str) -> List[Product]:
+    def parse(self, html: str, keyword: str) -> list[Product]:
         """解析搜索结果页 HTML。
 
         解析策略（两级兜底）：
@@ -1369,14 +1367,14 @@ class WebFetcher(Fetcher):
         if not html:
             return []
 
-        products: List[Product] = self._parse_from_inline_json(html, keyword)
+        products: list[Product] = self._parse_from_inline_json(html, keyword)
         if products:
             return products
         return self._parse_from_dom(html, keyword)
 
-    def _parse_from_inline_json(self, html: str, keyword: str) -> List[Product]:
+    def _parse_from_inline_json(self, html: str, keyword: str) -> list[Product]:
         """尝试从内联 JSON 中提取商品（闲鱼常把首屏数据塞进 script）。"""
-        results: List[Product] = []
+        results: list[Product] = []
         seen: set = set()
 
         for match in re.finditer(
@@ -1397,9 +1395,9 @@ class WebFetcher(Fetcher):
         return results
 
     @staticmethod
-    def _walk_json_items(node: Any) -> Iterable[Dict[str, Any]]:
+    def _walk_json_items(node: Any) -> Iterable[dict[str, Any]]:
         """深度遍历 JSON，产出「看起来像商品」的 dict 节点。"""
-        stack: List[Any] = [node]
+        stack: list[Any] = [node]
         while stack:
             current = stack.pop()
             if isinstance(current, dict):
@@ -1410,7 +1408,7 @@ class WebFetcher(Fetcher):
             elif isinstance(current, list):
                 stack.extend(current)
 
-    def _product_from_json_item(self, item: Dict[str, Any], keyword: str) -> Optional[Product]:
+    def _product_from_json_item(self, item: dict[str, Any], keyword: str) -> Product | None:
         """把 JSON 节点转换为 Product，字段缺失时返回 None。"""
         product_id = str(item.get("itemId") or item.get("id") or "").strip()
         if not product_id.isdigit():
@@ -1437,14 +1435,14 @@ class WebFetcher(Fetcher):
         except ValueError:
             return None
 
-    def _parse_from_dom(self, html: str, keyword: str) -> List[Product]:
+    def _parse_from_dom(self, html: str, keyword: str) -> list[Product]:
         """回退方案：用 BeautifulSoup 遍历商品链接卡片。"""
         soup = BeautifulSoup(html, "html.parser")
-        results: List[Product] = []
+        results: list[Product] = []
         seen: set = set()
 
         for anchor in soup.find_all("a", href=True):
-            href = anchor["href"]
+            href = str(anchor["href"])
             product_id = extract_product_id(href)
             if not product_id or product_id in seen:
                 continue
@@ -1536,8 +1534,8 @@ class MockFetcher(Fetcher):
     def __init__(
         self,
         products_per_round: int = 5,
-        fail_rounds: Optional[Sequence[int]] = None,
-        round_provider: Optional[Any] = None,
+        fail_rounds: Sequence[int] | None = None,
+        round_provider: Any | None = None,
     ) -> None:
         """初始化 Mock 抓取器。
 
@@ -1550,7 +1548,7 @@ class MockFetcher(Fetcher):
         self.products_per_round: int = max(1, int(products_per_round))
         self.fail_rounds: set = {int(x) for x in (fail_rounds or [])}
         self.round_provider = round_provider
-        self._rounds: Dict[str, int] = {}
+        self._rounds: dict[str, int] = {}
 
     # ------------------------------------------------------------------ #
     def current_round(self, keyword: str) -> int:
@@ -1599,7 +1597,7 @@ class MockFetcher(Fetcher):
             keyword=keyword,
         )
 
-    def fetch(self, keyword: str) -> List[Product]:
+    def fetch(self, keyword: str) -> list[Product]:
         """生成本轮的伪造商品列表。
 
         Args:
