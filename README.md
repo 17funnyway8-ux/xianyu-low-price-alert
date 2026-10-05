@@ -192,6 +192,20 @@ python -m unittest discover -s tests
 
 ---
 
+## 🔐 安全边界
+
+本工具会接触你的闲鱼登录态，请务必了解以下边界：
+
+| 项 | 说明 |
+| --- | --- |
+| **默认无 Web 认证** | compose 默认只绑 `127.0.0.1`，且不启用认证。**一旦把端口暴露到公网，必须设置 `XY_WEB_TOKEN`**，否则任何人都能读写你的配置与 Cookie |
+| **Cookie 加密落盘** | 落盘为 Fernet 密文（`fernet1:`），接口返回统一脱敏；但 `secret.key` 与 `config.yaml` 同卷，**密钥泄漏等同 Cookie 泄漏** |
+| **备份三件套** | `config.yaml` + `secret.key` + `state/` 必须一起备份 / 迁移，缺一不可 |
+| **容器运行身份** | 镜像以非 root（uid 1000）运行；挂载宿主目录前请先 `chown -R 1000:1000 ./xianyu-data` |
+| **漏洞报告** | 请勿在公开 Issue 披露安全问题，走 [SECURITY.md](SECURITY.md) 的私密渠道 |
+
+---
+
 ## 📄 文档索引
 
 | 文档 | 内容 |
@@ -204,3 +218,11 @@ python -m unittest discover -s tests
 | [docs/项目发展方向调研与建议.md](docs/项目发展方向调研与建议.md) | 产品方向与竞品分析 |
 | `config.example.yaml` | 完整配置模板（含全部通知通道示例） |
 | `docker-compose.yml` | Docker 部署完整注释版 |
+
+---
+
+## 📄 许可证
+
+本项目采用 [MIT License](LICENSE)。
+
+免责声明见上方「注意事项」：本工具仅供个人学习与自用监测，请遵守目标站点的服务条款，使用风险由使用者自行承担。
