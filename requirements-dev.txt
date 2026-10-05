@@ -1,0 +1,16 @@
+# ===========================================================
+# 开发 / 测试依赖（CI 与本地统一入口）
+# ===========================================================
+# 用法（本地）：
+#   pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
+# CI 的 lint / typecheck / test 三个 job 均安装本文件，避免再出现
+# 「测试文件 import pytest，但流水线没装 pytest」这类事故（v1.8.2 首发时踩过）。
+# ===========================================================
+
+pytest>=8.0            # tests/test_v1_8_2_token_refresh.py 使用 pytest 风格断言
+httpx>=0.27            # FastAPI TestClient 底层依赖（运行时不需要）
+coverage>=7.0          # 覆盖率（CI 门槛）
+ruff>=0.6              # lint（配置见仓库根 ruff.toml）
+mypy>=1.11             # 类型检查（配置见仓库根 mypy.ini）
+pip-audit>=2.7         # 依赖漏洞审计（CI 门禁）
+
