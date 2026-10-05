@@ -26,8 +26,8 @@ venv/
 dist/
 build/*/
 
-# 逆向分析中间产物（解包出的 150MB+ 二进制文件，非项目源码）
-re_analysis/extracted/
+# 逆向分析产物（已迁至私有仓库 xianyu-re-analysis-archive，公开仓库不再收录）
+/re_analysis/
 
 # macOS
 .DS_Store
