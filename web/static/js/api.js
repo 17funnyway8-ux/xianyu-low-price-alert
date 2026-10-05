@@ -87,25 +87,34 @@ window.XY.Api = (function () {
     let stopped = false;
     let retryDelay = 2000;
     let timer = null;
+    let reader = null;
 
     async function run() {
       while (!stopped) {
         try {
           const token = getToken();
-          const headers = { cache: "no-store" };
+          const headers = {};
           if (token) headers.Authorization = "Bearer " + token;
-          const resp = await fetch(path, { headers });
+          // `cache` 是 fetch 的顶层选项，不是请求头。
+          // 原实现写成 headers.cache —— 只会发出一个名为 cache 的无意义
+          // 请求头，禁用缓存并未生效。
+          const resp = await fetch(path, { headers: headers, cache: "no-store" });
           if (resp.status === 401) {
             clearToken();
             if (window.XY.Auth) window.XY.Auth.onUnauthorized();
-            return; // 认证遮罩提交成功后由事件驱动重连
+            // 必须显式告知订阅方「本轮流已终止」：view-system 要据此把句柄
+            // 置空，否则 token 认证成功后（xy:authed）再次 connectStream()
+            // 会被它自己的 `if (stream) return` 挡掉 —— 表现为「已认证但
+            // 日志区永远空白」。
+            if (h.onStatus) h.onStatus("unauthorized");
+            return;
           }
           if (!resp.ok || !resp.body) {
             throw new Error("HTTP " + resp.status);
           }
           retryDelay = 2000; // 连接成功重置退避
           if (h.onStatus) h.onStatus("connected");
-          const reader = resp.body.getReader();
+          reader = resp.body.getReader();
           const decoder = new TextDecoder("utf-8");
           let buffer = "";
           while (!stopped) {
@@ -145,6 +154,16 @@ window.XY.Api = (function () {
       stop() {
         stopped = true;
         if (timer) clearTimeout(timer);
+        // 取消底层读取流：否则 fetch 连接不会立即关闭，要等下一次心跳
+        // （服务端 15s 一条注释行）让循环条件成立才断开。
+        if (reader) {
+          try {
+            reader.cancel();
+          } catch (e) {
+            /* 已关闭，忽略 */
+          }
+          reader = null;
+        }
       },
     };
   }

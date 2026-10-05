@@ -39,6 +39,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from xianyu_alert import __version__, gui, paths, secure
 from xianyu_alert.config import ConfigError, NotifyChannel
@@ -93,13 +94,47 @@ def require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="未认证或 token 错误")
 
 
-app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.8.0")
+app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.8.2")
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """统一失败信封：把 FastAPI 抛出的 HTTPException（401/404/409…）转成 {ok:false, message}。"""
-    return JSONResponse(status_code=exc.status_code, content={"ok": False, "message": str(exc.detail)})
+@app.middleware("http")
+async def static_revalidate(request: Request, call_next):
+    """静态资源强制走**协商缓存**（`Cache-Control: no-cache`）。
+
+    背景：`web/static/` 是「零构建」的（文件名不带内容哈希），浏览器会按启发式
+    规则长时间缓存 JS/CSS。升级镜像后用户普通刷新（F5）可能拿到
+    「新 index.html + 旧 JS」的混搭组合，表现为白屏或功能缺失 ——
+    排查时极易误判成产品坏了（本次开发中就因工具侧缓存出现过一次一模一样的假象）。
+
+    加上 `no-cache` 后浏览器每次都会带 `If-None-Match` 回源校验：内容没变返回
+    304（局域网开销可忽略），变了立刻取到新文件，**从结构上杜绝混搭**。
+
+    只作用于 `GET /static/*`，不碰 API 与 SSE 流。
+    """
+    response = await call_next(request)
+    if request.method == "GET" and request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    """统一失败信封：把 HTTPException（401/404/405/409…）转成 {ok:false, message}。
+
+    注册的是 `starlette.exceptions.HTTPException` 而非 `fastapi.HTTPException`：
+    前者是后者的父类，因此本处理器同时覆盖两条来源 ——
+
+      1. 业务代码 `raise HTTPException(...)`（fastapi 子类）；
+      2. **路由未匹配 / 方法不允许**时由 Starlette 路由层抛出的 404 / 405
+         （是 StarletteHTTPException 本身，不是 fastapi 子类）。
+
+    若只注册 fastapi 的子类，第 2 类异常会走 Starlette 默认处理器，
+    返回 `text/plain` 的 "Not Found"，与本文档开头声明的
+    「统一 JSON 信封」不一致（前端会退化成只能报 "HTTP 404"）。
+    """
+    detail = getattr(exc, "detail", None)
+    message = str(detail) if detail not in (None, "") else ("HTTP %s" % exc.status_code)
+    return JSONResponse(status_code=exc.status_code, content={"ok": False, "message": message})
 
 
 @app.exception_handler(RequestValidationError)
@@ -335,6 +370,21 @@ def api_cookie_pool_action(
     if result.get("pool") is not None:
         payload["pool"] = result["pool"]
     return ok(payload)
+
+
+@api_router.post("/cookie/refresh")
+def api_cookie_refresh(service: MonitorService = Depends(get_service)) -> Dict[str, Any]:
+    """用浏览器持久化 profile **免扫码**刷新 Cookie（日常续期的一键入口）。
+
+    依赖可选的 Playwright：主镜像（alpine）未安装它，此时返回 400 并给出
+    替代方案（在能打开浏览器的机器上跑 `cli cookie refresh`，或直接粘贴 Cookie），
+    属于有意的优雅降级 —— 刷新需要浏览器，不该为此把镜像撑大 50 倍。
+    """
+    result = service.refresh_cookie_via_browser()
+    if not result.get("ok"):
+        return fail(result.get("message", "刷新失败"), status_code=result.get("code", 400))
+    payload: Dict[str, Any] = {"state": result.get("state"), "reason": result.get("reason")}
+    return ok(payload, message=result.get("message", "Cookie 已刷新"))
 
 
 # ---------------------------------------------------------------------- #

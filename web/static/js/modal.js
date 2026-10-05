@@ -147,7 +147,19 @@ window.XY.Modal = (function () {
             }
           }
           closeFn();
-          if (o.onSave) o.onSave(values);
+          if (o.onSave) {
+            // onSave 允许是 async（多处调用点就是 async）：必须接住它返回的
+            // Promise，否则失败会变成「未处理的 rejection」—— 用户看不到任何
+            // 提示，例如单条「拉黑」失败时界面毫无反应。
+            try {
+              const ret = o.onSave(values);
+              if (ret && typeof ret.catch === "function") {
+                ret.catch((e) => U.toast((e && e.message) || "操作失败", true));
+              }
+            } catch (e) {
+              U.toast((e && e.message) || "操作失败", true);
+            }
+          }
         });
         actions.appendChild(cancel);
         actions.appendChild(ok);

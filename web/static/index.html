@@ -3,211 +3,317 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>闲鱼低价提醒工具 · Web</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="app-header">
-    <div class="app-title">
-      闲鱼低价提醒工具
-      <span class="app-version" id="app-version"></span>
+
+  <!-- ======================= 全局栏 ======================= -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">鱼</span>
+      <span class="brand-name">闲鱼低价提醒</span>
+      <span class="ver" id="appVersion">—</span>
     </div>
-    <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="config" type="button">监控配置</button>
-      <button class="tab" data-tab="notify" type="button">通知设置</button>
-      <button class="tab" data-tab="run" type="button">运行监控</button>
+
+    <nav class="tabs" id="tabs" aria-label="主导航">
+      <button class="tab active" data-view="overview" type="button">态势总览</button>
+      <button class="tab" data-view="targets" type="button">监控配置</button>
+      <button class="tab" data-view="hits" type="button">
+        命中战果<span class="tab-badge" id="hitsBadge">0</span>
+      </button>
+      <button class="tab" data-view="system" type="button">通知与系统</button>
     </nav>
-    <div class="header-actions">
-      <button id="about-btn" class="btn ghost small" type="button">ℹ 关于</button>
+
+    <div class="topbar-right">
+      <button class="pulse" id="pulseBtn" type="button" title="点击开始 / 停止监控">
+        <span class="dot off" id="pulseDot"></span>
+        <span id="pulseText">未运行</span>
+      </button>
+      <button class="health" id="healthBtn" type="button" title="登录 Cookie 健康状态">
+        <span class="dot off" id="healthDot"></span>
+        <span id="healthText">Cookie 未配置</span>
+      </button>
+      <button class="btn sm ghost" id="cmdkBtn" type="button" title="命令面板（⌘K / Ctrl+K）">⌘K</button>
+      <button class="btn sm ghost" id="aboutBtn" type="button">关于</button>
     </div>
   </header>
 
   <!-- 顶部错误条（接口失败 + 重试） -->
   <div id="error-banner" class="error-banner hidden">
     <span id="error-banner-text" class="error-banner-text"></span>
-    <button id="error-retry-btn" class="btn small" type="button">重试</button>
+    <button id="error-retry-btn" class="btn sm" type="button">重试</button>
   </div>
 
-  <!-- ======================= Tab 1 监控配置 ======================= -->
-  <main id="panel-config" class="tab-panel active">
-    <section class="card">
-      <h2>关键词与价格阈值</h2>
-      <div class="keyword-editor">
-        <input id="kw-input" type="text" placeholder="关键词（如 Switch）" autocomplete="off">
-        <input id="price-input" type="number" min="0.01" step="0.01" placeholder="价格阈值（元）">
-        <button id="kw-add-btn" class="btn primary" type="button">添加</button>
-      </div>
-      <div class="keyword-toolbar">
-        <button id="preset-edit-btn" class="btn small" type="button">编辑预置排除词</button>
-        <span class="hint">添加新关键词时自动带入预置排除词（可在上方弹窗定制）</span>
-      </div>
-      <div class="table-scroll">
-        <table class="kw-table" id="kw-table">
-          <thead>
-            <tr>
-              <th>关键词</th>
-              <th>价格阈值</th>
-              <th>过滤规则</th>
-              <th>状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="kw-tbody">
-            <tr class="skeleton-row"><td colspan="5">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+  <!-- 未保存改动条 -->
+  <div id="dirty-bar" class="dirty-bar hidden">
+    <span class="dot warn"></span>
+    <span id="dirty-text">有未保存的改动</span>
+    <span class="spacer"></span>
+    <button class="btn sm ghost" id="dirtyDiscardBtn" type="button">丢弃改动</button>
+    <button class="btn sm primary" id="dirtySaveBtn" type="button">保存配置</button>
+  </div>
 
-    <section class="card">
-      <h2>监测参数</h2>
-      <div class="form-grid">
-        <label>监测间隔（秒）
-          <input id="interval-input" type="number" min="1" step="1" value="600">
-        </label>
-        <label>抓取页数
-          <input id="pages-input" type="number" min="1" step="1" value="1">
-        </label>
-        <label>每页数量（1~100）
-          <input id="page-size-input" type="number" min="1" max="100" step="1" value="30">
-        </label>
-        <label>翻页间隔（秒，≥0）
-          <input id="page-sleep-input" type="number" min="0" step="0.1" value="2">
-        </label>
-        <label>抓取方式
-          <select id="fetcher-select">
-            <option value="mtop">mtop（真实抓取闲鱼，需登录 Cookie）★推荐</option>
-            <option value="mock">mock（开发演示用，本地假数据，无需登录）</option>
-          </select>
-        </label>
-        <label class="checkbox-label">
-          <input id="cookie-alert-input" type="checkbox" checked>
-          Cookie 过期自动提醒（推送到全部通知通道）
-        </label>
-        <label>Cookie 健康检测节流（秒，0=每轮）
-          <input id="cookie-check-interval-input" type="number" min="0" step="1" value="0">
-        </label>
-        <label>User-Agent（留空使用内置默认）
-          <input id="user-agent-input" type="text" placeholder="Mozilla/5.0 …" autocomplete="off">
-        </label>
-      </div>
-    </section>
+  <main class="shell">
 
-    <section class="card">
-      <h2>登录 Cookie</h2>
-      <div class="cookie-bar">
-        <span id="cookie-status-light" class="status-light unknown" title="">—</span>
-        <span id="cookie-status-text" class="cookie-status-text">正在读取…</span>
-        <span id="cookie-masked" class="cookie-masked"></span>
-        <span id="cookie-default-account" class="cookie-default-account"></span>
-        <button id="cookie-pool-btn" class="btn small" type="button">☰ Cookie 管理（池）</button>
-      </div>
-      <div class="cookie-editor">
-        <textarea id="cookie-input" rows="3" placeholder="粘贴浏览器复制的 Cookie 请求头（须包含 _m_h5_tk=）"></textarea>
-        <div class="cookie-actions">
-          <button id="cookie-save-btn" class="btn primary" type="button">校验并保存</button>
-          <button id="cookie-clear-btn" class="btn ghost" type="button">清空输入</button>
+    <!-- ============================================================
+         ① 态势总览
+         ============================================================ -->
+    <section class="view active" id="view-overview">
+
+      <!-- Cookie 异常警示（仅非 ok 时显示） -->
+      <div class="alert hidden" id="ovCookieAlert">
+        <span class="dot err" id="ovCookieDot"></span>
+        <div class="alert-main">
+          <b id="ovCookieTitle">登录 Cookie 异常</b>
+          <p id="ovCookieText"></p>
         </div>
-        <p class="hint">容器内无浏览器：请在本机浏览器登录 goofish.com → F12 → Network → 搜索请求 →
-          复制 Cookie 头粘贴到上方。保存时会校验有效性并 Fernet 加密落盘，仅回显脱敏值。</p>
+        <button class="btn sm" id="ovCookieGoBtn" type="button">去处理</button>
+      </div>
+
+      <div class="metrics" id="ovMetrics"></div>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>狙击进度</h2>
+          <span class="card-sub">进度 = 阈值 ÷ 现价，跌破 100% 即命中</span>
+          <span class="spacer"></span>
+          <span class="card-sub" id="ovTargetsSub"></span>
+        </div>
+        <div class="target-list" id="ovTargetList">
+          <div class="empty"><h4>正在读取…</h4></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>今日命中</h2>
+          <span class="card-sub" id="ovHitsSub"></span>
+          <span class="spacer"></span>
+          <button class="btn sm ghost" id="ovHitsAllBtn" type="button">查看全部 →</button>
+        </div>
+        <div class="hit-list" id="ovHitList">
+          <div class="empty"><h4>正在读取…</h4></div>
+        </div>
+      </section>
+
+      <div class="run-strip" id="ovRunStrip">
+        <span class="rs-item">状态 <b id="ovRunState">—</b></span>
+        <span class="rs-sep"></span>
+        <span class="rs-item">轮次 <b id="ovRoundCount">0</b></span>
+        <span class="rs-sep"></span>
+        <span class="rs-item">累计提醒 <b id="ovNotified">0</b></span>
+        <span class="rs-sep"></span>
+        <span class="rs-item">下次执行 <b id="ovNextRound">—</b></span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="ovRunOnceBtn" type="button">⚡ 立即执行一轮</button>
       </div>
     </section>
 
-    <div class="card-actions">
-      <button id="config-save-btn" class="btn primary large" type="button">保存配置</button>
-      <span id="config-save-status" class="save-status"></span>
-    </div>
+    <!-- ============================================================
+         ② 监控配置
+         ============================================================ -->
+    <section class="view" id="view-targets">
+
+      <section class="card">
+        <div class="card-h">
+          <h2>关键词与阈值</h2>
+          <span class="card-sub">低于阈值即提醒；可停用而不删除</span>
+        </div>
+        <div class="adder">
+          <input id="kwInput" type="text" placeholder="关键词（如 Switch OLED）" autocomplete="off">
+          <input id="priceInput" type="number" min="0.01" step="0.01" placeholder="价格阈值（元）">
+          <button class="btn primary" id="kwAddBtn" data-action="kw-add" type="button">添加</button>
+        </div>
+        <div class="target-cards" id="kwList"></div>
+        <div class="card-foot">
+          <button class="btn sm" id="presetEditBtn" data-action="preset-edit" type="button">编辑预置排除词</button>
+          <span class="hint" style="margin:0">新增关键词时自动带入预置排除词</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h2>监测参数</h2></div>
+        <div class="form-grid">
+          <label>监测间隔（秒）
+            <input id="intervalInput" type="number" min="1" step="1">
+          </label>
+          <label>抓取方式
+            <select id="fetcherSelect">
+              <option value="mtop">mtop（真实抓取，需登录 Cookie）★推荐</option>
+              <option value="web">web（旧版 HTML 解析，已废弃）</option>
+              <option value="mock">mock（本地假数据，无需登录）</option>
+            </select>
+          </label>
+          <label>抓取页数（≥1）
+            <input id="pagesInput" type="number" min="1" step="1">
+          </label>
+          <label>每页数量（1~100）
+            <input id="pageSizeInput" type="number" min="1" max="100" step="1">
+          </label>
+          <label>翻页间隔（秒，≥0）
+            <input id="pageSleepInput" type="number" min="0" step="0.1">
+          </label>
+          <label>User-Agent（留空用内置默认）
+            <input id="userAgentInput" type="text" placeholder="Mozilla/5.0 …" autocomplete="off">
+          </label>
+          <label class="check">
+            <input id="cookieAlertInput" type="checkbox"> Cookie 过期自动提醒（推送全部通道）
+          </label>
+          <label>Cookie 健康检测节流（秒，0=每轮）
+            <input id="cookieCheckIntervalInput" type="number" min="0" step="1">
+          </label>
+        </div>
+        <p class="hint">监控运行中保存配置会先停止、写盘、再热重启（<code>restarted</code> 会回报）。</p>
+      </section>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>登录 Cookie</h2>
+          <span class="spacer"></span>
+          <span class="status-light" id="cookieLight"></span>
+          <span class="card-sub" id="cookieStateText">—</span>
+        </div>
+        <div class="cookie-bar">
+          <span class="masked" id="cookieMasked">—</span>
+          <span class="spacer"></span>
+          <span class="card-sub" id="cookieDefault"></span>
+          <button class="btn sm" id="cookieRefreshBtn" data-action="cookie-refresh" type="button"
+                  title="用浏览器持久化 profile 免扫码刷新登录令牌（需服务端安装 Playwright；未安装时会给出替代方案）">静默刷新</button>
+          <button class="btn sm" id="cookiePoolBtn" data-action="cookie-pool" type="button">Cookie 池管理</button>
+        </div>
+        <textarea id="cookieInput" rows="3" placeholder="粘贴浏览器复制的 Cookie 请求头（须包含 _m_h5_tk=）"></textarea>
+        <div class="row-gap">
+          <button class="btn primary" id="cookieSaveBtn" data-action="cookie-save" type="button">校验并保存</button>
+          <button class="btn ghost" id="cookieClearBtn" data-action="cookie-clear" type="button">清空输入</button>
+        </div>
+        <p class="hint">登录令牌会随每次抓取由服务端<b>自动续期</b>（实测有效期约 90 分钟），
+          只要监控在跑通常无需手动干预；「静默刷新」可在装了 Playwright 的环境里免扫码换新令牌。
+          仍可手动粘贴：本机登录 goofish.com → F12 → Network → 搜索请求 → 复制 Cookie 头。
+          保存时会校验有效性并加密落盘，回显仅脱敏值。<b>Cookie 不走「保存配置」，只走这个按钮。</b></p>
+      </section>
+
+      <div class="sticky-actions">
+        <button class="btn primary" id="configSaveBtn" data-action="save-config" type="button">保存配置</button>
+        <span class="save-status" id="configSaveStatus"></span>
+        <span class="spacer"></span>
+        <span class="hint" style="margin:0">存储路径：<code id="storagePathText">—</code></span>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         ③ 命中战果
+         ============================================================ -->
+    <section class="view" id="view-hits">
+
+      <section class="card">
+        <div class="card-h">
+          <h2>命中记录</h2>
+          <span class="card-sub" id="hitsSub">—</span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="hitsRefreshBtn" data-action="hits-refresh" type="button">刷新</button>
+        </div>
+
+        <div class="filters">
+          <input type="search" id="hitsSearch" placeholder="搜索标题…" autocomplete="off">
+          <select id="hitsKeywordFilter"><option value="">全部关键词</option></select>
+          <select id="hitsSort">
+            <option value="time:desc">提醒时间 ↓</option>
+            <option value="time:asc">提醒时间 ↑</option>
+            <option value="price:asc">价格 ↑</option>
+            <option value="price:desc">价格 ↓</option>
+            <option value="publish:desc">发布时间 ↓</option>
+            <option value="keyword:asc">关键词 A→Z</option>
+            <option value="title:asc">标题 A→Z</option>
+          </select>
+          <label class="check"><input type="checkbox" id="hitsTodayOnly"> 仅今日</label>
+          <label class="check"><input type="checkbox" id="hitsIncludeSold"> 显示已售出/下架</label>
+        </div>
+
+        <div class="bulkbar">
+          <label class="check"><input type="checkbox" id="hitsSelectAll"> 全选</label>
+          <span id="hitsSelCount">已选 0</span>
+          <span class="bulk-sep"></span>
+          <button class="btn sm" id="hitsBulkSoldBtn" data-action="bulk-sold" type="button">批量标记售出</button>
+          <button class="btn sm danger-ghost" id="hitsBulkBlackBtn" data-action="bulk-black" type="button">批量加入黑名单</button>
+          <button class="btn sm" id="hitsCheckShelfBtn" data-action="check-shelf" type="button">校验在架</button>
+          <button class="btn sm ghost" id="hitsClearBtn" data-action="hits-clear" type="button">清空记录</button>
+          <span class="spacer"></span>
+          <span class="card-sub" id="checkShelfProgress"></span>
+        </div>
+
+        <div class="hit-list" id="hitsList">
+          <div class="empty"><h4>正在读取…</h4></div>
+        </div>
+      </section>
+    </section>
+
+    <!-- ============================================================
+         ④ 通知与系统
+         ============================================================ -->
+    <section class="view" id="view-system">
+
+      <section class="card">
+        <div class="card-h">
+          <h2>通知通道</h2>
+          <span class="card-sub">勾选启用并填参数；网络通道失败不中断监测</span>
+          <span class="spacer"></span>
+          <span class="badge" id="chSummary">—</span>
+        </div>
+        <div class="channels" id="channelList"></div>
+        <p class="hint">通道改动同样走 <b>PUT /api/config</b>；离开本页前记得保存。</p>
+      </section>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>实时日志</h2>
+          <span class="card-sub" id="streamStatus">未连接</span>
+          <span class="spacer"></span>
+          <input type="search" id="logFilter" placeholder="过滤：级别或关键词（如 WARNING / 命中）" style="max-width:260px">
+          <button class="btn sm" id="logFontMinusBtn" data-action="log-font-minus" type="button">A-</button>
+          <button class="btn sm" id="logFontPlusBtn" data-action="log-font-plus" type="button">A+</button>
+          <button class="btn sm ghost" id="logClearBtn" data-action="log-clear" type="button">清空</button>
+        </div>
+        <div class="logs" id="logBox">
+          <div class="log-empty">日志将实时显示在这里（SSE）…</div>
+        </div>
+        <div class="card-foot">
+          <label class="check"><input type="checkbox" id="detailOnlyInput"> 仅展示命中（关闭抓取明细）</label>
+          <span class="spacer"></span>
+          <span class="card-sub" id="logCount"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>黑名单</h2>
+          <span class="card-sub">被剔除的商品不再提醒、不再进记录</span>
+          <span class="spacer"></span>
+          <span class="card-sub" id="blackCount">—</span>
+        </div>
+        <div class="black-list" id="blackList">
+          <div class="empty"><h4>正在读取…</h4></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h2>系统信息</h2></div>
+        <div class="kv-grid" id="sysInfo"></div>
+      </section>
+    </section>
+
   </main>
 
-  <!-- ======================= Tab 2 通知设置 ======================= -->
-  <main id="panel-notify" class="tab-panel">
-    <section class="card">
-      <h2>通知通道</h2>
-      <p class="hint">勾选启用并填写参数；「测试发送」会立即推送一条测试消息到该通道。
-        网络通道失败不会中断监测，仅记录警告日志。</p>
-      <div id="channel-list" class="channel-list">
-        <div class="skeleton-card">加载中…</div>
-      </div>
-    </section>
-  </main>
-
-  <!-- ======================= Tab 3 运行监控 ======================= -->
-  <main id="panel-run" class="tab-panel">
-    <section class="card">
-      <div class="run-controls">
-        <button id="monitor-start-btn" class="btn primary" type="button">▶ 开始监控</button>
-        <button id="monitor-stop-btn" class="btn danger" type="button">■ 停止</button>
-        <button id="monitor-once-btn" class="btn" type="button">⚡ 立即执行一轮</button>
-        <label class="checkbox-label detail-only-label">
-          <input id="detail-only-input" type="checkbox" checked>
-          明细日志（关闭后仅展示命中）
-        </label>
-        <span id="monitor-status-text" class="monitor-status-text">状态：未运行</span>
-      </div>
-      <div class="status-strip" id="status-strip">
-        <span>轮数：<b id="stat-rounds">0</b></span>
-        <span>累计提醒：<b id="stat-notified">0</b></span>
-        <span>最近轮次：<b id="stat-last-round">—</b></span>
-        <span>下次执行：<b id="stat-next-round">—</b></span>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="log-toolbar">
-        <h2 class="log-title">实时日志</h2>
-        <input id="log-filter-input" type="text" placeholder="过滤：级别 或 关键词（如 WARNING / 命中）" autocomplete="off">
-        <button id="log-font-minus-btn" class="btn small" type="button">A-</button>
-        <button id="log-font-plus-btn" class="btn small" type="button">A+</button>
-        <button id="log-clear-btn" class="btn small ghost" type="button">清空</button>
-      </div>
-      <div class="log-box" id="log-box" style="font-size:12px">
-        <div class="log-empty">日志将实时显示在这里（SSE）…</div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>提醒记录</h2>
-      <div class="record-toolbar">
-        <label class="checkbox-label">
-          <input id="include-sold-input" type="checkbox"> 显示已下架
-        </label>
-        <button id="records-refresh-btn" class="btn small" type="button">刷新</button>
-        <button id="records-check-shelf-btn" class="btn small" type="button">校验在架（选中）</button>
-        <button id="records-batch-sold-btn" class="btn small" type="button">批量标记售出</button>
-        <button id="records-batch-blacklist-btn" class="btn small danger" type="button">批量加入黑名单</button>
-        <button id="records-clear-btn" class="btn small danger ghost" type="button">清空记录</button>
-        <button id="blacklist-manage-btn" class="btn small" type="button">黑名单管理</button>
-        <span id="check-shelf-progress" class="check-shelf-progress"></span>
-        <span id="records-count" class="records-count"></span>
-      </div>
-      <div class="table-scroll">
-        <table class="record-table" id="record-table">
-          <thead>
-            <tr>
-              <th class="checkbox-col"><input type="checkbox" id="record-select-all" title="全选"></th>
-              <th data-sort="time">提醒时间 ⇅</th>
-              <th data-sort="keyword">关键词 ⇅</th>
-              <th data-sort="title">商品名称 ⇅</th>
-              <th data-sort="price">价格 ⇅</th>
-              <th data-sort="publish">发布时间 ⇅</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="record-tbody">
-            <tr class="skeleton-row"><td colspan="7">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  </main>
-
-  <footer class="app-footer">
-    闲鱼低价提醒工具 · Docker Web 版 · 仅供个人学习使用，请遵守平台规则
-    <button id="footer-about-btn" class="btn ghost small" type="button">ℹ 关于</button>
+  <footer class="foot">
+    <button class="btn sm ghost" id="footerAboutBtn" type="button">关于</button>
+    <span class="foot-text">Docker Web 版 · 仅供个人学习使用，请遵守平台规则</span>
   </footer>
 
-  <div id="toast" class="toast"></div>
+  <div id="toast-wrap" class="toast-wrap"></div>
+  <div id="modal-root"></div>
+  <div id="cmdk-root"></div>
 
   <!-- 认证遮罩（P3-01）：401 时弹出 -->
   <div id="auth-overlay" class="auth-overlay hidden">
@@ -220,18 +326,19 @@
     </div>
   </div>
 
-  <!-- 通用弹窗容器（modal.js 渲染） -->
-  <div id="modal-root"></div>
-
-  <!-- 脚本按依赖顺序加载：util → api → modal → auth → state → 各 Tab → app 入口 -->
+  <!-- 脚本按依赖顺序加载：util → api → modal → auth → state → data → ui → 视图 → cmdk → app -->
   <script src="/static/js/util.js"></script>
   <script src="/static/js/api.js"></script>
   <script src="/static/js/modal.js"></script>
   <script src="/static/js/auth.js"></script>
   <script src="/static/js/state.js"></script>
-  <script src="/static/js/tab-config.js"></script>
-  <script src="/static/js/tab-notify.js"></script>
-  <script src="/static/js/tab-run.js"></script>
+  <script src="/static/js/data.js"></script>
+  <script src="/static/js/ui.js"></script>
+  <script src="/static/js/view-overview.js"></script>
+  <script src="/static/js/view-targets.js"></script>
+  <script src="/static/js/view-hits.js"></script>
+  <script src="/static/js/view-system.js"></script>
+  <script src="/static/js/cmdk.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
