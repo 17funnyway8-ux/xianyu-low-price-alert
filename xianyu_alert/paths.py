@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 
@@ -98,11 +99,9 @@ def ensure_data_dir() -> str:
         数据目录绝对路径。
     """
     target = data_dir()
-    try:
-        os.makedirs(target, exist_ok=True)
-    except OSError:
+    with contextlib.suppress(OSError):
         # 创建失败不阻塞调用方（后续写操作会自行报错并提示）
-        pass
+        os.makedirs(target, exist_ok=True)
     return target
 
 
@@ -156,9 +155,7 @@ def default_state_dir() -> str:
         state 目录绝对路径。
     """
     state_dir = os.path.join(data_dir(), "state")
-    try:
-        os.makedirs(state_dir, exist_ok=True)
-    except OSError:
+    with contextlib.suppress(OSError):
         # 目录创建失败不阻塞调用方，返回路径本身
-        pass
+        os.makedirs(state_dir, exist_ok=True)
     return state_dir

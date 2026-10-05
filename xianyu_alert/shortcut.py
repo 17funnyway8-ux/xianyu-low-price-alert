@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import subprocess
@@ -65,7 +66,7 @@ def desktop_dir() -> str:
     Returns:
         桌面目录绝对路径。
     """
-    try:
+    with contextlib.suppress(Exception):  # 注册表不可用时回退
         import winreg
 
         with winreg.OpenKey(  # type: ignore[attr-defined]
@@ -75,8 +76,6 @@ def desktop_dir() -> str:
             desktop, _ = winreg.QueryValueEx(key, "Desktop")  # type: ignore[attr-defined]
         if desktop:
             return os.path.expandvars(desktop)
-    except Exception:  # noqa: BLE001 - 注册表不可用时回退
-        pass
     return os.path.join(os.path.expanduser("~"), "Desktop")
 
 

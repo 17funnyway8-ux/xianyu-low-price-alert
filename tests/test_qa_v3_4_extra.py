@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import unittest
@@ -286,11 +287,9 @@ class TestCookieManagerAddButton(unittest.TestCase):
     @staticmethod
     def _find_button(w, text_part: str):
         for child in w.winfo_children():
-            try:
+            with contextlib.suppress(Exception):   # cget 可能失败
                 if child.winfo_class() == "TButton" and text_part in str(child.cget("text")):
                     return child
-            except Exception:  # noqa: BLE001 - cget 可能失败
-                pass
             found = TestCookieManagerAddButton._find_button(child, text_part)
             if found:
                 return found

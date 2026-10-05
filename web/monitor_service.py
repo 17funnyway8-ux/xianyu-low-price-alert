@@ -132,13 +132,11 @@ class SseBroadcaster:
     @staticmethod
     def _safe_put(queue: asyncio.Queue, data: dict[str, Any]) -> None:
         """在事件循环线程内执行的投递（队列满时丢最旧，绝不阻塞）。"""
-        try:
+        with contextlib.suppress(Exception):   # 投递失败静默（订阅端可能已断开）
             if queue.full():
                 with contextlib.suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
             queue.put_nowait(data)
-        except Exception:  # noqa: BLE001 - 投递失败静默（订阅端可能已断开）
-            pass
 
 
 # ---------------------------------------------------------------------- #
@@ -161,7 +159,7 @@ class ServiceLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """把一条日志写入服务环形缓冲并广播（自身异常绝不向外抛）。"""
-        try:
+        with contextlib.suppress(Exception):   # 日志处理失败绝不影响业务线程
             service = self._service
             if service is None:
                 return
@@ -171,8 +169,6 @@ class ServiceLogHandler(logging.Handler):
             if record.exc_info:
                 text = f"{text}\n{self.format(record)}"
             service.append_log(record.levelname, text, ts)
-        except Exception:  # noqa: BLE001 - 日志处理失败绝不影响业务线程
-            pass
 
 
 #: 模块级日志 handler（进程内只挂一次）
@@ -446,19 +442,15 @@ class MonitorService:
     def _reload_from_disk(self) -> None:
         """从磁盘重新加载配置并重建 Storage（幂等；旧 storage 先关闭）。"""
         if self._storage is not None:
-            try:
+            with contextlib.suppress(Exception): # 关闭失败不影响重载
                 self._storage.close()
-            except Exception:  # noqa: BLE001 - 关闭失败不影响重载
-                pass
             self._storage = None
         data = gui.load_raw_config(self.config_path)
         self._config = config_from_dict(data)
         self._storage = Storage(self._config.storage.path)
         # Web 读 + monitor 写并发：短事务 + busy timeout（设计 §2.4）
-        try:
+        with contextlib.suppress(Exception): # busy timeout 设置失败不阻断
             self._storage.conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
-        except Exception:  # noqa: BLE001 - busy timeout 设置失败不阻断
-            pass
         self._config_mtime = gui.config_file_mtime(self.config_path)
 
     def _check_config_mtime(self) -> None:
@@ -594,10 +586,8 @@ class MonitorService:
             fetcher = self._fetcher
             self._fetcher = None
             if fetcher is not None:
-                try:
+                with contextlib.suppress(Exception): # 关闭失败不影响停止
                     fetcher.close()
-                except Exception:  # noqa: BLE001 - 关闭失败不影响停止
-                    pass
             self._running = False
             logger.info("监测已停止")
         return {"ok": True, "message": "监测已停止"}
@@ -617,10 +607,8 @@ class MonitorService:
             fetcher = build_fetcher(config)
             monitor = Monitor(config, fetcher, self._storage, build_notifiers(config))
         try:
-            try:
+            with contextlib.suppress(Exception):
                 self._check_config_mtime()
-            except Exception:  # noqa: BLE001
-                pass
             notified = monitor.run_once(log_item_details=not self._detail_only)
             with self._lock:
                 self._round_count += 1
@@ -634,10 +622,8 @@ class MonitorService:
                 "notified": int(notified),
             }
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 fetcher.close()
-            except Exception:  # noqa: BLE001
-                pass
 
     def status(self) -> dict[str, Any]:
         """返回运行状态（供 /healthz 与前端状态条轮询）。"""
@@ -674,10 +660,8 @@ class MonitorService:
             shelf_thread.join(timeout=MONITOR_JOIN_TIMEOUT)
         with self._lock:
             if self._storage is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._storage.close()
-                except Exception:  # noqa: BLE001
-                    pass
                 self._storage = None
         handler = _ensure_log_handler()
         if handler._service is self:  # noqa: SLF001 - 同包内部访问
@@ -930,10 +914,8 @@ class MonitorService:
             )
         finally:
             if fetcher is not None:
-                try:
+                with contextlib.suppress(Exception):
                     fetcher.close()
-                except Exception:  # noqa: BLE001
-                    pass
             with self._check_shelf_lock:
                 st = self._check_shelf_state
                 st["running"] = False
@@ -1351,10 +1333,8 @@ class MonitorService:
         clearer = getattr(target, "clear_token_refreshed", None)
         if callable(clearer):
             clearer()
-        try:
+        with contextlib.suppress(Exception): # 重载失败也无妨，下轮 mtime 检测会补上
             self.reload_if_external_changed()
-        except Exception:  # noqa: BLE001 - 重载失败也无妨，下轮 mtime 检测会补上
-            pass
         logger.info("已将服务端刷新的登录令牌写回配置（下次重启无需重新登录）")
         return True
 
@@ -1462,10 +1442,8 @@ class MonitorService:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "message": f"Cookie 写入失败：{exc}", "code": 500}
 
-        try:
+        with contextlib.suppress(Exception): # 重载失败不阻断成功回显
             self.reload_if_external_changed()
-        except Exception:  # noqa: BLE001 - 重载失败不阻断成功回显
-            pass
 
         state, reason = detect_cookie_health(cookie)
         logger.info("已免扫码刷新 Cookie（状态 %s）", state)

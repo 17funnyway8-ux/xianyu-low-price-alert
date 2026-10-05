@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import queue
 import sys
@@ -408,10 +409,8 @@ class TestRealTkIntegration(unittest.TestCase):
                 if gui is not None:
                     gui.on_close()
                 else:
-                    try:
+                    with contextlib.suppress(Exception):
                         root.destroy()
-                    except Exception:  # noqa: BLE001
-                        pass
 
 
 if __name__ == "__main__":  # pragma: no cover

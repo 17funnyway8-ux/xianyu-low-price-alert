@@ -720,10 +720,8 @@ class XianyuAlertQtApp(QMainWindow):
 
         self._closing = True
         self._tick_timer.stop()
-        try:
+        with contextlib.suppress(Exception):
             logging.getLogger("xianyu_alert").removeHandler(self._qt_log_handler)
-        except Exception:  # noqa: BLE001
-            pass
         # 保存配置（Fernet 加密；尽力而为，不阻塞关闭）
         try:
             data = self._collect_config_dict()

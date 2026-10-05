@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -154,10 +155,8 @@ class MonitorWorker(QThread):
             for closable in (fetcher, storage):
                 if closable is None:
                     continue
-                try:
+                with contextlib.suppress(Exception):
                     closable.close()
-                except Exception:  # noqa: BLE001
-                    pass
             self._next_run_at = 0.0
             self._emit_log("INFO", f"[{datetime.now():%H:%M:%S}] 监控已停止。")
             self.ui_message.emit("state", {"running": False})
@@ -272,10 +271,8 @@ class SoldCheckWorker(QThread):
             for closable in (fetcher, storage):
                 if closable is None:
                     continue
-                try:
+                with contextlib.suppress(Exception):
                     closable.close()
-                except Exception:  # noqa: BLE001
-                    pass
         self._emit_log(
             "INFO",
             f"[{datetime.now():%H:%M:%S}] ✅ 校验完成：在架 {online}，已下架/售出 {len(sold_ids)}，无法判定 {unknown}",
@@ -354,12 +351,10 @@ class QtLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """把一条日志通过信号投递（自身异常绝不向外抛）。"""
-        try:
+        with contextlib.suppress(Exception):   # 日志失败绝不能影响业务
             message = record.getMessage()
             timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
             text = f"[{timestamp}] {message}"
             if record.exc_info:
                 text = f"{text}\n{self.format(record)}"
             self.bridge.message.emit(record.levelname, text)
-        except Exception:  # noqa: BLE001 - 日志失败绝不能影响业务
-            pass
