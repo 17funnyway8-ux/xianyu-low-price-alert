@@ -1,9 +1,30 @@
 # 闲鱼低价提醒工具（xianyu-alert）
 
 [![CI](https://github.com/17funnyway8-ux/xianyu-low-price-alert/actions/workflows/ci.yml/badge.svg)](https://github.com/17funnyway8-ux/xianyu-low-price-alert/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/17funnyway8-ux/xianyu-low-price-alert?label=release)](https://github.com/17funnyway8-ux/xianyu-low-price-alert/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
 
-一个自托管的闲鱼「捡漏」监控工具：按关键词周期性抓取最新商品，筛选出**新出现且价格低于阈值**的商品，去重后通过控制台 / 微信 / 邮件 / Telegram / Bark / 企业微信推送提醒。提供 **Docker Web 界面** 与 **Windows / macOS 桌面版** 双形态。
+**自托管的闲鱼「捡漏」监控**：按关键词周期性抓取最新商品，筛出**新出现且价格低于阈值**的，去重后推送到 控制台 / 微信 / 邮件 / Telegram / Bark / 企业微信。
+提供 **Docker Web**（手机随时看）与 **Windows / macOS 桌面版**（本机 7×24 挂机）双形态，同一套配置与数据。
+
+[English](README_EN.md) · [快速开始](#-docker-compose-快速开始推荐) · [常见问题](#-常见问题与排障) · [文档索引](#-文档索引) · [安全边界](#-安全边界)
+
+![态势总览](docs/images/overview.png)
+
+---
+
+## 📷 界面预览
+
+Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
+
+| 命中战果 | 监控配置 |
+|---|---|
+| ![命中战果](docs/images/hits.png) | ![监控配置](docs/images/targets.png) |
+
+**通知与系统**（通道配置、Cookie 池、实时日志）
+
+![通知与系统](docs/images/system.png)
 
 ---
 
@@ -14,7 +35,7 @@
 - **精确过滤，少打扰**：关键词 + 独立价格阈值，支持**排除词**（回收 / 置换等）与**必含词**（16G / DDR4 等），双重去重保证同一商品**永不重复提醒**。
 - **多账号 Cookie 池**：按轮次轮换取用，过期自动停用并推送提醒；Cookie **Fernet 加密落盘**（`fernet1:`），磁盘无明文，全接口脱敏。
 - **Web 全功能**：关键词 / 过滤词 / Cookie 池 / 6 种通知通道 / 运行监控（校验在架、售出撤销、黑名单、清空记录）/ SSE 实时日志；远程访问可开 `Bearer` token 认证。
-- **工程可靠**：934 个全 mock 测试（无外网依赖）+ 双平台 CI 自动构建发布 + 进程单实例锁（崩溃自动释放）+ SQLite 热备指引。
+- **工程可靠**：**930+ 个全 mock 测试**（无外网依赖，20 秒跑完）+ CI 三平台矩阵（Linux/Windows/macOS）+ 覆盖率门槛 + 双平台自动构建发布 + 进程单实例锁（崩溃自动释放）+ SQLite 热备指引。
 
 ---
 
@@ -190,7 +211,7 @@ python -m unittest discover -s tests
 ## ⚠️ 注意事项
 
 - **风控**：闲鱼是强反爬站点，接口带签名且需要登录态。请合理控制频率（间隔 ≥ 300 秒）、优先使用多 Cookie 池轮换；页面结构 / 签名随时可能变动，遇到 `RGV587` 或 `FAIL_SYS_*` 错误说明请求过频或 Cookie 失效，稍后再试 / 刷新 Cookie 即可。程序对抓取异常做了优雅降级（单轮失败不中断、不崩溃）。
-- **备份三件套**：`config.yaml`（配置 + 密文 Cookie）+ `secret.key`（Fernet 密钥，**缺失则存量 Cookie 无法解密**）+ `state/xianyu_alert.db`（提醒记录）必须**一起备份**。SQLite 热备示例见 `docker-compose.yml` 注释 / [docs/v1.8_Docker化增量研判与执行方案.md](docs/v1.8_Docker化增量研判与执行方案.md)。
+- **备份三件套**：`config.yaml`（配置 + 密文 Cookie）+ `secret.key`（Fernet 密钥，**缺失则存量 Cookie 无法解密**）+ `state/xianyu_alert.db`（提醒记录）必须**一起备份**。SQLite 热备示例见 `docker-compose.yml` 注释 / [docs/v1.8_Docker化增量研判与执行方案.md](docs/dev/v1.8_Docker化增量研判与执行方案.md)。
 - **免责声明**：本工具仅供个人学习与自用监测。请遵守目标站点 robots 协议与服务条款，合理控制请求频率，勿用于商业爬取或对站点造成压力；因使用本工具产生的账号风险由使用者自行承担。
 
 ---
@@ -209,18 +230,65 @@ python -m unittest discover -s tests
 
 ---
 
+## ❓ 常见问题与排障
+
+### 部署与运行
+
+**Q：Docker 起来后打不开 8080？**
+先看健康检查 `curl http://127.0.0.1:8080/healthz`。容器在跑但端口不通，多半是端口被占用（compose 默认只绑 `127.0.0.1`）。看日志：`docker compose logs -f`。
+
+**Q：容器报 Permission denied / 写不进数据卷（v1.8.2 起）**
+镜像已改为**非 root（uid 1000）**运行，首次部署或从旧版本升级时需让宿主目录属主对齐：
+
+```bash
+mkdir -p xianyu-data && sudo chown -R 1000:1000 xianyu-data
+```
+
+**Q：提示「已有实例运行中」？**
+单实例锁生效：同一数据目录只能跑一个进程。Web 在跑时不要再执行 `cli once/run`（会抢锁）；要手动跑一轮，用界面上的「立即执行一轮」。
+
+**Q：macOS 打开桌面版提示「无法验证开发者」？**
+macOS 版是 ad-hoc 签名（自用），首次打开需在「系统设置 → 隐私与安全性」点「仍要打开」，或右键 → 打开。
+
+### 抓取与 Cookie
+
+**Q：出现 `RGV587_ERROR` / `FAIL_SYS_*`？**
+风控命中：请求过频或 Cookie 失效。把间隔调到 ≥300 秒、启用多 Cookie 池轮换，或重新登录刷新 Cookie。
+
+**Q：Cookie 会自己刷新吗？**
+v1.8.2 起支持无感续期（服务端下发新令牌时自动吸收、节流落盘）。会话彻底失效时才需重新登录：Web 界面「通知与系统 → Cookie 池」粘贴新的 Cookie 字符串。
+
+**Q：`secret.key` 丢了会怎样？**
+**存量 Cookie 永久无法解密**（落盘是 Fernet 密文）。备份必须三件套一起：`config.yaml` + `secret.key` + `state/`。
+
+**Q：想先离线试玩 / 抓不到商品？**
+把 `fetcher.type` 设为 `mock`（见仓库根 `config.poc.yaml`），生成确定性假数据、完全不访问闲鱼，适合验证部署与通知链路。
+
+### 通知与安全
+
+**Q：通知没收到怎么排查？**
+界面「通知与系统」里点测试发送；Bark / Telegram 检查 token 与网络出口；邮件通道用 SMTP 授权码而非登录密码。任何通道失败都只记日志，不会中断监控。
+
+**Q：把 Web 暴露到公网安全吗？**
+**默认不建议。** compose 默认只绑 `127.0.0.1` 且不启用认证。确需远程访问务必设置 `XY_WEB_TOKEN`，并放在反向代理 + HTTPS 之后，详见 [安全边界](#-安全边界)。
+
+**Q：Windows exe 被杀软误报？**
+PyInstaller 单文件打包的常见误报。可用仓库内 `build/*.spec` 自行重新构建，或添加信任。
+
+---
+
 ## 📄 文档索引
+
+完整的分层索引见 **[docs/README.md](docs/README.md)**。最常用的几份：
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/维护交接文档.md](docs/维护交接文档.md) | 运维 / 排障 / 交接（最全） |
-| [docs/v1.8_Docker化增量研判与执行方案.md](docs/v1.8_Docker化增量研判与执行方案.md) | Docker 部署细节、备份、迁移 |
-| [docs/v1.8_P2P3_增量PRD_Web全功能与打磨.md](docs/v1.8_P2P3_增量PRD_Web全功能与打磨.md) | Web 全功能版需求 |
-| [docs/macOS适配设计文档.md](docs/macOS适配设计文档.md) | macOS Qt 适配与构建 |
-| [docs/v1.8_增量设计_Cookie刷新与单实例锁.md](docs/v1.8_增量设计_Cookie刷新与单实例锁.md) | Cookie 安全与单实例锁设计 |
-| [docs/项目发展方向调研与建议.md](docs/项目发展方向调研与建议.md) | 产品方向与竞品分析 |
-| `config.example.yaml` | 完整配置模板（含全部通知通道示例） |
-| `docker-compose.yml` | Docker 部署完整注释版 |
+| [docs/user/维护交接文档.md](docs/user/维护交接文档.md) | 运维 / 排障 / 备份迁移（最全，使用者优先看这份） |
+| [docs/dev/开发状态与续作指南.md](docs/dev/开发状态与续作指南.md) | 当前状态、架构地图、验证体系（接手开发先看这份） |
+| [docs/dev/v1.8_Docker化增量研判与执行方案.md](docs/dev/v1.8_Docker化增量研判与执行方案.md) | Docker 部署细节、备份、迁移 |
+| [docs/dev/macOS适配设计文档.md](docs/dev/macOS适配设计文档.md) | macOS Qt 适配与构建 |
+| [CHANGELOG.md](CHANGELOG.md) · [SECURITY.md](SECURITY.md) · [LICENSE](LICENSE) | 版本历史 / 安全策略 / 许可证 |
+| `config.example.yaml` · `docker-compose.yml` | 配置模板 · 部署编排 |
 
 ---
 
