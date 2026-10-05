@@ -18,6 +18,11 @@ config.yaml
 # Python
 __pycache__/
 *.py[cod]
+
+# 覆盖率产物（quality_audit.sh / CI 生成）
+.coverage
+.coverage.*
+htmlcov/
 .venv/
 venv/
 .pytest_cache/
