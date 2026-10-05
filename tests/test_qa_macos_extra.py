@@ -15,7 +15,6 @@ test_gui_qt）互补，聚焦：
 
 from __future__ import annotations
 
-import logging
 import os
 import sys
 import tempfile
@@ -382,7 +381,7 @@ class TestEntryDispatchExtra(unittest.TestCase):
             dst = os.path.join(scripts_dir, "install_launchagent.sh")
             shutil.copyfile(src, dst)
             # 1) 平台检查替换为 false（Windows 上也能跑 dry-run）
-            with open(dst, "r", encoding="utf-8") as fp:
+            with open(dst, encoding="utf-8") as fp:
                 content = fp.read()
             content = content.replace(
                 'if [ "$(uname -s)" != "Darwin" ]; then',

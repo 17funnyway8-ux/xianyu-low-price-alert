@@ -95,7 +95,7 @@ def main() -> int:
 
     # 投递 WM_CLOSE → Tk WM_DELETE_WINDOW → on_close（优雅关闭路径）
     window_pids = [pid for pid, _hwnd in windows]
-    for pid, hwnd in windows:
+    for _pid, hwnd in windows:
         ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
     print("4) 已发送 WM_CLOSE，等待 GUI 子进程退出…", flush=True)
 
@@ -120,7 +120,7 @@ def main() -> int:
             except Exception:  # noqa: BLE001
                 pass
         return 1
-    print(f"5) GUI 子进程优雅退出 ✅（bootloader 父进程清理临时目录可能需数十秒，属平台行为）",
+    print("5) GUI 子进程优雅退出 ✅（bootloader 父进程清理临时目录可能需数十秒，属平台行为）",
           flush=True)
     return 0
 

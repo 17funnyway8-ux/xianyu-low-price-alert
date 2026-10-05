@@ -15,10 +15,9 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Set
 
 from .config import Config, KeywordRule
-from .fetcher import FetchError, Fetcher, MTOP_TOKEN_COOKIE
+from .fetcher import MTOP_TOKEN_COOKIE, Fetcher, FetchError
 from .filters import (
     hits_exclude_keywords,
     matches_required_keywords,
@@ -65,8 +64,8 @@ class RoundResult:
     filtered: int = 0
     new_products: int = 0
     notified: int = 0
-    failed_keywords: List[str] = field(default_factory=list)
-    notified_products: List[Product] = field(default_factory=list)
+    failed_keywords: list[str] = field(default_factory=list)
+    notified_products: list[Product] = field(default_factory=list)
 
 
 class Monitor:
@@ -84,7 +83,7 @@ class Monitor:
         config: Config,
         fetcher: Fetcher,
         storage: Storage,
-        notifiers: List[Notifier],
+        notifiers: list[Notifier],
     ) -> None:
         """初始化监测器。
 
@@ -97,7 +96,7 @@ class Monitor:
         self.config: Config = config
         self.fetcher: Fetcher = fetcher
         self.storage: Storage = storage
-        self.notifiers: List[Notifier] = list(notifiers or [])
+        self.notifiers: list[Notifier] = list(notifiers or [])
         self._stop: bool = False
         #: 最近一轮的详细结果，便于外部读取
         self.last_result: RoundResult = RoundResult()
@@ -196,10 +195,7 @@ class Monitor:
             if state in _COOKIE_ALERT_STATES:
                 prev = self.storage.get_meta_value(meta_key)
                 if state != prev:
-                    if state == "expiring":
-                        title = "闲鱼 Cookie 即将过期"
-                    else:
-                        title = "闲鱼 Cookie 已过期/无效"
+                    title = "闲鱼 Cookie 即将过期" if state == "expiring" else "闲鱼 Cookie 已过期/无效"
                     notify_plain_message(self.notifiers, title, _COOKIE_ALERT_GUIDE)
                     self.storage.set_meta_value(meta_key, state)
             else:
@@ -286,7 +282,7 @@ class Monitor:
         return msg
 
     # ------------------------------------------------------------------ #
-    def run_once(self, round_ts: Optional[datetime] = None, log_item_details: bool = False) -> int:
+    def run_once(self, round_ts: datetime | None = None, log_item_details: bool = False) -> int:
         """执行一轮监测。
 
         多 Cookie 池（v3.2）：每轮开始时按轮次序号从池中轮换取用
@@ -361,7 +357,7 @@ class Monitor:
             except Exception as exc:  # noqa: BLE001 - 阈值注入失败不阻断抓取
                 logger.warning("关键词「%s」注入价格上限失败：%s", keyword, exc)
         try:
-            products: List[Product] = self.fetcher.fetch(keyword) or []
+            products: list[Product] = self.fetcher.fetch(keyword) or []
         except FetchError as exc:
             # 按失败层次给出**正确的**处置指引，而不是一律"请重新登录"
             hint = _FETCH_FAILURE_HINTS.get(getattr(exc, "kind", ""), "")
@@ -383,7 +379,7 @@ class Monitor:
         # 1.5) 关键词过滤（v3.1）：必含词缺失 / 排除词命中 → 跳过。
         #      过滤是业务规则，发生在 fetcher 返回后、阈值检查前；
         #      被过滤的商品不进入「新商品」判定与已见记录。
-        filtered_products: List[Product] = [
+        filtered_products: list[Product] = [
             p
             for p in products
             if product_passes_filter(p, rule.required_keywords, rule.exclude_keywords)
@@ -397,8 +393,8 @@ class Monitor:
             )
 
         # 1) 与上一轮对比，筛出「新出现」的商品
-        previous_ids: Set[str] = self.storage.get_previous_round_ids(keyword)
-        new_products: List[Product] = [
+        previous_ids: set[str] = self.storage.get_previous_round_ids(keyword)
+        new_products: list[Product] = [
             p for p in filtered_products if p.product_id not in previous_ids
         ]
 
@@ -420,7 +416,7 @@ class Monitor:
         result.new_products += len(new_products)
 
         # 2) 价格阈值 + 去重（notified 标志）
-        hits: List[Product] = [
+        hits: list[Product] = [
             p
             for p in new_products
             if p.price < rule.max_price and not self.storage.is_notified(keyword, p.product_id)
@@ -463,7 +459,7 @@ class Monitor:
         self,
         product: Product,
         rule: KeywordRule,
-        previous_ids: Set[str],
+        previous_ids: set[str],
     ) -> str:
         """给单条商品标注「是否命中 / 被过滤原因」（v3.3 明细日志用）。
 
@@ -495,7 +491,7 @@ class Monitor:
         """请求停止 run_forever 循环。"""
         self._stop = True
 
-    def run_forever(self, max_rounds: Optional[int] = None) -> int:
+    def run_forever(self, max_rounds: int | None = None) -> int:
         """按配置间隔持续运行监测循环。
 
         单轮内部的异常会被捕获并记录，循环不会因此退出；
@@ -544,6 +540,6 @@ class Monitor:
         return total_notified
 
     # ------------------------------------------------------------------ #
-    def summary(self) -> Dict[str, int]:
+    def summary(self) -> dict[str, int]:
         """返回累计统计信息（已提醒商品总数等）。"""
         return {"total_notified": self.storage.count_notified()}

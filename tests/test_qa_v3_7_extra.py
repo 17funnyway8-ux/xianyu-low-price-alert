@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import sqlite3
 import sys
@@ -28,7 +27,6 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import xianyu_alert.gui as g  # noqa: E402
 from xianyu_alert.config import config_from_dict  # noqa: E402
 from xianyu_alert.fetcher import (  # noqa: E402
     FetchError,
@@ -43,7 +41,6 @@ from xianyu_alert.gui import (  # noqa: E402
     LOG_TAG_SUMMARY,
     XianyuAlertGUI,
     log_tag_for_text,
-    parse_enabled_flag,
 )
 from xianyu_alert.models import Product  # noqa: E402
 from xianyu_alert.monitor import Monitor  # noqa: E402

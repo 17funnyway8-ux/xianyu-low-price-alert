@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import formataddr
-from typing import Any, List, Optional
+from typing import Any
 
 import requests
 
@@ -59,7 +59,7 @@ def format_message(product: Product) -> str:
     ).rstrip("\n")
 
 
-def format_messages(products: List[Product]) -> str:
+def format_messages(products: list[Product]) -> str:
     """把多个商品格式化为一段文本，逐条列出。
 
     Args:
@@ -70,17 +70,17 @@ def format_messages(products: List[Product]) -> str:
     """
     if not products:
         return ""
-    blocks: List[str] = []
+    blocks: list[str] = []
     for index, product in enumerate(products, start=1):
         blocks.append(f"【{index}】\n{format_message(product)}")
     return "\n\n".join(blocks)
 
 
-def format_markdown(products: List[Product]) -> str:
+def format_markdown(products: list[Product]) -> str:
     """把多个商品格式化为 Markdown（Server酱 / Telegram 用）。"""
     if not products:
         return ""
-    lines: List[str] = []
+    lines: list[str] = []
     for index, product in enumerate(products, start=1):
         lines.append(f"**{index}. {product.title}**")
         lines.append(f"- 价格: {product.price_text}")
@@ -92,7 +92,7 @@ def format_markdown(products: List[Product]) -> str:
     return "\n".join(lines).strip()
 
 
-def build_title(products: List[Product]) -> str:
+def build_title(products: list[Product]) -> str:
     """生成通知标题。"""
     if not products:
         return DEFAULT_TITLE
@@ -112,7 +112,7 @@ class Notifier(ABC):
     name: str = "notifier"
 
     @abstractmethod
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """发送提醒。
 
         Args:
@@ -120,7 +120,7 @@ class Notifier(ABC):
         """
         raise NotImplementedError
 
-    def safe_notify(self, products: List[Product]) -> bool:
+    def safe_notify(self, products: list[Product]) -> bool:
         """带异常保护的发送，失败只记录 warning。
 
         Args:
@@ -170,7 +170,7 @@ class Notifier(ABC):
             return False
 
 
-def notify_plain_message(notifiers: List[Notifier], title: str, text: str) -> None:
+def notify_plain_message(notifiers: list[Notifier], title: str, text: str) -> None:
     """向全部通知器推送一条纯文本消息（v1.8：Cookie 提醒等非商品场景）。
 
     任一通知器失败不影响其它通知器（`safe_notify_message` 内部已捕获并降级
@@ -196,7 +196,7 @@ class ConsoleNotifier(Notifier):
 
     name = "console"
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """打印提醒到标准输出。"""
         if not products:
             return
@@ -236,7 +236,7 @@ class ServerChanNotifier(Notifier):
         self.sendkey: str = sendkey
         self.timeout: float = float(timeout)
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """POST 到 Server酱接口。"""
         if not products:
             return
@@ -281,7 +281,7 @@ class TelegramNotifier(Notifier):
         self.chat_id: str = chat_id
         self.timeout: float = float(timeout)
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """POST 到 Telegram sendMessage 接口。"""
         if not products:
             return
@@ -355,22 +355,23 @@ class EmailNotifier(Notifier):
         self.smtp_port: int = int(smtp_port or 587)
         self.username: str = username
         self.password: str = password
-        self.recipients: List[str] = recipients
+        self.recipients: list[str] = recipients
         self.use_ssl: bool = bool(use_ssl) or self.smtp_port == 465
         self.use_tls: bool = bool(use_tls) and not self.use_ssl
         self.timeout: float = float(timeout)
 
-    def _build_message(self, products: List[Product]) -> MIMEText:
+    def _build_message(self, products: list[Product]) -> MIMEText:
         """构造邮件对象。"""
         body = format_messages(products)
         message = MIMEText(body, "plain", "utf-8")
-        message["Subject"] = Header(build_title(products), "utf-8")
+        message["Subject"] = str(Header(build_title(products), "utf-8"))
         message["From"] = formataddr((str(Header("闲鱼低价提醒", "utf-8")), self.username))
         message["To"] = ", ".join(self.recipients)
         return message
 
     def _smtp_send(self, message: MIMEText) -> None:
         """通过 SMTP 发送已构造好的邮件对象。"""
+        server: smtplib.SMTP
         if self.use_ssl:
             server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=self.timeout)
         else:
@@ -386,7 +387,7 @@ class EmailNotifier(Notifier):
             except Exception:  # noqa: BLE001 - 关闭失败无需影响主流程
                 pass
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """通过 SMTP 发送邮件。"""
         if not products:
             return
@@ -396,7 +397,7 @@ class EmailNotifier(Notifier):
     def notify_message(self, title: str, text: str) -> None:
         """通过 SMTP 发送纯文本提醒（Subject=title / body=text）。"""
         message = MIMEText(str(text or ""), "plain", "utf-8")
-        message["Subject"] = Header(str(title or ""), "utf-8")
+        message["Subject"] = str(Header(str(title or ""), "utf-8"))
         message["From"] = formataddr((str(Header("闲鱼低价提醒", "utf-8")), self.username))
         message["To"] = ", ".join(self.recipients)
         self._smtp_send(message)
@@ -427,7 +428,7 @@ class BarkNotifier(Notifier):
         self.url: str = url
         self.timeout: float = float(timeout)
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """GET 推送到 Bark 服务。"""
         if not products:
             return
@@ -474,7 +475,7 @@ class WebhookNotifier(Notifier):
         self.url: str = url
         self.timeout: float = float(timeout)
 
-    def notify(self, products: List[Product]) -> None:
+    def notify(self, products: list[Product]) -> None:
         """POST 企业微信风格 JSON payload。"""
         if not products:
             return
@@ -510,7 +511,7 @@ class WebhookNotifier(Notifier):
 # ---------------------------------------------------------------------- #
 # 工厂
 # ---------------------------------------------------------------------- #
-def _build_one(channel: NotifyChannel) -> Optional[Notifier]:
+def _build_one(channel: NotifyChannel) -> Notifier | None:
     """根据单个通道配置构造 Notifier，参数不全时返回 None 并 warning。"""
     ctype = channel.type
     try:
@@ -545,7 +546,7 @@ def _build_one(channel: NotifyChannel) -> Optional[Notifier]:
     return None
 
 
-def build_notifier(channel: NotifyChannel) -> Optional[Notifier]:
+def build_notifier(channel: NotifyChannel) -> Notifier | None:
     """根据**单个**通道配置构造 Notifier（公开封装）。
 
     图形界面的「测试发送」需要单独构造某一个通道，故对外暴露此函数。
@@ -559,7 +560,7 @@ def build_notifier(channel: NotifyChannel) -> Optional[Notifier]:
     return _build_one(channel)
 
 
-def build_notifiers(config: Config) -> List[Notifier]:
+def build_notifiers(config: Config) -> list[Notifier]:
     """根据配置构建通知器列表。
 
     参数不全的通道会被跳过并打 warning；若最终一个都没有，
@@ -571,7 +572,7 @@ def build_notifiers(config: Config) -> List[Notifier]:
     Returns:
         Notifier 列表（至少含一个元素）。
     """
-    notifiers: List[Notifier] = []
+    notifiers: list[Notifier] = []
     for channel in config.notify.channels:
         notifier = _build_one(channel)
         if notifier is not None:

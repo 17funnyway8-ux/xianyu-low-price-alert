@@ -26,7 +26,6 @@ import signal
 import sys
 import threading
 import time
-from typing import List, Optional
 
 import uvicorn
 
@@ -59,7 +58,7 @@ def _acquire_lock():
     return lock
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Web 入口主函数（返回进程退出码）。"""
     del argv  # 无 CLI 参数；预留签名便于测试调用
 

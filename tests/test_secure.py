@@ -189,7 +189,7 @@ class TestEncryptedSave(unittest.TestCase):
         """加密保存：写入 fernet1: 密文 + cookies_encrypted 标记。"""
         with mock.patch.object(secure, "encrypt_text", return_value=secure.FERNET_PREFIX + "Zm9vYmFy"):
             save_cookies_encrypted(self.config_path, PLAIN)
-        with open(self.config_path, "r", encoding="utf-8") as fp:
+        with open(self.config_path, encoding="utf-8") as fp:
             data = yaml.safe_load(fp)
         self.assertTrue(data["monitor"]["cookies"].startswith(secure.FERNET_PREFIX))
         self.assertTrue(data["monitor"]["cookies_encrypted"])
@@ -199,7 +199,7 @@ class TestEncryptedSave(unittest.TestCase):
         """加密不可用（降级明文）时不写加密标记。"""
         with mock.patch.object(secure, "encrypt_text", side_effect=lambda p: p):
             save_cookies_encrypted(self.config_path, PLAIN)
-        with open(self.config_path, "r", encoding="utf-8") as fp:
+        with open(self.config_path, encoding="utf-8") as fp:
             data = yaml.safe_load(fp)
         self.assertEqual(data["monitor"]["cookies"], PLAIN)
         self.assertNotIn("cookies_encrypted", data["monitor"])
@@ -223,7 +223,7 @@ class TestEnsureEncrypted(unittest.TestCase):
         with self.assertLogs("xianyu_alert.cookie", level="INFO"):
             migrated = ensure_cookie_encrypted(self.config_path)
         self.assertTrue(migrated)
-        with open(self.config_path, "r", encoding="utf-8") as fp:
+        with open(self.config_path, encoding="utf-8") as fp:
             data = yaml.safe_load(fp)
         self.assertTrue(data["monitor"]["cookies"].startswith(secure.FERNET_PREFIX))
         self.assertTrue(data["monitor"]["cookies_encrypted"])

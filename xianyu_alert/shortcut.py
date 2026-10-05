@@ -15,7 +15,8 @@ import logging
 import os
 import subprocess
 import sys
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from . import paths
 
@@ -67,11 +68,11 @@ def desktop_dir() -> str:
     try:
         import winreg
 
-        with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
+        with winreg.OpenKey(  # type: ignore[attr-defined]
+            winreg.HKEY_CURRENT_USER,  # type: ignore[attr-defined]
             r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
         ) as key:
-            desktop, _ = winreg.QueryValueEx(key, "Desktop")
+            desktop, _ = winreg.QueryValueEx(key, "Desktop")  # type: ignore[attr-defined]
         if desktop:
             return os.path.expandvars(desktop)
     except Exception:  # noqa: BLE001 - 注册表不可用时回退
@@ -114,7 +115,7 @@ def build_powershell_script(
     return "\n".join(lines)
 
 
-def _default_target_and_args(exe_path: Optional[str]) -> tuple[str, str]:
+def _default_target_and_args(exe_path: str | None) -> tuple[str, str]:
     """根据运行形态决定快捷方式的目标与参数。
 
     - 显式传入 exe_path：直接用（常用于打包后指定 exe）；
@@ -137,10 +138,10 @@ def _default_target_and_args(exe_path: Optional[str]) -> tuple[str, str]:
 
 
 def create_shortcut(
-    exe_path: Optional[str] = None,
+    exe_path: str | None = None,
     name: str = DEFAULT_DESCRIPTION,
-    runner: Optional[Callable[..., Any]] = None,
-) -> Optional[str]:
+    runner: Callable[..., Any] | None = None,
+) -> str | None:
     """在桌面创建 .lnk 快捷方式。
 
     Args:

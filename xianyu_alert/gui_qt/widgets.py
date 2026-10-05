@@ -13,7 +13,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
@@ -22,7 +23,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPlainTextEdit,
-    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
@@ -40,7 +40,7 @@ LOG_FONT_MAX = 16
 LOG_FONT_DEFAULT = 10
 
 #: 日志级别 / 高亮 tag → (颜色, 是否粗体)。颜色沿用 Tk 版（v3.7 配色）。
-LOG_LEVEL_STYLES: Dict[str, Tuple[str, bool]] = {
+LOG_LEVEL_STYLES: dict[str, tuple[str, bool]] = {
     "INFO": ("#333333", False),
     "DEBUG": ("#888888", False),
     "WARNING": ("#d97706", False),
@@ -60,7 +60,7 @@ class LogView(QPlainTextEdit):
     后台线程绝不直接调用本方法。
     """
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setReadOnly(True)
         self.document().setMaximumBlockCount(MAX_LOG_LINES)
@@ -70,11 +70,11 @@ class LogView(QPlainTextEdit):
         font.setPointSize(self._font_size)
         font.setFamily("Menlo")  # macOS 等宽字体；Windows/Linux 自动回退
         self.setFont(font)
-        self._formats: Dict[str, QTextCharFormat] = self._build_formats()
+        self._formats: dict[str, QTextCharFormat] = self._build_formats()
 
-    def _build_formats(self) -> Dict[str, QTextCharFormat]:
+    def _build_formats(self) -> dict[str, QTextCharFormat]:
         """预构建各级别/标签的 QTextCharFormat（避免每次追加重建）。"""
-        formats: Dict[str, QTextCharFormat] = {}
+        formats: dict[str, QTextCharFormat] = {}
         for level, (color, bold) in LOG_LEVEL_STYLES.items():
             fmt = QTextCharFormat()
             fmt.setForeground(QColor(color))
@@ -108,7 +108,7 @@ class LogView(QPlainTextEdit):
 class StatusLight(QWidget):
     """状态灯：彩色圆点 + 文案（用于 Cookie 状态等）。"""
 
-    def __init__(self, text: str = "", color: str = "#9ca3af", parent: Optional[QWidget] = None) -> None:
+    def __init__(self, text: str = "", color: str = "#9ca3af", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._dot = QLabel("●")
         self._label = QLabel(str(text or ""))
@@ -142,7 +142,7 @@ class KeywordTable(QTableWidget):
     COL_FILTER = 2
     COL_STATUS = 3
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 4, parent)
         self.setHorizontalHeaderLabels(["关键词", "价格阈值（元）", "过滤规则", "状态"])
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -154,7 +154,7 @@ class KeywordTable(QTableWidget):
         self.verticalHeader().setVisible(False)
         self.cellDoubleClicked.connect(self._on_cell_double_clicked)
         #: 行号 -> 关键词（删除/更新时定位）
-        self._rows: List[str] = []
+        self._rows: list[str] = []
 
     def _on_cell_double_clicked(self, row: int, _column: int) -> None:
         if 0 <= row < len(self._rows):
@@ -162,9 +162,9 @@ class KeywordTable(QTableWidget):
 
     def set_keywords(
         self,
-        keywords: Sequence[Tuple[str, float]],
-        enabled_map: Optional[Dict[str, bool]] = None,
-        filters: Optional[Dict[str, Dict[str, Any]]] = None,
+        keywords: Sequence[tuple[str, float]],
+        enabled_map: dict[str, bool] | None = None,
+        filters: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """整体刷新表格内容（加载配置时调用）。"""
         self.setRowCount(0)
@@ -192,7 +192,7 @@ class KeywordTable(QTableWidget):
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.setItem(row, col, item)
 
-    def selected_keyword(self) -> Optional[str]:
+    def selected_keyword(self) -> str | None:
         """返回当前选中行的关键词；未选中返回 None。"""
         row = self.currentRow()
         if 0 <= row < len(self._rows):
@@ -232,7 +232,7 @@ class KeywordTable(QTableWidget):
         self._rows.pop(row)
         return True
 
-    def all_keywords(self) -> List[str]:
+    def all_keywords(self) -> list[str]:
         """返回全部关键词（按表格顺序）。"""
         return list(self._rows)
 
@@ -257,13 +257,13 @@ class AlertTable(QTableWidget):
 
     row_double_clicked = Signal(int)
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         cols = len(ALERT_COLUMNS)
         super().__init__(0, cols, parent)
         #: 行号 -> 记录字典（含 iid/product_id/url，供双击/右键操作）。
         #: 必须是**实例属性**（与 KeywordTable._rows 一致）：若为类属性，
         #: 多窗口/重复构造主窗口会共享提醒记录（Bug #3，QA 回归用例覆盖）。
-        self._rows: List[Dict[str, Any]] = []
+        self._rows: list[dict[str, Any]] = []
         self.setHorizontalHeaderLabels([ALERT_HEADING_TEXTS[c] for c in ALERT_COLUMNS])
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(ALERT_COLUMNS.index("title"), QHeaderView.Stretch)
@@ -274,7 +274,7 @@ class AlertTable(QTableWidget):
         self.cellDoubleClicked.connect(lambda row, _col: self.row_double_clicked.emit(row))
         self.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         #: 列名 -> 当前排序方向（True=升序）
-        self._sort_state: Dict[str, bool] = {col: True for col in ALERT_COLUMNS}
+        self._sort_state: dict[str, bool] = dict.fromkeys(ALERT_COLUMNS, True)
 
     def _on_header_clicked(self, index: int) -> None:
         if 0 <= index < len(ALERT_COLUMNS):
@@ -311,12 +311,12 @@ class AlertTable(QTableWidget):
                     item.setForeground(QColor("#9ca3af"))  # 已售出/下架置灰
                 self.setItem(row, col, item)
 
-    def replace_rows(self, rows: Sequence[Dict[str, Any]]) -> None:
+    def replace_rows(self, rows: Sequence[dict[str, Any]]) -> None:
         """整体替换记录（加载历史时调用）。"""
         self._rows = [dict(r) for r in rows]
         self._render()
 
-    def append_row(self, row: Dict[str, Any], to_top: bool = False) -> None:
+    def append_row(self, row: dict[str, Any], to_top: bool = False) -> None:
         """追加一条记录（to_top=True 插到顶部）。"""
         entry = dict(row)
         if to_top:
@@ -325,19 +325,19 @@ class AlertTable(QTableWidget):
             self._rows.append(entry)
         self._render()
 
-    def remove_row(self, row_index: int) -> Optional[Dict[str, Any]]:
+    def remove_row(self, row_index: int) -> dict[str, Any] | None:
         """删除某行并返回其记录；越界返回 None。"""
         if not (0 <= row_index < len(self._rows)):
             return None
         return self._rows.pop(row_index)
 
-    def row_data(self, row_index: int) -> Optional[Dict[str, Any]]:
+    def row_data(self, row_index: int) -> dict[str, Any] | None:
         """返回某行记录字典；越界返回 None。"""
         if not (0 <= row_index < len(self._rows)):
             return None
         return dict(self._rows[row_index])
 
-    def all_rows(self) -> List[Dict[str, Any]]:
+    def all_rows(self) -> list[dict[str, Any]]:
         """返回全部记录（深拷贝，供排序/校验等只读使用）。"""
         return [dict(r) for r in self._rows]
 

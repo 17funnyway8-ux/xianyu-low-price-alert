@@ -20,7 +20,7 @@ import logging
 import threading
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from PySide6.QtCore import QObject, QThread, Signal
 
@@ -52,7 +52,7 @@ class MonitorWorker(QThread):
         config: Config,
         single_round: bool,
         detail_only: bool = True,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ) -> None:
         """初始化。
 
@@ -104,7 +104,7 @@ class MonitorWorker(QThread):
                     break
                 self._next_run_at = 0.0
                 self._emit_log("INFO", f"[{datetime.now():%H:%M:%S}] ===== 第 {self._round_no + 1} 轮监测开始 =====")
-                hits: List[Product] = []
+                hits: list[Product] = []
                 try:
                     monitor.run_once(log_item_details=not self._detail_only)
                     hits = list(monitor.last_result.notified_products)
@@ -199,10 +199,10 @@ class SoldCheckWorker(QThread):
     def __init__(
         self,
         config: Config,
-        items: List[Dict[str, str]],
+        items: list[dict[str, str]],
         interval: float = 1.5,
         max_items: int = 30,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ) -> None:
         """初始化。
 
@@ -227,7 +227,7 @@ class SoldCheckWorker(QThread):
         """后台线程主体。"""
         from ..fetcher import build_fetcher
 
-        sold_ids: List[str] = []
+        sold_ids: list[str] = []
         unknown = 0
         online = 0
         fetcher = None
@@ -300,7 +300,7 @@ class TestChannelWorker(QThread):
         notifier: Any,
         product: Product,
         ctype: str,
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ) -> None:
         """初始化。
 

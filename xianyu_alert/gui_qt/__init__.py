@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from typing import Optional
 
 from ..singleton import acquire_instance_lock, lock_holder_pid, release_instance_lock
 

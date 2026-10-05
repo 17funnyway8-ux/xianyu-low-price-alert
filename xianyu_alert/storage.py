@@ -19,8 +19,8 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable, List, Optional, Set
 
 from . import paths
 from .models import Product
@@ -80,7 +80,7 @@ _SOLD_OUT_MIGRATIONS = (
 )
 
 
-def _fmt_ts(ts: Optional[datetime] = None) -> str:
+def _fmt_ts(ts: datetime | None = None) -> str:
     """把 datetime 格式化为可读字符串；None 表示取当前时间。"""
     return (ts or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -166,7 +166,7 @@ class Storage:
         row = cur.fetchone()
         return bool(row["notified"]) if row is not None else False
 
-    def save_seen(self, product: Product, round_ts: Optional[datetime] = None) -> None:
+    def save_seen(self, product: Product, round_ts: datetime | None = None) -> None:
         """记录商品在本轮出现（更新 last_seen，首次插入时写 first_seen）。
 
         Args:
@@ -200,7 +200,7 @@ class Storage:
                 ),
             )
 
-    def save_seen_many(self, products: Iterable[Product], round_ts: Optional[datetime] = None) -> int:
+    def save_seen_many(self, products: Iterable[Product], round_ts: datetime | None = None) -> int:
         """批量记录本轮出现的商品。
 
         Args:
@@ -216,7 +216,7 @@ class Storage:
             count += 1
         return count
 
-    def mark_notified(self, product: Product, round_ts: Optional[datetime] = None) -> None:
+    def mark_notified(self, product: Product, round_ts: datetime | None = None) -> None:
         """将商品标记为「已提醒」（不存在则先插入）。
 
         Args:
@@ -251,7 +251,7 @@ class Storage:
                 ),
             )
 
-    def get_product(self, keyword: str, product_id: str) -> Optional[sqlite3.Row]:
+    def get_product(self, keyword: str, product_id: str) -> sqlite3.Row | None:
         """按 (keyword, product_id) 读取一条商品记录，不存在返回 None。"""
         cur = self.conn.execute(
             "SELECT * FROM product WHERE keyword = ? AND product_id = ?",
@@ -259,7 +259,7 @@ class Storage:
         )
         return cur.fetchone()
 
-    def count_notified(self, keyword: Optional[str] = None) -> int:
+    def count_notified(self, keyword: str | None = None) -> int:
         """统计已提醒的商品数量（可按关键词过滤）。"""
         if keyword is None:
             cur = self.conn.execute("SELECT COUNT(*) AS c FROM product WHERE notified = 1")
@@ -273,10 +273,10 @@ class Storage:
 
     def list_notified(
         self,
-        keyword: Optional[str] = None,
+        keyword: str | None = None,
         limit: int = 100,
         include_sold: bool = False,
-    ) -> List[sqlite3.Row]:
+    ) -> list[sqlite3.Row]:
         """列出最近已提醒的商品记录（调试 / CLI / GUI 提醒记录展示用）。
 
         v3.6：自动排除已加入黑名单的商品（`product_id` 命中 `blacklist` 表），
@@ -320,7 +320,7 @@ class Storage:
         keyword: str,
         product_id: str,
         reason: str = "",
-        ts: Optional[datetime] = None,
+        ts: datetime | None = None,
     ) -> int:
         """把某关键词下的一条商品标记为「已售出/下架」。
 
@@ -346,7 +346,7 @@ class Storage:
             )
             return int(cur.rowcount)
 
-    def mark_sold_out_by_id(self, product_id: str, reason: str = "", ts: Optional[datetime] = None) -> int:
+    def mark_sold_out_by_id(self, product_id: str, reason: str = "", ts: datetime | None = None) -> int:
         """把某个 product_id 的全部记录标记为「已售出/下架」（全局）。
 
         详情接口校验 / GUI「标记已售出」使用：同一商品可能在多个关键词下
@@ -398,7 +398,7 @@ class Storage:
         row = cur.fetchone()
         return bool(row["sold_out"]) if row is not None else False
 
-    def list_sold_out(self, limit: int = 500) -> List[sqlite3.Row]:
+    def list_sold_out(self, limit: int = 500) -> list[sqlite3.Row]:
         """列出全部已标记「售出/下架」的商品记录（GUI「显示已下架」用）。
 
         Args:
@@ -477,7 +477,7 @@ class Storage:
             cur = self.conn.execute("DELETE FROM blacklist WHERE product_id = ?", (pid,))
             return int(cur.rowcount)
 
-    def list_blacklist(self, limit: int = 500) -> List[sqlite3.Row]:
+    def list_blacklist(self, limit: int = 500) -> list[sqlite3.Row]:
         """列出全部黑名单商品（GUI「黑名单管理」展示用）。
 
         Args:
@@ -496,7 +496,7 @@ class Storage:
     # ------------------------------------------------------------------ #
     # 轮次状态（用于「新商品」判定，跨重启保持）
     # ------------------------------------------------------------------ #
-    def get_previous_round_ids(self, keyword: str) -> Set[str]:
+    def get_previous_round_ids(self, keyword: str) -> set[str]:
         """读取某关键词「上一轮出现过的商品 ID 集合」。
 
         Args:
@@ -545,7 +545,7 @@ class Storage:
     # ------------------------------------------------------------------ #
     # 通用 meta 读写（v1.8：Cookie 过期提醒去抖状态，跨重启有效）
     # ------------------------------------------------------------------ #
-    def get_meta_value(self, key: str) -> Optional[str]:
+    def get_meta_value(self, key: str) -> str | None:
         """读取 meta 表 key 的 value。
 
         Args:
@@ -614,7 +614,7 @@ class Storage:
             finally:
                 self._closed = True
 
-    def __enter__(self) -> "Storage":
+    def __enter__(self) -> Storage:
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:

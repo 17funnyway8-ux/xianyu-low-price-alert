@@ -44,7 +44,7 @@ def write_cfg(d: str) -> str:
     return cp
 
 
-def find_button(frame: "tk.Widget", text: str):
+def find_button(frame: tk.Widget, text: str):
     for child in frame.winfo_children():
         if isinstance(child, ttk.Button) and str(child.cget("text")) == text:
             return child

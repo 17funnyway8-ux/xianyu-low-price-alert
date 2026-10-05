@@ -15,13 +15,13 @@ import queue
 import sys
 import tempfile
 import unittest
-from typing import Any, Dict
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import yaml
 
-from xianyu_alert.config import ConfigError, config_from_dict
+from xianyu_alert.config import config_from_dict
 from xianyu_alert.gui import (
     CHANNEL_ORDER,
     COOKIE_STATE_MISSING,
@@ -261,7 +261,7 @@ class TestConfigForm(unittest.TestCase):
 
     def test_build_config_dict_shape(self) -> None:
         """组装出的配置字典结构正确，且能通过核心校验。"""
-        channels: Dict[str, Dict[str, Any]] = {
+        channels: dict[str, dict[str, Any]] = {
             "console": {"enabled": True, "options": {}},
             "serverchan": {"enabled": True, "options": {"sendkey": "SCT9"}},
             "email": {"enabled": True, "options": {"smtp_host": "smtp.qq.com"}},  # 参数不全
@@ -378,7 +378,7 @@ class TestRawConfigIO(unittest.TestCase):
             payload = {"keywords": [{"keyword": "中文关键词", "max_price": 12.5}]}
             save_raw_config(path, payload)
             self.assertTrue(os.path.isfile(path))
-            with open(path, "r", encoding="utf-8") as fp:
+            with open(path, encoding="utf-8") as fp:
                 loaded = yaml.safe_load(fp)
             self.assertEqual(loaded, payload)
             self.assertEqual(load_raw_config(path), payload)
@@ -401,7 +401,7 @@ class TestQueueLogHandler(unittest.TestCase):
 
     def test_receives_records(self) -> None:
         """挂到 xianyu_alert logger 上能收到各模块日志。"""
-        ui_queue: "queue.Queue" = queue.Queue()
+        ui_queue: queue.Queue = queue.Queue()
         handler = QueueLogHandler(ui_queue, level=logging.INFO)
         target = logging.getLogger("xianyu_alert.test_gui_dummy")
         root_pkg = logging.getLogger("xianyu_alert")
@@ -481,7 +481,7 @@ class TestTkAvailability(unittest.TestCase):
             cls.root = tkinter.Tk()
             cls.root.withdraw()
         except Exception as exc:  # noqa: BLE001 - 无显示环境
-            raise unittest.SkipTest(f"当前环境无 GUI 显示，跳过 Tk 相关测试：{exc}")
+            raise unittest.SkipTest(f"当前环境无 GUI 显示，跳过 Tk 相关测试：{exc}") from exc
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -628,9 +628,8 @@ class TestTkAvailability(unittest.TestCase):
                         children = []
                     for child in children:
                         try:
-                            if isinstance(child, ttk.Button):
-                                if child["text"] in texts:
-                                    found.append(child["text"])
+                            if isinstance(child, ttk.Button) and child["text"] in texts:
+                                found.append(child["text"])
                         except Exception:  # noqa: BLE001
                             pass
                         found.extend(_walk(child, texts))
@@ -667,7 +666,6 @@ class TestTkAvailability(unittest.TestCase):
                 },
             )
             import tkinter
-            from tkinter import ttk
 
             root = tkinter.Toplevel(self.root)
             root.withdraw()
@@ -684,7 +682,7 @@ class TestTkAvailability(unittest.TestCase):
                 app._touch_config_mtime()
                 app._refresh_cookie_status()
 
-                with open(config_path, "r", encoding="utf-8") as fp:
+                with open(config_path, encoding="utf-8") as fp:
                     loaded = yaml.safe_load(fp)
                 self.assertTrue(
                     str(loaded["monitor"]["cookies"]).startswith(secure.FERNET_PREFIX)
@@ -703,7 +701,7 @@ class TestTkAvailability(unittest.TestCase):
 
     def test_v18_config_mtime_detection(self) -> None:
         """v1.8（C22）：外部修改 config.yaml → 弹重载询问；本进程保存不触发。"""
-        from xianyu_alert.gui import XianyuAlertGUI, config_file_mtime
+        from xianyu_alert.gui import XianyuAlertGUI
 
         with tempfile.TemporaryDirectory() as tmp:
             config_path = os.path.join(tmp, "config.yaml")

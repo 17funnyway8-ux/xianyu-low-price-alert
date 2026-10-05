@@ -15,12 +15,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -61,9 +59,9 @@ class KeywordEditDialog(QDialog):
         self,
         keyword: str = "",
         price: float = 0.0,
-        exclude: Optional[List[str]] = None,
-        required: Optional[List[str]] = None,
-        parent: Optional[QWidget] = None,
+        exclude: list[str] | None = None,
+        required: list[str] | None = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("编辑关键词")
@@ -111,7 +109,7 @@ class KeywordEditDialog(QDialog):
         )
         self.accept()
 
-    def result(self) -> Tuple[str, float, List[str], List[str]]:  # type: ignore[override]
+    def result(self) -> tuple[str, float, list[str], list[str]]:  # type: ignore[override]
         """返回 (关键词, 价格, 排除词列表, 必含词列表)。"""
         return self._result
 
@@ -121,8 +119,8 @@ class PresetWordsDialog(QDialog):
 
     def __init__(
         self,
-        preset: Optional[List[str]] = None,
-        parent: Optional[QWidget] = None,
+        preset: list[str] | None = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("编辑预置排除词")
@@ -141,7 +139,7 @@ class PresetWordsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def preset_words(self) -> List[str]:
+    def preset_words(self) -> list[str]:
         """返回编辑后的预置排除词（去空去重保序）。"""
         return parse_keyword_lines(self.edit_preset.toPlainText())
 
@@ -152,8 +150,8 @@ class ChannelEditDialog(QDialog):
     def __init__(
         self,
         ctype: str,
-        options: Optional[Dict[str, str]] = None,
-        parent: Optional[QWidget] = None,
+        options: dict[str, str] | None = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         from ..gui import CHANNEL_LABELS
@@ -164,7 +162,7 @@ class ChannelEditDialog(QDialog):
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
-        self._edits: Dict[str, QLineEdit] = {}
+        self._edits: dict[str, QLineEdit] = {}
         fields = CHANNEL_FIELDS.get(self.ctype, ())
         for field_name, label, secret, _default in fields:
             edit = QLineEdit(str((options or {}).get(field_name, "")))
@@ -180,9 +178,9 @@ class ChannelEditDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-    def options(self) -> Dict[str, str]:
+    def options(self) -> dict[str, str]:
         """返回编辑后的字段值（去空白，空值剔除）。"""
-        result: Dict[str, str] = {}
+        result: dict[str, str] = {}
         for field_name, edit in self._edits.items():
             text = edit.text().strip()
             if text:
@@ -193,7 +191,7 @@ class ChannelEditDialog(QDialog):
 class BlacklistDialog(QDialog):
     """加入黑名单原因输入对话框。"""
 
-    def __init__(self, title: str = "加入黑名单", default_reason: str = "人工剔除", parent: Optional[QWidget] = None) -> None:
+    def __init__(self, title: str = "加入黑名单", default_reason: str = "人工剔除", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(380)
@@ -227,16 +225,16 @@ class CookieDialog(QDialog):
 
     def __init__(
         self,
-        cookie_pool: Optional[List[Dict[str, Any]]] = None,
+        cookie_pool: list[dict[str, Any]] | None = None,
         single_cookie: str = "",
-        parent: Optional[QWidget] = None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Cookie 管理")
         self.resize(560, 420)
 
         #: 池条目：{name, cookie, enabled}（工作副本，确认后才提交）
-        self._pool: List[Dict[str, Any]] = [dict(e) for e in (cookie_pool or [])]
+        self._pool: list[dict[str, Any]] = [dict(e) for e in (cookie_pool or [])]
         #: 单值 Cookie（「设为默认」写入）
         self._single_cookie = str(single_cookie or "")
 
@@ -330,13 +328,13 @@ class CookieDialog(QDialog):
             return -1
         return int(items[0].data(Qt.UserRole))
 
-    def _selected_entry(self) -> Optional[Dict[str, Any]]:
+    def _selected_entry(self) -> dict[str, Any] | None:
         idx = self._selected_index()
         if 0 <= idx < len(self._pool):
             return self._pool[idx]
         return None
 
-    def _validate(self, name: str, cookie: str) -> Optional[str]:
+    def _validate(self, name: str, cookie: str) -> str | None:
         """校验名称与 Cookie；返回错误文案（None 表示通过）。"""
         name = str(name or "").strip()
         cookie = str(cookie or "").strip()
@@ -457,7 +455,7 @@ class CookieDialog(QDialog):
         QMessageBox.information(self, "如何获取 Cookie？", COOKIE_MANUAL_HELP)
 
     # ------------------------------------------------------------------ #
-    def result_pool(self) -> List[Dict[str, Any]]:
+    def result_pool(self) -> list[dict[str, Any]]:
         """返回编辑后的 Cookie 池（确认后读取）。"""
         return [dict(e) for e in self._pool]
 
@@ -474,7 +472,7 @@ class RefreshCookieDialog(QDialog):
     回显走 `secure.mask_cookie` 脱敏（C19）。通过后由主窗口统一加密落盘 + 内存态同步。
     """
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("🔄 一键刷新 Cookie")
         self.resize(620, 440)

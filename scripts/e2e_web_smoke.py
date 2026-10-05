@@ -237,7 +237,7 @@ def main() -> int:
             isinstance(cfg.get("keywords"), list)
             and cfg["keywords"]
             and all(
-                set(("keyword", "max_price", "enabled", "exclude_keywords", "required_keywords")) <= set(k)
+                {"keyword", "max_price", "enabled", "exclude_keywords", "required_keywords"} <= set(k)
                 for k in cfg["keywords"]
             ),
             f"keywords={len(cfg.get('keywords', []))} 个",
@@ -520,7 +520,7 @@ def main() -> int:
         rep.check(
             "check_shelf/status 字段齐全（空闲态）",
             css.get("ok") is True
-            and set(("running", "total", "done", "sold", "unknown", "cancelled", "started_at", "finished_at")) <= set(css),
+            and {"running", "total", "done", "sold", "unknown", "cancelled", "started_at", "finished_at"} <= set(css),
             f"running={css.get('running')} total={css.get('total')}",
         )
         st, csc, _ = call("POST", "/api/records/check_shelf/cancel")
