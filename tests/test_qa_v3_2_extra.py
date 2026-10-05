@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import tempfile
@@ -323,10 +324,8 @@ class TestSaveBehaviorExtra(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        try:
+        with contextlib.suppress(Exception):
             cls.root.destroy()
-        except Exception:  # noqa: BLE001
-            pass
 
     def _make_app(self, tmp: str, ftype: str = "mock", pool=None) -> tuple:
         from xianyu_alert.gui import XianyuAlertGUI, fetcher_label

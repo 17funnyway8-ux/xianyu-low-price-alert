@@ -21,6 +21,7 @@ v1.8 主题：Cookie 自动刷新 + 进程单实例锁。
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import json
@@ -563,10 +564,8 @@ class TestV18GuiControls(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         if cls.root is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cls.root.destroy()
-            except Exception:  # noqa: BLE001
-                pass
 
     def _make_app(self):
         import tkinter
@@ -606,11 +605,9 @@ class TestV18GuiControls(unittest.TestCase):
                 except Exception:  # noqa: BLE001
                     return
                 for child in children:
-                    try:
+                    with contextlib.suppress(Exception):
                         if isinstance(child, ttk.Button):
                             texts.add(str(child["text"]))
-                    except Exception:  # noqa: BLE001
-                        pass
                     _walk(child)
 
             _walk(app.root)
@@ -618,10 +615,8 @@ class TestV18GuiControls(unittest.TestCase):
             self.assertIn("⏹ 自动停用过期项", texts)
         finally:
             app._remove_log_handler()
-            try:
+            with contextlib.suppress(Exception):
                 root.destroy()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import os
 import subprocess
@@ -86,11 +87,9 @@ def main() -> int:
     if not windows:
         print("   未找到主窗口")
         for pid in pids:
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                                capture_output=True, timeout=10)
-            except Exception:  # noqa: BLE001
-                pass
         return 1
 
     # 投递 WM_CLOSE → Tk WM_DELETE_WINDOW → on_close（优雅关闭路径）
@@ -114,11 +113,9 @@ def main() -> int:
     if not children_gone:
         print("5) 15s 内 GUI 子进程未退出 —— 关闭卡死！", flush=True)
         for pid in pids:
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                                capture_output=True, timeout=10)
-            except Exception:  # noqa: BLE001
-                pass
         return 1
     print("5) GUI 子进程优雅退出 ✅（bootloader 父进程清理临时目录可能需数十秒，属平台行为）",
           flush=True)
