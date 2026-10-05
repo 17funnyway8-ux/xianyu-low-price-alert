@@ -28,3 +28,6 @@ build/*/
 
 # 逆向分析中间产物（解包出的 150MB+ 二进制文件，非项目源码）
 re_analysis/extracted/
+
+# macOS
+.DS_Store
