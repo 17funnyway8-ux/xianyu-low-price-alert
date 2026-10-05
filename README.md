@@ -1,5 +1,8 @@
 # 闲鱼低价提醒工具（xianyu-alert）
 
+[![CI](https://github.com/17funnyway8-ux/xianyu-low-price-alert/actions/workflows/ci.yml/badge.svg)](https://github.com/17funnyway8-ux/xianyu-low-price-alert/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个自托管的闲鱼「捡漏」监控工具：按关键词周期性抓取最新商品，筛选出**新出现且价格低于阈值**的商品，去重后通过控制台 / 微信 / 邮件 / Telegram / Bark / 企业微信推送提醒。提供 **Docker Web 界面** 与 **Windows / macOS 桌面版** 双形态。
 
 ---
