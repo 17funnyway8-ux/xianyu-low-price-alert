@@ -354,8 +354,12 @@ class TestCookieHealthAlert(unittest.TestCase):
         """即将过期 → 「闲鱼 Cookie 即将过期」标题。"""
         import time as _time
 
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+
         recorder = RecordingMessageNotifier()
-        expiring = f"_m_h5_tk=abc_{int(_time.time() * 1000) - 23 * 3600 * 1000}; c=1"
+        # 相对 TTL 常量计算：只剩半个预警窗 → 临期（不写死小时数）
+        ts = int(_time.time() * 1000) - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
+        expiring = f"_m_h5_tk=abc_{ts}; c=1"
         config = make_mtop_config(cookie=expiring)
         monitor, storage = self._make_monitor(config, recorder)
         try:

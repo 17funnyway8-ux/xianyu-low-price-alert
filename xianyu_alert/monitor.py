@@ -42,6 +42,19 @@ _COOKIE_ALERT_GUIDE = (
     "`python -m xianyu_alert.cli login` 更新。"
 )
 
+#: 抓取失败层次 → 日志中的处置指引（配合 `FetchError.kind`）。
+#:
+#: 三种"失效"的修复手段完全不同，而真实场景中它们会**同时出现**：
+#: 2026-09-24 实测同一份 Cookie，搜索接口报 `RGV587_ERROR`（风控）、
+#: 详情接口报 `FAIL_SYS_TOKEN_EXOIRED`（令牌）。此时笼统地提示
+#: 「请重新登录」会把排查方向带偏 —— 风控时重登根本没用。
+_FETCH_FAILURE_HINTS = {
+    "token": "（令牌层：服务端会自动下发新令牌并重试，连续失败才需重新登录）",
+    "session": "（会话层：登录态已失效，需重新登录获取 Cookie）",
+    "risk": "（风控层：**重新登录无效**，请降速 / 启用多账号轮换 / 更换出口网络）",
+    "config": "（配置层：Cookie 缺失，请先配置登录 Cookie）",
+}
+
 
 @dataclass
 class RoundResult:
@@ -260,8 +273,11 @@ class Monitor:
         messages = {
             "missing": "未配置登录 Cookie，mtop 真实抓取将失败，请先获取 Cookie。",
             "no_token": f"Cookie 中缺少 {MTOP_TOKEN_COOKIE}，无法计算 mtop 签名，请重新登录。",
-            "expired": "Cookie 已过期（_m_h5_tk 时间戳超过 24 小时），请重新登录获取新 Cookie。",
-            "expiring": "Cookie 即将过期（剩余不足 1 小时），建议尽快重新登录。",
+            "expired": (
+                "登录令牌已过期（距上次成功请求超过有效期）—— mtop 令牌会随请求自动续期，"
+                "下一次抓取通常即可恢复；若持续失败说明登录态已失效，需重新登录。"
+            ),
+            "expiring": "登录令牌即将过期，会在下次抓取时自动续期。",
             "unknown": "Cookie 未包含可解析的 _m_h5_tk 时间戳，无法判断是否过期。",
         }
         msg = messages.get(status, "")
@@ -347,7 +363,9 @@ class Monitor:
         try:
             products: List[Product] = self.fetcher.fetch(keyword) or []
         except FetchError as exc:
-            logger.warning("关键词「%s」抓取失败：%s", keyword, exc)
+            # 按失败层次给出**正确的**处置指引，而不是一律"请重新登录"
+            hint = _FETCH_FAILURE_HINTS.get(getattr(exc, "kind", ""), "")
+            logger.warning("关键词「%s」抓取失败%s：%s", keyword, hint, exc)
             result.failed_keywords.append(keyword)
             return
         except Exception as exc:  # noqa: BLE001 - 任何抓取异常都不应中断其它关键词

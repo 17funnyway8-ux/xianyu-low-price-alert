@@ -182,7 +182,12 @@ class TestPoolUsableAndResolve(unittest.TestCase):
     def _expiring_cookie() -> str:
         import time
 
-        ts = int(time.time() * 1000) - 23 * 3600 * 1000  # 剩余 < 1h
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+
+        # 一律**相对 TTL 常量**计算，不写死小时数：
+        # 2026-09-24 把 TTL 由假定的 24h 校准为实测的 90 分钟后，写死的
+        # 「23 小时前」样本会直接变成「已过期」，导致本测试失准。
+        ts = int(time.time() * 1000) - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
         return f"_m_h5_tk=abc_{ts}; cookie2=v"
 
     def _pool(self, items: list):

@@ -68,9 +68,12 @@ class TestCookieStatusSixStates(unittest.TestCase):
         self.assertIn("过期", text)
 
     def test_expiring(self) -> None:
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+
         now = int(time.time() * 1000)
-        # 23.5 小时前签发 → 剩余 30 分钟过期 → 临期
-        expiring_cookie = f"_m_h5_tk=abc_{now - 23 * 3600 * 1000 - 30 * 60 * 1000}"
+        # 相对 TTL 常量计算：只剩半个预警窗 → 临期（不写死小时数）
+        ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
+        expiring_cookie = f"_m_h5_tk=abc_{ts}"
         state, text = cookie_status(expiring_cookie)
         self.assertEqual(state, COOKIE_STATE_EXPIRING)
         self.assertIn("即将过期", text)

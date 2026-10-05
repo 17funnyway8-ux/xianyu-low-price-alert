@@ -353,11 +353,22 @@ def _parse_cookie_pool(raw: Any) -> List[CookiePoolItem]:
 def serialize_cookie_pool(
     pool: Any, encrypt: bool = True
 ) -> List[Dict[str, Any]]:
-    """把 Cookie 池序列化为可写盘 YAML 的字典列表（v3.2）。
+    """把 Cookie 池序列化为可写盘 YAML 的字典列表（v3.2 / v1.8.1 数据保真修正）。
+
+    数据保真（重要）：
+        条目若「明文 cookie 为空」但有 `_raw_cipher`（解密失败时由调用方
+        `gui.config_to_form` / `MonitorService._read_pool_plaintext` 保留的原始
+        密文），则**原样回写该密文**，绝不丢弃条目。
+
+        修正前的行为是 `if not name or not cookie: continue` —— 解密失败的条目
+        明文为空 → 被整条删除。凡「密钥更换 / secret.key 未随数据目录迁移」
+        都会让整个 Cookie 池在用户下一次保存配置或做任意池操作时被静默清空，
+        属不可逆数据丢失（注释原本写的是「保留为空并在界面提示」，与实现不符）。
 
     Args:
-        pool: 形如 [{"name": str, "cookie": str(明文), "enabled": bool}] 的列表。
-        encrypt: True 时把每个 cookie 用 DPAPI 加密（不可用时降级明文）。
+        pool: 形如 [{"name": str, "cookie": str(明文), "enabled": bool}] 的列表；
+            解密失败条目额外携带 `_raw_cipher`（原始 fernet1: 密文）。
+        encrypt: True 时把每个 cookie 加密（不可用时降级明文）。
 
     Returns:
         [{"name": ..., "cookie": (密文|明文), "enabled": bool}] 列表。
@@ -367,10 +378,14 @@ def serialize_cookie_pool(
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
-        cookie = str(item.get("cookie") or "").strip()
-        if not name or not cookie:
+        if not name:
             continue
-        stored = secure.encrypt_text(cookie) if encrypt else cookie
+        cookie = str(item.get("cookie") or "").strip()
+        raw_cipher = str(item.get("_raw_cipher") or "").strip()
+        if not cookie and not raw_cipher:
+            # 既无明文也无原始密文：确系空条目，跳过
+            continue
+        stored = raw_cipher if raw_cipher else (secure.encrypt_text(cookie) if encrypt else cookie)
         result.append(
             {
                 "name": name,

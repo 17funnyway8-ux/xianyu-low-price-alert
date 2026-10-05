@@ -58,6 +58,11 @@ MTOP_DETAIL_URL = f"https://h5api.m.goofish.com/h5/{MTOP_DETAIL_API_NAME}/1.0/"
 MTOP_APP_KEY = "34839810"
 #: 关键 Cookie 名，token 取其下划线前半段
 MTOP_TOKEN_COOKIE = "_m_h5_tk"
+#: 与 `_m_h5_tk` **成对下发**的配对值（服务端回验用）。
+#: 2026-09-24 实测：令牌续期时服务端同时下发 `_m_h5_tk` 与 `_m_h5_tk_enc`
+#: （均 `Max-Age=5400`）。两者必须同步更新，只换 `_tk` 会让下一次请求
+#: 因配对值不匹配而签名校验失败。
+MTOP_TOKEN_ENC_COOKIE = "_m_h5_tk_enc"
 
 #: 风控拦截特征（触发后需要放慢频率）
 _RET_RISK_MARKERS = ("RGV587_ERROR", "被挤爆", "FAIL_SYS_ILLEGAL_ACCESS", "SM::")
@@ -106,7 +111,28 @@ PAGE_SLEEP = 2.0
 
 
 class FetchError(RuntimeError):
-    """抓取失败（网络异常 / 状态码异常 / 重试耗尽）时抛出。"""
+    """抓取失败时抛出，并携带**失败层次**分类。
+
+    Attributes:
+        kind: 失败层次，决定「该怎么修」——
+            - ``token``   : 令牌层（`_m_h5_tk` 过期）。本应自动续期重试，
+              连续失败才说明登录态也失效了。
+            - ``session`` : 会话层（登录态失效）。**必须**重新登录。
+            - ``risk``    : 风控层（被识别为异常流量）。重新登录**无效**，
+              只能降速 / 换账号 / 换出口网络。
+            - ``config``  : 配置层（Cookie 缺失或不含 `_m_h5_tk`）。
+            - ``network`` : 网络与协议层（超时、HTTP 非 200、响应非 JSON）。
+            - ``unknown`` : 业务返回码无法归类。
+
+    为什么要分类（2026-09-24 实测）：三种"失效"的修复手段完全不同，
+    而真实场景中它们会**同时出现** —— 同一份 Cookie 打两个接口，
+    搜索接口报 `RGV587_ERROR`（风控）、详情接口报 `FAIL_SYS_TOKEN_EXOIRED`（令牌）。
+    笼统地提示「请重新登录」会把排查方向带偏（风控时重登根本没用）。
+    """
+
+    def __init__(self, message: str = "", kind: str = "network") -> None:
+        super().__init__(message)
+        self.kind: str = str(kind or "network")
 
 
 # ---------------------------------------------------------------------- #
@@ -473,6 +499,14 @@ def parse_detail_sold_status(data: Any) -> Optional[bool]:
           itemStatus 为非 0 值；
         - 字段缺失 / 结构异常 → 返回 None（调用方按「无法判定」处理）。
 
+    判定口径（v1.8.1 收紧，防误标）：
+        「已售出/下架」只采信 `itemStatusStr` 的**文案白名单**；
+        `itemStatus` 数值分支仅在 `== 0` 时判在架 —— 非 0 但无文案佐证时
+        返回 None（无法判定），而不是 False。原因：`itemStatus` 是服务端枚举，
+        可能新增「交易中 / 审核中」等值，一律判 False 会让调用方
+        （校验在架 → mark_sold_out_by_id）把**仍在架的低价商品**标记为已售出
+        并从提醒列表隐藏，属数据损坏。
+
     Args:
         data: 详情接口响应的 data 节点（期望 dict）。
 
@@ -502,8 +536,8 @@ def parse_detail_sold_status(data: Any) -> Optional[bool]:
             code = None
         if code == 0:
             return True
-        if code is not None and code != 0:
-            return False
+        # 非 0 且上面 itemStatusStr 未命中「已售/下架」文案 → 证据不足。
+        # 保守返回 None（无法判定），避免未知枚举值把在架商品误标为已售出。
     return None
 
 
@@ -698,6 +732,8 @@ class MtopFetcher(Fetcher):
 
         #: Cookie 字典，作为 token 的权威来源（服务端刷新后就地更新）
         self._cookie_dict: Dict[str, str] = parse_cookie_string(self.cookies)
+        #: 本进程内是否吸收过服务端下发的新令牌（供上层决定是否落盘）
+        self._token_refreshed: bool = False
         self._sync_session_cookies()
 
     # ------------------------------------------------------------------ #
@@ -717,17 +753,47 @@ class MtopFetcher(Fetcher):
         更新请求头、token 权威字典与会话 Cookie，保证下一次请求
         使用新账号的登录态；服务端后续刷新的 `_m_h5_tk` 仍会被吸收。
 
+        v1.8.1 修正：切换前**先清空 session.cookies**。原实现只按同名覆盖，
+        上一账号残留、而新账号没有的键（尤其 `_m_h5_tk_enc`）会与新账号的
+        `_m_h5_tk` 配成一对，导致 mtop 签名校验失败或账号串号 ——
+        多 Cookie 池轮换实际上形同虚设。
+
         Args:
             cookie_str: 新的 Cookie 请求头字符串（可为空串）。
         """
         self.cookies = str(cookie_str or "").strip()
         self._cookie_dict = parse_cookie_string(self.cookies)
+        try:
+            self.session.cookies.clear()
+        except Exception:  # noqa: BLE001 - 注入的假 session 可能不支持
+            logger.debug("[mtop] 清空 session cookie 失败（忽略）")
         self._sync_session_cookies()
         logger.debug("[mtop] 已切换 Cookie（长度 %d）", len(self.cookies))
 
     def current_token(self) -> str:
         """返回当前用于签名的 token（`_m_h5_tk` 下划线前半段）。"""
         return extract_token(self._cookie_dict.get(MTOP_TOKEN_COOKIE, ""))
+
+    def token_refreshed(self) -> bool:
+        """本进程内是否吸收过服务端下发的**新**令牌。
+
+        供上层（MonitorService）判断"内存里的登录态比磁盘新"，
+        进而决定是否落盘 —— 避免每次重启都退回令牌已过期的旧配置。
+        """
+        return bool(self._token_refreshed)
+
+    def refreshed_cookie_string(self) -> str:
+        """把当前内存中的 Cookie 字典拼回请求头字符串（用于持久化）。
+
+        Returns:
+            `k1=v1; k2=v2` 形式；无可用键时返回空串。
+        """
+        parts = [f"{k}={v}" for k, v in self._cookie_dict.items() if str(v or "").strip()]
+        return "; ".join(parts)
+
+    def clear_token_refreshed(self) -> None:
+        """清除「令牌已刷新」脏标记（落盘成功后由上层调用）。"""
+        self._token_refreshed = False
 
     def set_max_price(self, max_price: Optional[float]) -> None:
         """设置服务端价格筛选上限（v3.4）。
@@ -747,40 +813,68 @@ class MtopFetcher(Fetcher):
         logger.debug("[mtop] 服务端价格上限已更新：%s", self._max_price)
 
     def _absorb_token(self, response: Any) -> str:
-        """从响应的 Set-Cookie 中吸收新的 `_m_h5_tk`。
+        """从响应的 Set-Cookie 中吸收新的 `_m_h5_tk` 及其配对 `_m_h5_tk_enc`。
+
+        mtop 的令牌是**滑动续期**的：服务端会在响应里下发一对新的
+        `_m_h5_tk` + `_m_h5_tk_enc`（2026-09-24 实测 `Max-Age=5400`）。
+        两者必须**成对更新** —— `_enc` 是服务端回验用的配对值，只换 `_tk`
+        会让下一轮 `set_cookies()` 用 `_cookie_dict` 重建 cookie jar 时
+        把旧的 `_enc` 写回去，造成 `_tk`/`_enc` 错配、签名校验失败。
 
         Args:
             response: requests 响应对象（或结构兼容的测试替身）。
 
         Returns:
-            吸收到的新 Cookie 值；没有则返回空串。
+            吸收到的新 `_m_h5_tk` 值；没有则返回空串。
         """
         new_value = ""
+        new_enc = ""
         # 1) 优先走 requests 的 cookie jar
         try:
             jar = getattr(response, "cookies", None)
             if jar is not None:
                 new_value = str(jar.get(MTOP_TOKEN_COOKIE) or "")
+                new_enc = str(jar.get(MTOP_TOKEN_ENC_COOKIE) or "")
         except Exception:  # noqa: BLE001 - jar 实现各异，失败即降级
             new_value = ""
+            new_enc = ""
         # 2) 降级：手工解析 Set-Cookie 响应头
-        if not new_value:
+        if not new_value or not new_enc:
             try:
                 headers = getattr(response, "headers", None) or {}
                 raw = str(headers.get("Set-Cookie") or headers.get("set-cookie") or "")
-                match = re.search(r"_m_h5_tk=([^;,\s]+)", raw)
-                if match:
-                    new_value = match.group(1)
+                if not new_value:
+                    match = re.search(r"_m_h5_tk=([^;,\s]+)", raw)
+                    if match:
+                        new_value = match.group(1)
+                if not new_enc:
+                    match_enc = re.search(r"_m_h5_tk_enc=([^;,\s]+)", raw)
+                    if match_enc:
+                        new_enc = match_enc.group(1)
             except Exception:  # noqa: BLE001
-                new_value = ""
+                pass
 
+        changed = False
         if new_value and new_value != self._cookie_dict.get(MTOP_TOKEN_COOKIE):
             self._cookie_dict[MTOP_TOKEN_COOKIE] = new_value
             try:
                 self.session.cookies.set(MTOP_TOKEN_COOKIE, new_value, domain=".goofish.com")
             except Exception:  # noqa: BLE001
                 pass
+            changed = True
             logger.debug("[mtop] 已吸收服务端刷新的 %s", MTOP_TOKEN_COOKIE)
+        if new_enc and new_enc != self._cookie_dict.get(MTOP_TOKEN_ENC_COOKIE):
+            self._cookie_dict[MTOP_TOKEN_ENC_COOKIE] = new_enc
+            try:
+                self.session.cookies.set(MTOP_TOKEN_ENC_COOKIE, new_enc, domain=".goofish.com")
+            except Exception:  # noqa: BLE001
+                pass
+            changed = True
+            logger.debug("[mtop] 已吸收服务端刷新的 %s", MTOP_TOKEN_ENC_COOKIE)
+        if changed:
+            # 只置标记，不在这里写盘：fetcher 不持有配置路径，
+            # 落盘由 MonitorService 在轮次结束后节流执行。
+            self._token_refreshed = True
         return new_value
 
     def _check_cookies(self) -> None:
@@ -790,30 +884,43 @@ class MtopFetcher(Fetcher):
             FetchError: Cookie 为空，或不含 `_m_h5_tk`。
         """
         if not self.cookies and not self._cookie_dict:
-            raise FetchError(COOKIE_GUIDE)
+            raise FetchError(COOKIE_GUIDE, kind="config")
         if not self._cookie_dict.get(MTOP_TOKEN_COOKIE):
             raise FetchError(
                 f"Cookie 中缺少 {MTOP_TOKEN_COOKIE}，无法计算 mtop 签名，说明 Cookie 已失效或不完整。"
-                "请重新运行 `python -m xianyu_alert.cli login` 获取。"
+                "请重新运行 `python -m xianyu_alert.cli login` 获取。",
+                kind="config",
             )
 
     def check_cookie_health(self) -> tuple[bool, str]:
         """检查 Cookie 是否过期 / 临期（不阻断请求）。
 
-        解析 `_m_h5_tk` 内嵌的 13 位毫秒时间戳（24 小时有效）：
+        解析 `_m_h5_tk` 内嵌的 13 位毫秒时间戳（有效期见 `cookie.TOKEN_TTL_MS`，
+        实测 90 分钟、且**每次请求都会由服务端滑动续期**）：
         过期或临期时返回 (False, 提示文案)，但**不拦截请求**——
         具体请求是否成功由服务端决定，这里只负责给出可操作的提示。
+        「过期」只表示距上次成功请求已超过有效期，抓取时通常会自动换回新令牌。
 
         Returns:
             (是否健康, 原因文案)。
         """
-        from .cookie import cookie_expiry_status
+        from .cookie import cookie_expiry_status, token_expiring_text, token_ttl_text
 
-        status = cookie_expiry_status(self.cookies)
+        # 以 `_cookie_dict` 里的 token 为准：服务端会在响应中续期 `_m_h5_tk`，
+        # `_absorb_token` 只更新该字典（mtop 签名的权威来源），而 `self.cookies`
+        # 仍是首次注入的原始串 —— 用后者检测会在 token 实际已续期后，每次抓取
+        # 都打出一条「Cookie 已过期」的假告警（日志噪音，误导排查方向）。
+        token = self._cookie_dict.get(MTOP_TOKEN_COOKIE, "")
+        source = f"{MTOP_TOKEN_COOKIE}={token}" if token else self.cookies
+        status = cookie_expiry_status(source)
         if status == "expired":
-            return False, "Cookie 已过期（_m_h5_tk 时间戳超过 24 小时），请重新登录获取新 Cookie"
+            return (
+                False,
+                f"登录令牌已过期（{token_ttl_text()}内未续期）—— 抓取时会自动申请新令牌；"
+                "若持续失败再考虑重新登录",
+            )
         if status == "expiring":
-            return False, "Cookie 即将过期（剩余不足 1 小时），建议尽快重新登录"
+            return False, f"令牌即将过期（剩余不足 {token_expiring_text()}），抓取时会自动续期"
         if status == "missing":
             return False, "未配置登录 Cookie，无法发起 mtop 请求"
         if status == "no_token":
@@ -831,8 +938,11 @@ class MtopFetcher(Fetcher):
         - 返回 None 表示无法判定（请求失败 / 风控 / 响应结构缺失），
           调用方应跳过该商品而不是误判为售出。
 
-        注意：这是**单次请求**。批量校验请由调用方控制节奏
-        （GUI「校验在架」按固定间隔限速调用），避免触发风控。
+        注意：内部走 `_post_once`，会按 `self.retries`（默认 3）重试并做指数退避，
+        因此单个商品的**最坏耗时**约为 `retries × timeout + 退避总和`，
+        并不等同于「单次请求」。批量校验必须由调用方控制节奏（GUI / Web
+        「校验在架」按固定间隔限速），并且取消操作只会在**两个商品之间**生效 ——
+        最坏要等当前商品的重试跑完。
 
         Args:
             product_id: 商品 ID（数字串）。
@@ -998,21 +1108,32 @@ class MtopFetcher(Fetcher):
                 if round_index == 0:
                     logger.warning("[mtop] 令牌过期（%s），已用新 token 重算签名重试", ret_text)
                     continue
-                raise FetchError(f"mtop 令牌反复过期，请重新登录获取 Cookie：{ret_text}")
+                raise FetchError(
+                    f"mtop 令牌连续两次过期（{ret_text}）。令牌本应由服务端自动续期，"
+                    "连续失败通常说明登录态也已失效，请重新获取 Cookie。",
+                    kind="token",
+                )
+
+            # 注意判定顺序：会话标记必须排在风控之前。
+            # `_RET_RISK_MARKERS` 里有宽泛的 `SM::`，而登录态失效的真实返回形如
+            # `FAIL_SYS_SESSION_EXPIRED::SM::…` —— 若先判风控，会把"该重新登录"
+            # 误报成"该降速"，给出完全错误的处置建议。
+            if _contains_any(ret_text, _RET_SESSION_MARKERS):
+                raise FetchError(
+                    f"闲鱼登录态已失效（{ret_text}）。"
+                    "请重新运行 `python -m xianyu_alert.cli login` 获取 Cookie。",
+                    kind="session",
+                )
 
             if _contains_any(ret_text, _RET_RISK_MARKERS):
                 raise FetchError(
-                    f"触发闲鱼风控（{ret_text}）。请调大 monitor.interval_seconds"
-                    "（建议 300 秒以上）或稍后重试。"
+                    f"触发闲鱼风控（{ret_text}）。这**不是** Cookie 失效 —— "
+                    "重新登录解决不了：请调大 monitor.interval_seconds（建议 ≥300 秒）、"
+                    "启用多账号 Cookie 池轮换，或更换出口网络后重试。",
+                    kind="risk",
                 )
 
-            if _contains_any(ret_text, _RET_SESSION_MARKERS):
-                raise FetchError(
-                    f"闲鱼登录态失效（{ret_text}）。"
-                    "请重新运行 `python -m xianyu_alert.cli login` 获取 Cookie。"
-                )
-
-            raise FetchError(f"mtop 接口返回异常：{ret_text or '(空 ret)'}")
+            raise FetchError(f"mtop 接口返回异常：{ret_text or '(空 ret)'}", kind="unknown")
 
         # 理论上不可达（循环内必然 return 或 raise）
         raise FetchError("mtop 搜索失败：未获得有效响应")  # pragma: no cover
@@ -1190,6 +1311,18 @@ class WebFetcher(Fetcher):
                     )
                     time.sleep(delay)
         raise FetchError(f"请求 {url} 失败，已重试 {self.retries} 次：{last_error}")
+
+    def close(self) -> None:
+        """关闭内部 session（覆盖基类的 no-op）。
+
+        v1.8.1 补充：WebFetcher 在 __init__ 里自建 requests.Session，
+        但原先没有覆盖 close() —— 基类 close 是空实现，于是每轮 run_once
+        都会泄漏一个持有 keep-alive 连接的会话。
+        """
+        try:
+            self.session.close()
+        except Exception:  # noqa: BLE001 - 关闭失败不影响主流程
+            pass
 
     # ------------------------------------------------------------------ #
     def fetch(self, keyword: str) -> List[Product]:

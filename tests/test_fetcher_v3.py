@@ -263,10 +263,15 @@ class TestCookieExpiry(unittest.TestCase):
         self.assertIsNone(cookie_token_timestamp(""))
 
     def test_expiry_status_states(self) -> None:
+        # 样本一律**相对 TTL 常量**计算，不写死小时数：
+        # 2026-09-24 把 TTL 由假定的 24h 校准为实测的 90 分钟后，
+        # 原来写死的 25h/23.5h/10h 样本会集体失准。
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+
         now = 1785488087003
-        expired_ts = now - 25 * 3600 * 1000        # 25 小时前签发 → 已过期
-        expiring_ts = now - 23 * 3600 * 1000 - 30 * 60 * 1000  # 23.5h 前签发 → 30 分钟后过期
-        ok_ts = now - 10 * 3600 * 1000              # 10 小时前签发 → 14 小时后过期（正常）
+        expired_ts = now - TOKEN_TTL_MS - 60 * 1000                     # 超期 1 分钟
+        expiring_ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2  # 只剩半个预警窗
+        ok_ts = now - TOKEN_EXPIRING_SOON_MS * 2                        # 还剩两个预警窗
         self.assertEqual(cookie_expiry_status(f"_m_h5_tk=x_{expired_ts}", now_ms=now), "expired")
         self.assertEqual(cookie_expiry_status(f"_m_h5_tk=x_{expiring_ts}", now_ms=now), "expiring")
         self.assertEqual(cookie_expiry_status(f"_m_h5_tk=x_{ok_ts}", now_ms=now), "ok")

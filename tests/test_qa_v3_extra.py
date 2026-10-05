@@ -143,23 +143,30 @@ class TestQaCookieHealthBoundary(unittest.TestCase):
         return f"cookie2=1; _m_h5_tk=abc_{timestamp}"
 
     def test_expired(self) -> None:
+        from xianyu_alert.cookie import TOKEN_TTL_MS
+
         now = int(time.time() * 1000)
-        fetcher = MtopFetcher(cookies=self._cookie(now - 25 * 3600 * 1000))
+        fetcher = MtopFetcher(cookies=self._cookie(now - TOKEN_TTL_MS - 60 * 1000))
         ok, reason = fetcher.check_cookie_health()
         self.assertFalse(ok)
         self.assertIn("过期", reason)
 
     def test_expiring(self) -> None:
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+
         now = int(time.time() * 1000)
-        # 23.5 小时前签发 → 剩余 30 分钟 → 临期
-        fetcher = MtopFetcher(cookies=self._cookie(now - 23 * 3600 * 1000 - 30 * 60 * 1000))
+        # 相对 TTL 常量计算（不写死小时数）：只剩半个预警窗 → 临期
+        ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
+        fetcher = MtopFetcher(cookies=self._cookie(ts))
         ok, reason = fetcher.check_cookie_health()
         self.assertFalse(ok)
         self.assertIn("即将过期", reason)
 
     def test_ok(self) -> None:
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS
+
         now = int(time.time() * 1000)
-        fetcher = MtopFetcher(cookies=self._cookie(now - 10 * 3600 * 1000))
+        fetcher = MtopFetcher(cookies=self._cookie(now - TOKEN_EXPIRING_SOON_MS * 2))
         ok, _reason = fetcher.check_cookie_health()
         self.assertTrue(ok)
 
@@ -359,8 +366,12 @@ class TestQaGuiCookieSixStates(unittest.TestCase):
         self.assertEqual(state, COOKIE_STATE_EXPIRED)
 
     def test_expiring(self) -> None:
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+
         now = int(time.time() * 1000)
-        state, _text = cookie_status(f"_m_h5_tk=abc_{now - 23 * 3600 * 1000 - 30 * 60 * 1000}")
+        # 相对 TTL 常量计算（不写死小时数）：只剩半个预警窗 → 临期
+        ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
+        state, _text = cookie_status(f"_m_h5_tk=abc_{ts}")
         self.assertEqual(state, COOKIE_STATE_EXPIRING)
 
     def test_ok(self) -> None:

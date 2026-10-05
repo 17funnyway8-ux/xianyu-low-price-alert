@@ -597,7 +597,12 @@ class TestFetcherDetailIndependent(unittest.TestCase):
         for word in ("已售出", "已下架", "已删除", "失效", "违规", "不存在"):
             with self.subTest(word=word):
                 self.assertIs(parse_detail_sold_status({"itemDO": {"itemStatusStr": word}}), False)
-        self.assertIs(parse_detail_sold_status({"itemDO": {"itemStatus": 3}}), False)
+        # v1.8.1 收紧：仅凭数值、且没有「已售/下架」文案佐证时，不足以判定已售出。
+        # itemStatus 是服务端枚举，若把未知值（如交易中/审核中）一律判 False，
+        # 调用方会 mark_sold_out 把**仍在架**的商品标记售出并从提醒列表隐藏 ——
+        # 属数据损坏。因此非 0 且无文案 → None（无法判定），由调用方跳过而非误标。
+        # （原断言 `itemStatus=3 -> False` 是照实现反推的，docs 中并无码值依据。）
+        self.assertIsNone(parse_detail_sold_status({"itemDO": {"itemStatus": 3}}))
         # 无法判定
         self.assertIsNone(parse_detail_sold_status(None))
         self.assertIsNone(parse_detail_sold_status("not-dict"))

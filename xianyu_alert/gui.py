@@ -192,6 +192,19 @@ DEFAULT_CONFIG_DICT: Dict[str, Any] = {
 #: 功能更新日志（v3.2：「关于」对话框展示版本历史）
 UPDATE_LOG = (
     "## 版本历史\n"
+    "- **v1.8.2** 登录令牌自动续期链路：TTL 按实测校准为 90 分钟（此前误按 24 小时，"
+    "会把已失效令牌报成「正常」）、`_m_h5_tk_enc` 与 `_m_h5_tk` 成对吸收（修正轮换时错配）、"
+    "刷新后的令牌节流落盘（进程重启不再退回旧令牌）、抓取失败按「令牌 / 会话 / 风控 / 配置」"
+    "分层给出正确处置建议（风控时不再误导去重新登录）；新增免扫码刷新入口"
+    "（`cli cookie refresh` + Web「静默刷新」按钮），配合落在数据目录的浏览器持久化 profile，"
+    "做到「人工登录一次，之后自动续期」\n"
+    "- **v1.8.1** 源码级排查修复：Cookie 池数据保真（密钥变更/丢失时，无法解密的条目"
+    "不再被静默删除，改为保留原密文并在界面标记「无法解密」）、"
+    "「校验在架」不再把未知 itemStatus 误判为已售出（避免在架低价商品被标记并隐藏）、"
+    "多账号 Cookie 轮换前清空会话 jar（修正旧 _m_h5_tk_enc 与新 _m_h5_tk 串号）、"
+    "Cookie 健康检测改以服务端续期后的 token 为准（消除「已过期」假告警）；"
+    "Web 前端全量重写（态势总览/监控配置/命中战果/通知与系统四视图 + ⌘K 命令面板 + SSE 实时日志），"
+    "并修复认证后日志流不重连、切换「显示已售出」误报新命中等问题\n"
     "- **v1.8.0** Cookie 过期自动检测与提醒（过期/即将过期推送全部通知通道，状态跃迁去抖）、"
     "「🔄 一键刷新 Cookie」入口（GUI 校验 + Fernet 加密回写 + 状态灯即时变绿）、"
     "多 Cookie 池过期条目自动跳过（仅用 ok/expiring 条目轮换）、"
@@ -258,8 +271,8 @@ def cookie_status(cookie_str: str) -> Tuple[str, str]:
         COOKIE_STATE_MISSING       未配置
         COOKIE_STATE_UNDECRYPTABLE 密文无法解密（换机/换用户）→ 请重新登录
         COOKIE_STATE_NO_TOKEN      已配置但缺 `_m_h5_tk`
-        COOKIE_STATE_EXPIRED       已过期（时间戳超过 24h）
-        COOKIE_STATE_EXPIRING      即将过期（剩余不足 1h）
+        COOKIE_STATE_EXPIRED       令牌已过期（距上次续期超过有效期；下次抓取会自动续期）
+        COOKIE_STATE_EXPIRING      令牌即将过期（同样会在下次抓取自动续期）
         COOKIE_STATE_OK            正常（含 `_m_h5_tk` 且未过期）
 
     Args:
@@ -281,13 +294,20 @@ def cookie_status(cookie_str: str) -> Tuple[str, str]:
     if not cookie_has_token(raw):
         return COOKIE_STATE_NO_TOKEN, f"⚠️ 已配置但不含 {MTOP_TOKEN_COOKIE}，可能无效"
 
-    from .cookie import cookie_expiry_status
+    from .cookie import cookie_expiry_status, token_expiring_text, token_ttl_text
 
     status = cookie_expiry_status(raw)
     if status == "expired":
-        return COOKIE_STATE_EXPIRED, "❌ Cookie 已过期（超过 24 小时），请重新登录获取"
+        return (
+            COOKIE_STATE_EXPIRED,
+            f"❌ 登录令牌已过期（{token_ttl_text()}内未续期）—— 抓取时会自动申请新令牌；"
+            "持续失败才需要重新登录",
+        )
     if status == "expiring":
-        return COOKIE_STATE_EXPIRING, "⚠️ Cookie 即将过期（1 小时内），建议尽快重新登录"
+        return (
+            COOKIE_STATE_EXPIRING,
+            f"⚠️ 令牌即将过期（剩余不足 {token_expiring_text()}），抓取时会自动续期",
+        )
     return COOKIE_STATE_OK, f"✅ 已配置（含 {MTOP_TOKEN_COOKIE}）"
 
 
@@ -690,6 +710,9 @@ def config_to_form(data: Any) -> Dict[str, Any]:
     user_agent = str(monitor.get("user_agent") or "").strip()
 
     # ---- 多 Cookie 池（v3.2）：读取并解密每条 Cookie ----
+    # 数据保真（v1.8.1）：解密失败时明文为空，但保留原始密文 `_raw_cipher`，
+    # 保存配置时由 serialize_cookie_pool 原样回写该密文，避免「密钥变更 /
+    # secret.key 未迁移」导致条目在下一次保存时被整条删除。
     cookie_pool: List[Dict[str, Any]] = []
     raw_pool = monitor.get("cookie_pool")
     if isinstance(raw_pool, list):
@@ -700,18 +723,23 @@ def config_to_form(data: Any) -> Dict[str, Any]:
             raw_cookie = str(entry.get("cookie") or "").strip()
             if not name or not raw_cookie:
                 continue
+            decrypt_failed = False
             if secure.is_encrypted(raw_cookie):
                 decrypted = secure.decrypt_text(raw_cookie)
                 if not decrypted:
-                    # 密文无法解密：保留为空并在对话框中提示
+                    # 密文无法解密：明文置空（对话框内提示），但保留原密文
                     decrypted = ""
+                    decrypt_failed = True
             else:
                 decrypted = raw_cookie
             try:
                 enabled = bool(entry.get("enabled", True))
             except Exception:  # noqa: BLE001 - 脏数据容错
                 enabled = True
-            cookie_pool.append({"name": name, "cookie": decrypted, "enabled": enabled})
+            item: Dict[str, Any] = {"name": name, "cookie": decrypted, "enabled": enabled}
+            if decrypt_failed:
+                item["_raw_cipher"] = raw_cookie
+            cookie_pool.append(item)
 
     # ---- fetcher ----
     fetcher = root.get("fetcher")

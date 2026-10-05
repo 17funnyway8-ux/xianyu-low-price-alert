@@ -32,13 +32,49 @@ REQUIRED_COOKIE_NAME = "_m_h5_tk"
 DEFAULT_LOGIN_TIMEOUT = 120.0
 #: 轮询 Cookie 的间隔（秒）
 POLL_INTERVAL = 1.0
+#: 浏览器持久化 profile 目录名（位于 `paths.data_dir()`）。
+#:
+#: 放在数据目录里的意义：容器重建 / 迁移 NAS 时，浏览器登录态跟着数据卷一起走，
+#: 不必每换一个环境就重新扫码。首次生成后即可支撑「免扫码刷新」。
+PROFILE_DIR_NAME = "browser_profile"
+#: 静默刷新（profile 已存在、无人值守）的默认等待上限（秒）。
+#: 比人工登录的 120 秒短得多 —— 静默模式不需要等人，超时即代表登录态已失效。
+DEFAULT_SILENT_TIMEOUT = 30.0
 
-#: `_m_h5_tk` 内嵌时间戳的过期阈值：24 小时（毫秒）
-TOKEN_TTL_MS = 24 * 60 * 60 * 1000
-#: 临期预警阈值：剩余不足 1 小时（毫秒）
-TOKEN_EXPIRING_SOON_MS = 60 * 60 * 1000
+#: `_m_h5_tk` 的有效期（毫秒）。
+#:
+#: 2026-09-24 实测校准：向 mtop 详情接口发一次请求，服务端在「令牌过期」响应中
+#: 下发的 Set-Cookie 为 `_m_h5_tk=...; Max-Age=5400` —— 即 **90 分钟**。
+#: 此前代码假定 24 小时（相差 16 倍），差值区间内会把已失效的令牌误报为「正常」。
+#:
+#: 注意：令牌**每次请求都会滑动续期**（服务端主动下发新值），因此只要监控在跑
+#: 就不会过期；本阈值只在「停跑超过 90 分钟后重启」时才具有实际意义。
+TOKEN_TTL_MS = 90 * 60 * 1000
+#: 临期预警阈值：剩余不足 TTL 的 1/6（= 15 分钟）视为「即将过期」。
+#: 按 TTL 比例定义而非固定值，避免调整 TTL 后预警窗口覆盖过大比例的时间。
+TOKEN_EXPIRING_SOON_MS = TOKEN_TTL_MS // 6
 #: 匹配 `_m_h5_tk=...` 的值（形如 `xxx_1785488087003`）
 _M_H5_TK_PATTERN = re.compile(r"(?:^|;\s*)_m_h5_tk=([^;]+)")
+
+
+def token_ttl_text() -> str:
+    """把 `TOKEN_TTL_MS` 渲染为中文时长文案。
+
+    各处提示文案统一调用本函数，避免把「24 小时」这类数字写死 —— 否则
+    每次校准 TTL 都要去改散落多处的字符串（且极易漏改）。
+    """
+    minutes = TOKEN_TTL_MS // 60000
+    if minutes % 60 == 0:
+        return f"{minutes // 60} 小时"
+    return f"{minutes} 分钟"
+
+
+def token_expiring_text() -> str:
+    """把 `TOKEN_EXPIRING_SOON_MS` 渲染为中文时长文案（同上，避免写死）。"""
+    minutes = TOKEN_EXPIRING_SOON_MS // 60000
+    if minutes >= 60 and minutes % 60 == 0:
+        return f"{minutes // 60} 小时"
+    return f"{minutes} 分钟"
 
 
 class PlaywrightUnavailable(Exception):
@@ -124,9 +160,9 @@ def cookie_expiry_status(cookie_str: str, now_ms: Optional[int] = None) -> str:
     返回状态：
         missing   : 未配置
         no_token  : 有 Cookie 但缺 `_m_h5_tk`
-        expired   : 已过期（签发时间 + 24h < 当前）
-        expiring  : 即将过期（剩余不足 1 小时）
-        ok        : 正常（剩余超过 1 小时）
+        expired   : 已过期（签发时间 + TOKEN_TTL_MS < 当前）
+        expiring  : 即将过期（剩余不足 TOKEN_EXPIRING_SOON_MS）
+        ok        : 正常（剩余超过 TOKEN_EXPIRING_SOON_MS）
         unknown   : 含 `_m_h5_tk` 但无 13 位时间戳，无法判断
 
     Args:
@@ -178,8 +214,8 @@ def detect_cookie_health(cookie_str: str) -> tuple[str, str]:
 
     状态码（state）：
         ok               : 有效（含 `_m_h5_tk` 且未过期；无时间戳按有效处理）
-        expired          : 已过期（时间戳超过 24 小时）
-        expiring         : 即将过期（剩余不足 1 小时）
+        expired          : 令牌已过期（距上次成功续期超过 TOKEN_TTL_MS；下次请求会自动申请新令牌）
+        expiring         : 令牌即将过期（同样会在下次请求自动续期）
         no_token         : 有内容但缺 `_m_h5_tk`
         missing          : 未配置（空串）
         invalid_encrypt  : `dpapi1:` 密文无法解密（换机/换用户）
@@ -202,9 +238,20 @@ def detect_cookie_health(cookie_str: str) -> tuple[str, str]:
         return HEALTH_NO_TOKEN, f"缺少 {REQUIRED_COOKIE_NAME}，无法用于 mtop 签名"
     status = cookie_expiry_status(raw)
     if status == "expired":
-        return HEALTH_EXPIRED, "已过期（_m_h5_tk 时间戳超过 24 小时），请重新登录"
+        # 令牌过期 ≠ 登录态失效：mtop 令牌在每次请求时由服务端滑动续期，
+        # 所以「过期」只意味着「距上次成功请求已超过有效期（默认 90 分钟）」。
+        # 下一次请求通常就会带回新令牌；只有**持续**失败才说明登录态真的失效。
+        # 文案必须把这个区别讲清楚，否则用户会去做一次根本没必要的重新登录。
+        return (
+            HEALTH_EXPIRED,
+            f"登录令牌已过期（{token_ttl_text()}内未续期）—— 下次抓取会自动申请新令牌；"
+            "若持续失败则说明登录态已失效，需重新登录",
+        )
     if status == "expiring":
-        return HEALTH_EXPIRING, "即将过期（剩余不足 1 小时），建议尽快重新登录"
+        return (
+            HEALTH_EXPIRING,
+            f"令牌即将过期（剩余不足 {token_expiring_text()}），下次抓取会自动续期",
+        )
     if status == "unknown":
         return HEALTH_OK, "含 _m_h5_tk 但无时间戳，按有效处理（历史样本兼容）"
     return HEALTH_OK, "有效（含 _m_h5_tk 且未过期）"
@@ -527,22 +574,61 @@ def ensure_cookie_encrypted(config_path: str) -> bool:
 # ---------------------------------------------------------------------- #
 # 半自动：Playwright 打开浏览器让用户登录
 # ---------------------------------------------------------------------- #
-def acquire_via_playwright(timeout: float = DEFAULT_LOGIN_TIMEOUT) -> str:
-    """打开真实浏览器（headless=False）让用户登录闲鱼，自动提取 Cookie。
+def profile_dir() -> str:
+    """返回浏览器持久化 profile 目录（位于 `paths.data_dir()`，随数据卷持久化）。
 
-    流程：
-        launch chromium -> goto goofish.com -> 用户在窗口内完成登录
-        -> 轮询 context.cookies() 直到出现 `_m_h5_tk` -> 拼成 Cookie 头返回。
+    放在数据目录下，容器重建 / 迁移 NAS 时登录态跟着一起走 ——
+    这正是「只需人工登录一次」的实现基础。
+    """
+    from . import paths  # 延迟导入，避免循环依赖
+
+    return os.path.join(paths.data_dir(), PROFILE_DIR_NAME)
+
+
+def profile_ready() -> bool:
+    """浏览器持久化 profile 是否已建立且非空。
+
+    这是「能否走免扫码静默刷新」的判据。profile 为空时静默刷新**必然失败**，
+    调用方应快速失败并提示「人工登录一次」，而不是启动浏览器空等满超时 ——
+    Web 端点曾因此在一次冒烟测试里整整挂住 30 秒。
+    """
+    target = profile_dir()
+    try:
+        return os.path.isdir(target) and any(os.scandir(target))
+    except OSError:
+        return False
+
+
+def acquire_via_playwright(
+    timeout: Optional[float] = None,
+    headless: Optional[bool] = None,
+) -> str:
+    """用**持久化 profile** 打开闲鱼并提取 Cookie（免扫码优先）。
+
+    与旧实现的关键差别：改用 `launch_persistent_context(user_data_dir=...)`，
+    而不是 `launch() + new_context()`。旧写法每次都是**全新匿名会话**，
+    所以每次都要重新扫码；持久化之后，只要 profile 里的登录态还在，
+    打开一次站点就能拿到新鲜的 `_m_h5_tk`，**无需任何人工操作**。
+
+    模式选择（`headless=None` 时自动判断）：
+        - profile 已存在 → **静默模式**（headless=True）：无人值守刷新，
+          等待上限 `DEFAULT_SILENT_TIMEOUT`（30 秒）；
+        - profile 不存在 → **交互模式**（headless=False）：需要人工扫码一次，
+          等待上限 `DEFAULT_LOGIN_TIMEOUT`（120 秒）。
+
+    容器内没有显示器，无法扫码。首次请按「本机登录 → 把 `browser_profile/`
+    目录拷进目标机数据目录」的方式建立 profile，此后即可静默刷新。
 
     Args:
-        timeout: 等待用户登录的最长秒数。
+        timeout: 等待上限（秒）。None 时按模式取默认值。
+        headless: 是否无头；None = 依 profile 是否存在自动判断。
 
     Returns:
         含 `_m_h5_tk` 的 Cookie 请求头字符串。
 
     Raises:
         PlaywrightUnavailable: 未安装 playwright 或浏览器内核未安装。
-        LoginTimeout: 超时仍未检测到关键 Cookie。
+        LoginTimeout: 超时仍未取到关键 Cookie（登录态已失效，需人工登录一次）。
     """
     try:
         # 延迟导入：playwright 是可选依赖，避免主流程硬依赖
@@ -555,44 +641,89 @@ def acquire_via_playwright(timeout: float = DEFAULT_LOGIN_TIMEOUT) -> str:
             "或改用手动粘贴模式。"
         ) from exc
 
-    logger.info("正在启动浏览器，请在弹出的窗口中登录闲鱼……")
+    ready = profile_ready()
+    if headless is None:
+        headless = ready
+    if headless and not ready:
+        # 静默模式的前提就是 profile 已存在。不存在时**立刻失败**，
+        # 不要白白启动一个浏览器再等满超时（Web 端点曾因此挂住 30 秒）。
+        raise LoginTimeout(
+            "尚未建立浏览器登录 profile，无法静默刷新。请先在有浏览器的机器上运行一次 "
+            "`cli cookie refresh`（会打开浏览器完成登录），再把生成的 browser_profile "
+            "目录复制到本机数据目录；或直接粘贴 Cookie。"
+        )
+    if timeout is None:
+        timeout = DEFAULT_SILENT_TIMEOUT if headless else DEFAULT_LOGIN_TIMEOUT
+    timeout = max(1.0, float(timeout))
+
+    target = profile_dir()
+    try:
+        os.makedirs(target, exist_ok=True)
+    except OSError as exc:
+        raise LoginTimeout(f"无法创建浏览器 profile 目录 {target}：{exc}") from exc
+
+    if headless:
+        logger.info(
+            "使用已有浏览器 profile 静默刷新 Cookie（最多等待 %d 秒）……", int(timeout)
+        )
+    else:
+        logger.info("未检测到可用 profile，启动浏览器等待人工登录……")
+
     try:
         with sync_playwright() as pw:
             try:
-                browser = pw.chromium.launch(headless=False)
+                # 容器内以 root 运行 chromium 必须关沙盒；
+                # --disable-dev-shm-usage 规避 /dev/shm 过小导致的渲染进程崩溃。
+                context = pw.chromium.launch_persistent_context(
+                    user_data_dir=target,
+                    headless=headless,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
             except Exception as exc:  # noqa: BLE001 - 内核未安装等启动失败
                 raise PlaywrightUnavailable(
                     f"Chromium 启动失败：{exc}\n"
                     "若尚未安装浏览器内核，请执行：playwright install chromium"
                 ) from exc
 
-            context = browser.new_context()
-            page = context.new_page()
-            page.goto(LOGIN_URL, wait_until="domcontentloaded")
-            print(
-                "已打开闲鱼页面，请在浏览器窗口中完成登录；"
-                f"登录成功后将自动提取 Cookie（最多等待 {int(timeout)} 秒）……"
-            )
-
-            deadline = time.monotonic() + max(1.0, float(timeout))
             try:
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(LOGIN_URL, wait_until="domcontentloaded")
+                if not headless:
+                    print(
+                        "已打开闲鱼页面，请在浏览器窗口中完成登录；"
+                        f"登录成功后将自动提取 Cookie（最多等待 {int(timeout)} 秒）……"
+                    )
+                deadline = time.monotonic() + timeout
                 while time.monotonic() < deadline:
                     cookies = context.cookies()
                     if any(c.get("name") == REQUIRED_COOKIE_NAME for c in cookies):
                         header = build_cookie_header(cookies)
-                        logger.info("已检测到 %s，共提取 %d 个 Cookie", REQUIRED_COOKIE_NAME, len(cookies))
+                        logger.info(
+                            "已检测到 %s，共提取 %d 个 Cookie（profile: %s）",
+                            REQUIRED_COOKIE_NAME,
+                            len(cookies),
+                            target,
+                        )
                         return header
                     time.sleep(POLL_INTERVAL)
             finally:
                 try:
-                    browser.close()
+                    context.close()
                 except Exception:  # noqa: BLE001 - 关闭失败不影响结果
                     pass
 
+        if headless:
             raise LoginTimeout(
-                f"登录超时（{int(timeout)} 秒内未检测到 {REQUIRED_COOKIE_NAME}）。"
-                "请重试，或改用手动模式：cli login --cookie-string \"...\""
+                f"静默刷新失败（{int(timeout)} 秒内未取到 {REQUIRED_COOKIE_NAME}）——"
+                "profile 中的登录态可能已失效，需要人工登录一次：\n"
+                "  1) 在**能打开浏览器**的机器上运行 `cli login`（会写入 browser_profile/）；\n"
+                "  2) 把该目录（位于数据目录下）复制到本机的数据目录；\n"
+                "  3) 之后即可继续免扫码静默刷新。"
             )
+        raise LoginTimeout(
+            f"登录超时（{int(timeout)} 秒内未检测到 {REQUIRED_COOKIE_NAME}）。"
+            "请重试，或改用手动模式：cli login --cookie-string \"...\""
+        )
     except (PlaywrightUnavailable, LoginTimeout):
         raise
     except Exception as exc:  # noqa: BLE001 - 其余 playwright 运行期错误统一转成清晰提示

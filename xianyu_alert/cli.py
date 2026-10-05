@@ -26,8 +26,10 @@ from .cookie import (
     PlaywrightUnavailable,
     acquire_via_playwright,
     acquire_via_prompt,
+    detect_cookie_health,
     ensure_cookie_encrypted,
     save_cookies_validated,
+    save_cookies_validated_encrypted,
 )
 from .fetcher import Fetcher, build_fetcher
 from .monitor import Monitor
@@ -142,6 +144,25 @@ def build_parser() -> argparse.ArgumentParser:
                 help=f"配置文件路径（默认 {DEFAULT_CONFIG_PATH}）",
             )
             sub_status.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+
+            # `cli cookie refresh` —— 用持久化 profile **免扫码**刷新（日常续期主力）
+            sub_refresh = cookie_subs.add_parser(
+                "refresh",
+                help="用浏览器持久化 profile 静默刷新 Cookie（免扫码；首次仍需人工登录一次）",
+            )
+            sub_refresh.add_argument(
+                "-c", "--config", default=DEFAULT_CONFIG_PATH,
+                help=f"配置文件路径（默认 {DEFAULT_CONFIG_PATH}）",
+            )
+            sub_refresh.add_argument(
+                "--timeout", type=float, default=None,
+                help="等待上限秒数（默认：静默 30 / 交互 120）",
+            )
+            sub_refresh.add_argument(
+                "--headful", action="store_true",
+                help="强制有头模式（需要人工扫码时用；容器内无显示器则不可用）",
+            )
+            sub_refresh.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
     return parser
 
@@ -333,6 +354,50 @@ def cmd_cookie_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cookie_refresh(args: argparse.Namespace) -> int:
+    """执行 `cookie refresh` 子命令：用持久化 profile **免扫码**刷新 Cookie。
+
+    与 `login` 的分工：
+        - `login`   面向「首次建立登录态」—— profile 不存在时会打开浏览器要求扫码；
+        - `refresh` 面向「日常续期」—— 默认静默模式（profile 已存在即无需任何
+          人工操作）；失败时明确告知「需要人工登录一次」及补救步骤。
+
+    刷新成功后经 `save_cookies_validated_encrypted` 校验并**加密**写盘
+    （与 Web 粘贴路径同一套实现，磁盘上不存在明文窗口）；运行中的监控会通过
+    `config.yaml` 的 mtime 检测在下一轮自动换用新 Cookie，**无需重启**。
+
+    Returns:
+        进程退出码：0 成功 / 2 环境或校验失败 / 3 需要人工登录 / 130 用户取消。
+    """
+    config_path: str = args.config
+    timeout = getattr(args, "timeout", None)
+    headless = not bool(getattr(args, "headful", False))
+    try:
+        cookie_str = acquire_via_playwright(timeout=timeout, headless=headless)
+    except PlaywrightUnavailable as exc:
+        print(f"[失败] {exc}", file=sys.stderr)
+        return 2
+    except LoginTimeout as exc:
+        print(f"[失败] {exc}", file=sys.stderr)
+        return 3
+    except KeyboardInterrupt:
+        logger.info("已被用户取消。")
+        return 130
+
+    try:
+        save_cookies_validated_encrypted(config_path, cookie_str)
+    except ValueError as exc:
+        print(f"[失败] {exc}", file=sys.stderr)
+        return 2
+    state, reason = detect_cookie_health(cookie_str)
+    print(
+        f"✅ 已刷新并加密写入 {config_path}\n"
+        f"   当前状态：{state} —— {reason}\n"
+        "   运行中的监控会在下一轮自动换用新 Cookie（无需重启）。"
+    )
+    return 0
+
+
 def cmd_shortcut(args: argparse.Namespace) -> int:
     """执行 shortcut 子命令：在桌面创建快捷方式（仅 Windows 支持）。"""
     from .shortcut import create_shortcut, supported
@@ -417,7 +482,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         "gui": cmd_gui,
         "cookie": cmd_cookie_status,
     }
-    handler = handlers[args.command]
+    if args.command == "cookie":
+        # cookie 下还有子命令（status / refresh），在此二次分发
+        handler = {
+            "refresh": cmd_cookie_refresh,
+            "status": cmd_cookie_status,
+        }.get(getattr(args, "cookie_command", None) or "status", cmd_cookie_status)
+    else:
+        handler = handlers[args.command]
 
     # v1.8 单实例锁（L1/L6）：GUI / run / once 都会打开 SQLite 写库，共用一把锁；
     # 冲突 → stderr 中文提示 + 退出码 2（不阻塞、不抢锁）。

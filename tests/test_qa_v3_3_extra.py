@@ -341,12 +341,23 @@ class TestWebhookLabel(unittest.TestCase):
 # 9. 版本与更新日志
 # ---------------------------------------------------------------------- #
 class TestVersion(unittest.TestCase):
-    def test_version_160(self) -> None:
+    def test_version_182(self) -> None:
         from xianyu_alert import __version__
 
-        # v1.8 更新项：Cookie 自动刷新 + 进程单实例锁
-        # （由 1.7.0 升级到 1.8.0，故旧断言同步更新）
-        self.assertEqual(__version__, "1.8.0")
+        # v1.8.2 更新项：登录令牌自动续期链路（TTL 实测校准 / _enc 成对吸收 /
+        # 令牌节流落盘 / 失败分层）+ 免扫码刷新入口
+        # （由 1.8.1 升级到 1.8.2，故旧断言同步更新）
+        self.assertEqual(__version__, "1.8.2")
+
+    def test_update_log_has_v182(self) -> None:
+        from xianyu_alert.gui import UPDATE_LOG
+
+        self.assertIn("v1.8.2", UPDATE_LOG)
+
+    def test_update_log_has_v181(self) -> None:
+        from xianyu_alert.gui import UPDATE_LOG
+
+        self.assertIn("v1.8.1", UPDATE_LOG)
 
     def test_update_log_has_v180(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
