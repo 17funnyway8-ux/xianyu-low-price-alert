@@ -706,10 +706,8 @@ def acquire_via_playwright(
                         return header
                     time.sleep(POLL_INTERVAL)
             finally:
-                try:
+                with contextlib.suppress(Exception): # 关闭失败不影响结果
                     context.close()
-                except Exception:  # noqa: BLE001 - 关闭失败不影响结果
-                    pass
 
         if headless:
             raise LoginTimeout(

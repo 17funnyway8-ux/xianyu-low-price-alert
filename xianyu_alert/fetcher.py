@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -838,7 +839,7 @@ class MtopFetcher(Fetcher):
             new_enc = ""
         # 2) 降级：手工解析 Set-Cookie 响应头
         if not new_value or not new_enc:
-            try:
+            with contextlib.suppress(Exception):
                 headers = getattr(response, "headers", None) or {}
                 raw = str(headers.get("Set-Cookie") or headers.get("set-cookie") or "")
                 if not new_value:
@@ -849,24 +850,18 @@ class MtopFetcher(Fetcher):
                     match_enc = re.search(r"_m_h5_tk_enc=([^;,\s]+)", raw)
                     if match_enc:
                         new_enc = match_enc.group(1)
-            except Exception:  # noqa: BLE001
-                pass
 
         changed = False
         if new_value and new_value != self._cookie_dict.get(MTOP_TOKEN_COOKIE):
             self._cookie_dict[MTOP_TOKEN_COOKIE] = new_value
-            try:
+            with contextlib.suppress(Exception):
                 self.session.cookies.set(MTOP_TOKEN_COOKIE, new_value, domain=".goofish.com")
-            except Exception:  # noqa: BLE001
-                pass
             changed = True
             logger.debug("[mtop] 已吸收服务端刷新的 %s", MTOP_TOKEN_COOKIE)
         if new_enc and new_enc != self._cookie_dict.get(MTOP_TOKEN_ENC_COOKIE):
             self._cookie_dict[MTOP_TOKEN_ENC_COOKIE] = new_enc
-            try:
+            with contextlib.suppress(Exception):
                 self.session.cookies.set(MTOP_TOKEN_ENC_COOKIE, new_enc, domain=".goofish.com")
-            except Exception:  # noqa: BLE001
-                pass
             changed = True
             logger.debug("[mtop] 已吸收服务端刷新的 %s", MTOP_TOKEN_ENC_COOKIE)
         if changed:
@@ -1212,10 +1207,8 @@ class MtopFetcher(Fetcher):
 
     def close(self) -> None:
         """关闭内部 session。"""
-        try:
+        with contextlib.suppress(Exception): # 关闭失败不影响主流程
             self.session.close()
-        except Exception:  # noqa: BLE001 - 关闭失败不影响主流程
-            pass
 
 
 # ---------------------------------------------------------------------- #
@@ -1317,10 +1310,8 @@ class WebFetcher(Fetcher):
         但原先没有覆盖 close() —— 基类 close 是空实现，于是每轮 run_once
         都会泄漏一个持有 keep-alive 连接的会话。
         """
-        try:
+        with contextlib.suppress(Exception): # 关闭失败不影响主流程
             self.session.close()
-        except Exception:  # noqa: BLE001 - 关闭失败不影响主流程
-            pass
 
     # ------------------------------------------------------------------ #
     def fetch(self, keyword: str) -> list[Product]:

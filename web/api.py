@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import secrets
@@ -323,10 +324,8 @@ def api_cookie_save(body: CookieSaveBody, service: MonitorService = Depends(get_
         return fail(f"Cookie 保存失败：{exc}", status_code=500)
 
     # 立即重载（mtime 变化），让运行中的 monitor 下一轮换用新 Cookie
-    try:
+    with contextlib.suppress(Exception): # 重载失败不阻断保存成功回显
         service.reload_if_external_changed()
-    except Exception:  # noqa: BLE001 - 重载失败不阻断保存成功回显
-        pass
 
     return ok(
         {
@@ -429,10 +428,8 @@ def api_list_records(
         item["time"] = item.get("last_seen", "")
         item["publish"] = item.get("publish_time", "")
         records.append(item)
-    try:
+    with contextlib.suppress(Exception): # 排序失败回退默认顺序
         records = gui.sort_alert_rows(records, sort, ascending=str(order).lower() == "asc")
-    except Exception:  # noqa: BLE001 - 排序失败回退默认顺序
-        pass
     return ok({"records": records, "total": len(records)})
 
 

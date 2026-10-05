@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -46,10 +47,8 @@ def main() -> int:
         gui = gui_mod.XianyuAlertGUI(root, config_path=config_path)
     except Exception as exc:  # noqa: BLE001 - 构造失败直接退出并报错
         print(f"[STRESS] GUI_INIT_ERROR {exc!r}", flush=True)
-        try:
+        with contextlib.suppress(Exception):
             root.destroy()
-        except Exception:  # noqa: BLE001
-            pass
         return 2
 
     if not no_worker:

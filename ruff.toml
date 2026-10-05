@@ -19,11 +19,9 @@ select = [
     "RET", # return 简化
     "SIM", # 可简化写法
     "B",   # flake8-bugbear：可疑写法
+    "S110", # 禁止 try/except/pass：静默吞异常必须显式表达（contextlib.suppress 或记日志）
 ]
 ignore = [
-    # 静默吞异常主题：try/except/pass 的语义化改造纳入 M3 专项
-    # （与 S110/BLE001 一并处理，需要逐个判断"该吞还是该记日志"）。
-    "SIM105",
     # 长生命周期文件句柄（脚本/测试中 open 后手动 close），需逐个人工确认，M3 处理。
     "SIM115",
     # 嵌套 with 合并属纯风格，收益低、改动面大，暂不强制。

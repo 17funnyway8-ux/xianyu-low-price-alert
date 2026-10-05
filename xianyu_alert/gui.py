@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import logging
 import os
@@ -1187,10 +1188,8 @@ def _apply_row_style_if_available(obj: Any, item: str, keyword: str) -> None:
     """
     apply = getattr(obj, "_apply_keyword_row_style", None)
     if apply is not None:
-        try:
+        with contextlib.suppress(Exception): # FakeTree 等替身不支持 tags 时忽略
             apply(item, keyword)
-        except Exception:  # noqa: BLE001 - FakeTree 等替身不支持 tags 时忽略
-            pass
 
 
 def _keyword_enabled_dict(obj: Any) -> dict[str, bool]:
@@ -1203,10 +1202,8 @@ def _keyword_enabled_dict(obj: Any) -> dict[str, bool]:
     state = getattr(obj, "_keyword_enabled", None)
     if state is None:
         state = {}
-        try:
+        with contextlib.suppress(Exception): # 只读替身无法写入时退化为局部 dict
             obj._keyword_enabled = state
-        except Exception:  # noqa: BLE001 - 只读替身无法写入时退化为局部 dict
-            pass
     return state
 
 
@@ -1232,15 +1229,13 @@ class QueueLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         """把一条日志放入队列（自身异常绝不向外抛）。"""
-        try:
+        with contextlib.suppress(Exception):   # 日志失败绝不能影响业务
             message = record.getMessage()
             timestamp = datetime.fromtimestamp(record.created).strftime("%H:%M:%S")
             text = f"[{timestamp}] {message}"
             if record.exc_info:
                 text = f"{text}\n{self.format(record)}"
             self.target_queue.put_nowait(("log", (record.levelname, text)))
-        except Exception:  # noqa: BLE001 - 日志失败绝不能影响业务
-            pass
 
 
 # ====================================================================== #
@@ -1716,10 +1711,8 @@ class XianyuAlertGUI:
         """移除日志 handler（关闭窗口时调用）。"""
         handler = getattr(self, "log_handler", None)
         if handler is not None:
-            try:
+            with contextlib.suppress(Exception):
                 logging.getLogger("xianyu_alert").removeHandler(handler)
-            except Exception:  # noqa: BLE001
-                pass
 
     def _append_log(self, level: str, text: str) -> None:
         """把一行日志写入日志区（只能在主线程调用）。
@@ -1757,7 +1750,7 @@ class XianyuAlertGUI:
         widget = getattr(self, "text_log", None)
         if widget is None or tk is None:
             return
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover - 窗口销毁等边缘情况
             widget.configure(font=("TkDefaultFont", self._log_font_size))
             widget.tag_configure(
                 "ALERT",
@@ -1780,8 +1773,6 @@ class XianyuAlertGUI:
                 font=("TkDefaultFont", self._log_font_size, "bold"),
             )
             widget.tag_configure("DIM", foreground="#9ca3af")
-        except tk.TclError:  # pragma: no cover - 窗口销毁等边缘情况
-            pass
 
     def _adjust_log_font(self, delta: int) -> None:
         """调整日志区字号（v3.2，范围 8~16）。"""
@@ -1793,22 +1784,18 @@ class XianyuAlertGUI:
         widget = getattr(self, "text_log", None)
         if widget is None:
             return
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover - 窗口销毁等边缘情况
             widget.configure(state="normal")
             widget.delete("1.0", "end")
             widget.configure(state="disabled")
-        except tk.TclError:  # pragma: no cover - 窗口销毁等边缘情况
-            pass
 
     # ================================================================== #
     # 队列轮询（子线程 -> 主线程）
     # ================================================================== #
     def _push(self, kind: str, payload: Any) -> None:
         """子线程安全地投递一条 UI 消息。"""
-        try:
+        with contextlib.suppress(Exception): # 队列异常不应影响业务线程
             self.ui_queue.put_nowait((kind, payload))
-        except Exception:  # noqa: BLE001 - 队列异常不应影响业务线程
-            pass
 
     def _poll_queue(self) -> None:
         """主线程轮询队列并更新界面。
@@ -1839,10 +1826,8 @@ class XianyuAlertGUI:
         finally:
             if not getattr(self, "_closing", False):
                 delay = POLL_INTERVAL_MS if had_message else POLL_IDLE_INTERVAL_MS
-                try:
+                with contextlib.suppress(Exception): # 窗口销毁等边缘情况
                     self._poll_after_id = self.root.after(delay, self._poll_queue)
-                except Exception:  # noqa: BLE001 - 窗口销毁等边缘情况
-                    pass
 
     def _handle_ui_message(self, kind: str, payload: Any) -> None:
         """分发一条 UI 消息。
@@ -1888,7 +1873,7 @@ class XianyuAlertGUI:
         """
         if getattr(self, "_closing", False):
             return
-        try:
+        with contextlib.suppress(Exception):   # 刷新失败不影响主流程
             if self._running and self._next_run_at > 0:
                 remain = self._next_run_at - time.monotonic()
                 self.var_countdown.set(f"下次执行：{format_countdown(remain)}")
@@ -1896,19 +1881,15 @@ class XianyuAlertGUI:
                 self.var_countdown.set("下次执行：执行中…")
             else:
                 self.var_countdown.set("下次执行：--:--")
-        except Exception:  # noqa: BLE001 - 刷新失败不影响主流程
-            pass
         try:
             # v1.8（C22）：检测 config.yaml 是否被外部修改（本进程保存会更新快照，不触发）
             self._check_config_mtime()
-        except Exception:  # noqa: BLE001 - mtime 检测失败不影响主流程
+        except Exception:  # noqa: BLE001, S110 - mtime 检测失败不影响主流程；此处为 try/except/finally 结构，finally 必须继续执行，无法用 contextlib.suppress 表达
             pass
         finally:
             if not getattr(self, "_closing", False):
-                try:
+                with contextlib.suppress(Exception): # 窗口销毁等边缘情况
                     self._tick_after_id = self.root.after(1000, self._tick)
-                except Exception:  # noqa: BLE001 - 窗口销毁等边缘情况
-                    pass
 
     # ------------------------------------------------------------------ #
     # v1.8（C22）：config.yaml 外部修改检测 → 提示重载
@@ -2005,13 +1986,11 @@ class XianyuAlertGUI:
         """根据表格是否为空，显示/隐藏空状态引导文案（U1）。"""
         has_keywords = bool(self.tree_keywords.get_children())
         self.var_kw_empty.set(empty_state_hint(has_keywords))
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover - 窗口销毁等边缘情况
             if has_keywords:
                 self.label_kw_empty.pack_forget()
             else:
                 self.label_kw_empty.pack(fill="x", padx=12, pady=(0, 2))
-        except tk.TclError:  # pragma: no cover - 窗口销毁等边缘情况
-            pass
 
     def _filters_summary(self, keyword: str) -> str:
         """返回某关键词过滤规则的表格摘要文案。"""
@@ -2051,15 +2030,13 @@ class XianyuAlertGUI:
     def _apply_keyword_row_style(self, item: str, keyword: str) -> None:
         """按启用状态刷新关键词行：状态列文案 + 停用行灰显（v3.7）。"""
         enabled = parse_enabled_flag(_keyword_enabled_dict(self).get(str(keyword)), default=True)
-        try:
+        with contextlib.suppress(Exception):   # FakeTree 等测试替身不支持 tags 时忽略
             values = list(self.tree_keywords.item(item, "values") or ())
             while len(values) < 3:
                 values.append("")
             values[2] = keyword_status_text(enabled)
             self.tree_keywords.item(item, values=tuple(values))
             self.tree_keywords.item(item, tags=("enabled",) if enabled else ("disabled",))
-        except Exception:  # noqa: BLE001 - FakeTree 等测试替身不支持 tags 时忽略
-            pass
 
     def on_toggle_keyword(self) -> None:
         """切换选中关键词的启用/停用状态（v3.7）。
@@ -2359,10 +2336,8 @@ class XianyuAlertGUI:
         ttk.Button(btn_row, text="取消", command=on_cancel).pack(side="right")
 
         dialog.update_idletasks()
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover - 窗口销毁等边缘情况
             dialog.grab_set()
-        except tk.TclError:  # pragma: no cover - 窗口销毁等边缘情况
-            pass
         text_exclude.focus_set()
 
     def _dialog_add_preset(self, text_widget: tk.Text) -> None:
@@ -2450,10 +2425,8 @@ class XianyuAlertGUI:
         ttk.Button(btn_row, text="取消", command=on_cancel).pack(side="right")
 
         dialog.update_idletasks()
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover - 窗口销毁等边缘情况
             dialog.grab_set()
-        except tk.TclError:  # pragma: no cover - 窗口销毁等边缘情况
-            pass
         text.focus_set()
 
     # ================================================================== #
@@ -2596,10 +2569,8 @@ class XianyuAlertGUI:
             COOKIE_STATE_MISSING: "#dc2626",
             COOKIE_STATE_UNDECRYPTABLE: "#dc2626",
         }.get(state, "#333333")
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover - 主题不支持时忽略
             self.label_cookie.configure(foreground=color)
-        except tk.TclError:  # pragma: no cover - 主题不支持时忽略
-            pass
         self._refresh_first_use_guide()
 
     def _refresh_first_use_guide(self) -> None:
@@ -3201,10 +3172,8 @@ class XianyuAlertGUI:
         self._alert_sold[item] = sold
         if sold:
             # v3.7：已售出/下架记录灰显，标题列加「[已下架]」标记
-            try:
+            with contextlib.suppress(Exception): # 测试替身可能不支持 tags
                 self.tree_alerts.item(item, tags=("sold",))
-            except Exception:  # noqa: BLE001 - 测试替身可能不支持 tags
-                pass
 
     # ------------------------------------------------------------------ #
     # v3.2：提醒记录表点击表头排序
@@ -3444,14 +3413,10 @@ class XianyuAlertGUI:
                 self._push("log", ("ERROR", f"[{datetime.now():%H:%M:%S}] 校验在架线程异常：{exc}"))
             finally:
                 if storage is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         storage.close()
-                    except Exception:  # noqa: BLE001
-                        pass
-                try:
+                with contextlib.suppress(Exception):
                     fetcher.close()
-                except Exception:  # noqa: BLE001
-                    pass
             self._push(
                 "log",
                 ("INFO", f"[{datetime.now():%H:%M:%S}] ✅ 校验完成：在架 {online}，已下架/售出 {len(sold_ids)}，无法判定 {unknown}"),
@@ -3799,10 +3764,8 @@ class XianyuAlertGUI:
             for closable in (fetcher, storage):
                 if closable is None:
                     continue
-                try:
+                with contextlib.suppress(Exception):
                     closable.close()
-                except Exception:  # noqa: BLE001
-                    pass
             self._next_run_at = 0.0
             self._push("log", ("INFO", f"[{datetime.now():%H:%M:%S}] 监控已停止。"))
             self._push("state", {"running": False})
@@ -3879,25 +3842,19 @@ class XianyuAlertGUI:
             self._stop_event.set()
             worker = self._worker
             if worker is not None:
-                try:
+                with contextlib.suppress(Exception): # join 异常不影响关闭
                     worker.join(timeout=CLOSE_JOIN_TIMEOUT)
-                except Exception:  # noqa: BLE001 - join 异常不影响关闭
-                    pass
 
         self._closing = True
-        try:
+        with contextlib.suppress(Exception):   # 窗口销毁等边缘情况
             if getattr(self, "_poll_after_id", None) is not None:
                 self.root.after_cancel(self._poll_after_id)
             if getattr(self, "_tick_after_id", None) is not None:
                 self.root.after_cancel(self._tick_after_id)
-        except Exception:  # noqa: BLE001 - 窗口销毁等边缘情况
-            pass
 
         self._remove_log_handler()
-        try:
+        with contextlib.suppress(tk.TclError):   # pragma: no cover
             self.root.destroy()
-        except tk.TclError:  # pragma: no cover
-            pass
 
 
 # ====================================================================== #
@@ -3910,10 +3867,8 @@ def _notify_instance_conflict(holder_pid: str) -> None:
         root = tk.Tk()
         root.withdraw()
         messagebox.showwarning("已有实例正在运行", text)
-        try:
+        with contextlib.suppress(Exception):
             root.destroy()
-        except Exception:  # noqa: BLE001
-            pass
     except Exception:  # noqa: BLE001 - 无图形环境降级打印
         print(text)
 
@@ -3928,12 +3883,10 @@ def main(config_path: str = "config.yaml") -> int:
         进程退出码，0 表示正常退出。
     """
     # windowed 打包 exe 无控制台：安装滚动文件日志便于查错（失败不影响启动）
-    try:
+    with contextlib.suppress(Exception):  # 日志安装失败不影响启动
         from .cli import install_file_logging
 
         install_file_logging()
-    except Exception:  # noqa: BLE001
-        pass
 
     # v1.8 单实例锁（L5）：检测到已有实例 → 弹中文提示 + 返回非 0，不抢锁。
     # 同进程重复获取幂等（cli.main 已持有时会返回同一对象，不会自锁）。
@@ -3953,14 +3906,10 @@ def main(config_path: str = "config.yaml") -> int:
             XianyuAlertGUI(root, config_path=config_path)
         except Exception as exc:  # noqa: BLE001 - 构造失败也要给出提示而非白屏
             logger.exception("图形界面初始化失败：%s", exc)
-            try:
+            with contextlib.suppress(Exception):
                 messagebox.showerror("启动失败", f"图形界面初始化失败：\n{exc}")
-            except Exception:  # noqa: BLE001
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 root.destroy()
-            except Exception:  # noqa: BLE001
-                pass
             return 1
 
         root.mainloop()

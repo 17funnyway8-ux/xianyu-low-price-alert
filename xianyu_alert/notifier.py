@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import smtplib
@@ -382,10 +383,8 @@ class EmailNotifier(Notifier):
             server.login(self.username, self.password)
             server.sendmail(self.username, self.recipients, message.as_string())
         finally:
-            try:
+            with contextlib.suppress(Exception): # 关闭失败无需影响主流程
                 server.quit()
-            except Exception:  # noqa: BLE001 - 关闭失败无需影响主流程
-                pass
 
     def notify(self, products: list[Product]) -> None:
         """通过 SMTP 发送邮件。"""

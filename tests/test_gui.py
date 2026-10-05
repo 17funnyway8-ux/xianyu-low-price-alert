@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import queue
@@ -487,10 +488,8 @@ class TestTkAvailability(unittest.TestCase):
     def tearDownClass(cls) -> None:
         """销毁根窗口。"""
         if cls.root is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cls.root.destroy()
-            except Exception:  # noqa: BLE001
-                pass
 
     def test_gui_class_constructs(self) -> None:
         """XianyuAlertGUI 能在临时配置上正常构造并关闭。"""
@@ -520,10 +519,8 @@ class TestTkAvailability(unittest.TestCase):
                 config_from_dict(data)  # 必须可用
                 app._remove_log_handler()
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     root.destroy()
-                except Exception:  # noqa: BLE001
-                    pass
 
     def test_gui_allows_mtop_without_cookie_save(self) -> None:
         """v3.2：选了 mtop 但没 Cookie 时**允许保存**（不拦截首用），保存后由 on_save_config 弹 warning。"""
@@ -554,10 +551,8 @@ class TestTkAvailability(unittest.TestCase):
                 config_from_dict(data)  # 组装结果仍必须可校验
                 app._remove_log_handler()
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     root.destroy()
-                except Exception:  # noqa: BLE001
-                    pass
 
     def test_v18_refresh_button_exists(self) -> None:
         """v1.8（A6）：Tk 出现「🔄 一键刷新 Cookie」入口。"""
@@ -585,10 +580,8 @@ class TestTkAvailability(unittest.TestCase):
                 self.assertTrue(callable(getattr(app, "on_refresh_cookie", None)))
                 app._remove_log_handler()
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     root.destroy()
-                except Exception:  # noqa: BLE001
-                    pass
 
     def test_v18_manage_cookies_has_refresh_buttons(self) -> None:
         """v1.8（A6/C8/C13）：Cookie 管理对话框含「🔄 刷新选中」「⏹ 自动停用过期项」。"""
@@ -627,11 +620,9 @@ class TestTkAvailability(unittest.TestCase):
                     except Exception:  # noqa: BLE001
                         children = []
                     for child in children:
-                        try:
+                        with contextlib.suppress(Exception):
                             if isinstance(child, ttk.Button) and child["text"] in texts:
                                 found.append(child["text"])
-                        except Exception:  # noqa: BLE001
-                            pass
                         found.extend(_walk(child, texts))
                     return found
 
@@ -641,10 +632,8 @@ class TestTkAvailability(unittest.TestCase):
                 self.assertIn("⏹ 自动停用过期项", texts)
                 app._remove_log_handler()
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     root.destroy()
-                except Exception:  # noqa: BLE001
-                    pass
 
     def test_v18_refresh_cookie_saves_fernet(self) -> None:
         """v1.8（A4/C16/C17）：一键刷新保存后 config 中 cookies 为 fernet1: 密文 + 状态灯变绿。"""
@@ -694,10 +683,8 @@ class TestTkAvailability(unittest.TestCase):
                 app._remove_log_handler()
             finally:
                 secure.set_key_file(None)
-                try:
+                with contextlib.suppress(Exception):
                     root.destroy()
-                except Exception:  # noqa: BLE001
-                    pass
 
     def test_v18_config_mtime_detection(self) -> None:
         """v1.8（C22）：外部修改 config.yaml → 弹重载询问；本进程保存不触发。"""
@@ -757,10 +744,8 @@ class TestTkAvailability(unittest.TestCase):
                     app._check_config_mtime()
                 ask2.assert_not_called()
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     root.destroy()
-                except Exception:  # noqa: BLE001
-                    pass
 
 
 if __name__ == "__main__":  # pragma: no cover

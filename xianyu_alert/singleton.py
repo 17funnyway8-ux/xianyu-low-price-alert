@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
@@ -107,10 +108,8 @@ class InstanceLock:
                     fcntl.flock(self.fd, fcntl.LOCK_UN)
         except Exception:  # noqa: BLE001 - 解锁失败不影响后续 close
             logger.debug("释放单实例锁失败（%s）：继续关闭 fd", self.lock_path)
-        try:
+        with contextlib.suppress(Exception): # close 失败幂等
             os.close(self.fd)
-        except Exception:  # noqa: BLE001 - close 失败幂等
-            pass
         self.fd = -1
 
 
@@ -193,16 +192,12 @@ def acquire_instance_lock(
         _try_lock(fd)
     except (BlockingIOError, OSError):
         # 已被其它进程占用（flock LOCK_NB / msvcrt LK_NBLCK 的非阻塞失败路径）
-        try:
+        with contextlib.suppress(Exception):
             os.close(fd)
-        except Exception:  # noqa: BLE001
-            pass
         return None
     except Exception as exc:  # noqa: BLE001 - 其它 IO 异常
-        try:
+        with contextlib.suppress(Exception):
             os.close(fd)
-        except Exception:  # noqa: BLE001
-            pass
         if strict:
             raise OSError(f"获取单实例锁失败：{exc}") from exc
         logger.warning("获取单实例锁失败（%s），已放行", exc)
@@ -268,16 +263,12 @@ def _probe_is_busy(path: str) -> bool:
     try:
         _try_lock(fd)
     except (BlockingIOError, OSError):
-        try:
+        with contextlib.suppress(Exception):
             os.close(fd)
-        except Exception:  # noqa: BLE001
-            pass
         return True
     except Exception:  # noqa: BLE001 - 探测异常保守视为运行中
-        try:
+        with contextlib.suppress(Exception):
             os.close(fd)
-        except Exception:  # noqa: BLE001
-            pass
         return True
     # 拿到临时锁 → 立即释放并关闭（只探测，不持有）
     InstanceLock(lock_path=path, fd=fd, pid=os.getpid()).release()
