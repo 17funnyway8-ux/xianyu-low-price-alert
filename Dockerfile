@@ -62,9 +62,13 @@ COPY config.poc.yaml config.example.yaml ./
 # 数据卷挂载点（XY_DATA_DIR=/app/data -> config.yaml / secret.key / state/ 落卷）
 RUN mkdir -p /app/data
 
-# 可选非 root 加固（P3-04 should，默认不启用：需卷属主对齐，见 compose user: 注释）
-# RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
-# USER appuser
+# 非 root 加固（P3-04）：固定 uid/gid 1000，与 docker-compose.yml 的 user 建议一致。
+# ⚠️ 挂载宿主目录（如 ./xianyu-data）时需先对齐属主，否则容器内无法写入：
+#     mkdir -p xianyu-data && sudo chown -R 1000:1000 xianyu-data
+RUN addgroup -g 1000 appuser \
+ && adduser -D -u 1000 -G appuser -s /sbin/nologin appuser \
+ && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8080
 
