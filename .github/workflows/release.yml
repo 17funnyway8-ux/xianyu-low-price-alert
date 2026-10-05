@@ -67,7 +67,7 @@ jobs:
           # requirements-web.txt 提供 fastapi/uvicorn（web 测试需要）；httpx、pytest 仅测试需要
           # （pytest 供 tests/test_v1_8_2_token_refresh.py 使用）
           # （FastAPI TestClient 底层依赖），不入 requirements-web.txt（运行时不需要）
-          pip install -r requirements.txt -r requirements-web.txt -r requirements-build.txt httpx pytest
+          pip install -r requirements.txt -r requirements-web.txt -r requirements-build.txt -r requirements-dev.txt
 
       - name: Run tests (全 mock，无外网依赖)
         run: python -m unittest discover -s tests
@@ -123,7 +123,7 @@ jobs:
           # requirements-web.txt 提供 fastapi/uvicorn（web 测试需要）；httpx、pytest 仅测试需要
           # （pytest 供 tests/test_v1_8_2_token_refresh.py 使用）
           # （FastAPI TestClient 底层依赖），不入 requirements-web.txt（运行时不需要）
-          pip install -r requirements.txt -r requirements-macos.txt -r requirements-web.txt -r requirements-build.txt httpx pytest
+          pip install -r requirements.txt -r requirements-macos.txt -r requirements-web.txt -r requirements-build.txt -r requirements-dev.txt
 
       - name: Run tests (全 mock，无外网依赖)
         run: python -m unittest discover -s tests
