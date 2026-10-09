@@ -375,8 +375,8 @@ class TestCliAndGuiConflict(unittest.TestCase):
         from xianyu_alert import gui
 
         stdout = io.StringIO()
-        with mock.patch("xianyu_alert.gui.acquire_instance_lock", return_value=None), \
-             mock.patch("xianyu_alert.gui.lock_holder_pid", return_value="999"), \
+        with mock.patch("xianyu_alert.gui.app.acquire_instance_lock", return_value=None), \
+             mock.patch("xianyu_alert.gui.app.lock_holder_pid", return_value="999"), \
              mock.patch("xianyu_alert.gui.tk.Tk", side_effect=Exception("no display")), redirect_stdout(stdout):
             code = gui.main(config_path=self.config_path)
         self.assertNotEqual(code, 0)

@@ -520,10 +520,10 @@ class TestUiNonBlocking(unittest.TestCase):
                 received["log_item_details"] = log_item_details
                 return 0
 
-        with mock.patch("xianyu_alert.gui.build_fetcher", return_value=FakeFetcher()), \
-             mock.patch("xianyu_alert.gui.Storage", return_value=FakeStorage()), \
-             mock.patch("xianyu_alert.gui.build_notifiers", return_value=[]), \
-             mock.patch("xianyu_alert.gui.Monitor", FakeMonitor):
+        with mock.patch("xianyu_alert.gui.app.build_fetcher", return_value=FakeFetcher()), \
+             mock.patch("xianyu_alert.gui.app.Storage", return_value=FakeStorage()), \
+             mock.patch("xianyu_alert.gui.app.build_notifiers", return_value=[]), \
+             mock.patch("xianyu_alert.gui.app.Monitor", FakeMonitor):
             gui._monitor_worker(cfg, single_round=True, detail_only=True)
 
         self.assertEqual(received.get("log_item_details"), False, "detail_only=True → 不逐条记录")
@@ -572,10 +572,10 @@ class TestUiNonBlocking(unittest.TestCase):
                 self._fetcher.fetch("Switch")
                 return 0
 
-        with mock.patch("xianyu_alert.gui.build_fetcher", return_value=SlowFetcher()), \
-             mock.patch("xianyu_alert.gui.Storage", return_value=FakeStorage()), \
-             mock.patch("xianyu_alert.gui.build_notifiers", return_value=[]), \
-             mock.patch("xianyu_alert.gui.Monitor", SlowMonitor):
+        with mock.patch("xianyu_alert.gui.app.build_fetcher", return_value=SlowFetcher()), \
+             mock.patch("xianyu_alert.gui.app.Storage", return_value=FakeStorage()), \
+             mock.patch("xianyu_alert.gui.app.build_notifiers", return_value=[]), \
+             mock.patch("xianyu_alert.gui.app.Monitor", SlowMonitor):
             worker_thread = threading.Thread(
                 target=gui._monitor_worker, args=(cfg, True, True), daemon=True
             )

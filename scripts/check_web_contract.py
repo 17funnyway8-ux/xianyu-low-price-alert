@@ -6,7 +6,7 @@
   1. 路由对齐：跑 scripts/web_contract_probe.js 拿到前端数据层**真实发出**的
      URL/Method，与 web/api.py 的路由表逐条匹配（双向：前端多调/后端多余）。
   2. 通道元数据对齐：web/static/js/state.js 的 CHANNEL_ORDER / LABELS /
-     FIELDS 与 xianyu_alert/gui.py 的常量比对（名称、顺序、字段、默认值、密级）。
+     FIELDS 与 xianyu_alert/gui/constants.py 的常量比对（名称、顺序、字段、默认值、密级）。
   3. 配置表单对齐：前端 buildForm() 产出的键 vs 后端
      `config_from_web_form` 读取的键 与 `web_form_from_config` 返回的键。
   4. 记录字段对齐：后端 product 表列名 + /api/records 补的别名，vs 前端
@@ -30,7 +30,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_PY = os.path.join(ROOT, "web", "api.py")
 SERVICE_PY = os.path.join(ROOT, "web", "monitor_service.py")
-GUI_PY = os.path.join(ROOT, "xianyu_alert", "gui.py")
+# v1.9.5：gui.py 已拆为 gui/ 包，通道元数据等常量现位于 gui/constants.py
+GUI_PY = os.path.join(ROOT, "xianyu_alert", "gui", "constants.py")
 STORAGE_PY = os.path.join(ROOT, "xianyu_alert", "storage.py")
 STATIC_DIR = os.path.join(ROOT, "web", "static")
 PROBE_JS = os.path.join(ROOT, "scripts", "web_contract_probe.js")
@@ -135,7 +136,7 @@ def run_probe() -> dict:
 
 
 # ---------------------------------------------------------------- #
-# 3. gui.py 常量
+# 3. gui/constants.py 常量
 # ---------------------------------------------------------------- #
 def parse_gui_constants() -> dict:
     tree = ast.parse(open(GUI_PY, encoding="utf-8").read())
