@@ -1,0 +1,77 @@
+"""空闲保活（KeepaliveMixin，v1.9.7 从 MonitorService 拆出）。"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import time
+from typing import Any
+
+from xianyu_alert import gui, secure  # noqa: F401  # gui 防御性导入 tkinter，容器可 import
+from xianyu_alert.fetcher import build_fetcher
+
+logger = logging.getLogger(__name__)
+
+
+class KeepaliveMixin:
+    # 下列属性/方法由宿主 MonitorService（__init__ 或其它 mixin）提供：
+    # mixin 与宿主共享同一实例状态，这里声明仅为类型可见性，不做初始化。
+    _keeper: Any
+    _persist_refreshed_token: Any
+    config: Any
+    def keepalive_probe(self) -> bool:
+        """发一次轻量抓取以维持令牌滑动续期（不写库、不通知）。
+
+        v1.9：与是否在跑监控无关 —— 只要服务在运行就保活，避免"抓一次就停、
+        几小时后再用要重新拿 Cookie"。
+
+        Returns:
+            True 表示请求成功（令牌已续期）。
+        """
+        from xianyu_alert.cookie import resolve_cookie_for_round
+
+        config = self.config
+        cookie = resolve_cookie_for_round(config.monitor, 0)
+        if not cookie:
+            return False
+        keywords = [str(getattr(r, "keyword", "")) for r in config.keywords]
+        keywords = [k for k in keywords if k]
+        if not keywords:
+            return False
+        fetcher = build_fetcher(config)
+        setter = getattr(fetcher, "set_cookies", None)
+        if callable(setter):
+            setter(cookie)
+        fetcher.fetch(keywords[0])
+        # v1.9.2：保活用的是一次性 fetcher，服务端刷新的 _m_h5_tk 只留在它的内存里；
+        # 必须复用与正常轮次相同的节流落盘，否则界面会一直显示"令牌已过期"
+        # （实际会话已被服务端续期，但本地存的是旧时间戳）。
+        with contextlib.suppress(Exception):
+            self._persist_refreshed_token(fetcher)
+        self._last_auth_at = time.time()
+        return True
+
+    def keepalive_settings(self) -> dict[str, Any]:
+        """保活线程读取的配置快照。"""
+        monitor_cfg = self.config.monitor
+        return {
+            "enabled": bool(getattr(monitor_cfg, "keepalive_enabled", True)),
+            "interval": int(getattr(monitor_cfg, "keepalive_interval_seconds", 1800) or 0),
+            "last_auth_at": self._last_auth_at,
+        }
+
+    def start_keepalive(self) -> None:
+        """启动 Cookie 空闲保活线程（幂等）。"""
+        from xianyu_alert.keepalive import CookieKeeper
+
+        if self._keeper is None:
+            self._keeper = CookieKeeper(
+                probe=self.keepalive_probe, settings=self.keepalive_settings
+            )
+        self._keeper.start()
+
+    def stop_keepalive(self) -> None:
+        """停止 Cookie 空闲保活线程（幂等）。"""
+        if self._keeper is not None:
+            self._keeper.stop()
+

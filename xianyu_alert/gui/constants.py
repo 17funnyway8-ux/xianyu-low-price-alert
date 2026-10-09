@@ -145,6 +145,7 @@ DEFAULT_CONFIG_DICT: dict[str, Any] = {
 #: 功能更新日志（v3.2：「关于」对话框展示版本历史）
 UPDATE_LOG = (
     "## 版本历史\n"
+    "- **v1.9.7** Web 后端（monitor_service.py 1561 行）拆为包：constants / logging_bridge / forms / cookie_pool / shelf_check / keepalive / service；主服务类按功能拆 mixin，service.py 降到 489 行（对外命名空间零缺失）\n"
     "- **v1.9.6** 网页兜底采集（全项目最低分模块）改造：解析层独立为 web_parse.py（三级策略 + 声明式选择器表 + 诊断报告）；共享解析原语抽到 parsing.py；新增 19 条 HTML 夹具测试；文档补齐（0 条时日志直接说明原因与排查方向）\n"
     "- **v1.9.5** gui.py（3932 行单文件）拆为 gui/ 包：constants（常量）/ helpers（纯函数） / app（主窗口类）；对外命名空间 118 个名字与 72 个类成员**零缺失**（机械校验）\n"
     "- **v1.9.4** 修复 CLI 机器可读输出：日志改走 stderr（此前日志写 stdout，会让 xianyu-alert cookie status --json 的管道消费方解析失败）\n"
