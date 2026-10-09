@@ -116,6 +116,7 @@ def make_item(
     price: Any = "888.00",
     publish_time: Any = "1700000000000",
     ex_price: Any = None,
+    pic_url: Any = None,
 ) -> dict[str, Any]:
     """构造一个符合闲鱼实测结构的 resultList 元素。"""
     ex_content: dict[str, Any] = {"area": "广东 深圳", "userNickName": "闲鱼用户"}
@@ -123,6 +124,8 @@ def make_item(
         ex_content["title"] = title
     if ex_price is not None:
         ex_content["price"] = ex_price
+    if pic_url is not None:
+        ex_content["picUrl"] = pic_url
 
     args: dict[str, Any] = {}
     if item_id is not None:
@@ -261,6 +264,20 @@ class TestMtopParsing(unittest.TestCase):
             datetime.fromtimestamp(1700000000.0).strftime("%Y-%m-%d %H:%M:%S"),
         )
         self.assertEqual(product.keyword, "Switch")
+
+    def test_parse_item_extracts_image_url(self) -> None:
+        """站点返回的协议相对 picUrl 被归一化为 https 主图地址。"""
+        product = parse_mtop_item(make_item(pic_url="//img.alicdn.com/a.jpg"), "Switch")
+        self.assertIsNotNone(product)
+        assert product is not None
+        self.assertEqual(product.image_url, "https://img.alicdn.com/a.jpg")
+
+    def test_parse_item_without_pic_url_has_blank_image(self) -> None:
+        """没有 picUrl 时主图为空串，不抛异常。"""
+        product = parse_mtop_item(make_item(), "Switch")
+        self.assertIsNotNone(product)
+        assert product is not None
+        self.assertEqual(product.image_url, "")
 
     def test_parse_item_missing_title_returns_none(self) -> None:
         """缺 title 的条目被跳过。"""
