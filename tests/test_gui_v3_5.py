@@ -478,10 +478,10 @@ class TestThreadModel(unittest.TestCase):
 
         fetcher = FakeFetcher()
         storage = FakeStorage()
-        with mock.patch("xianyu_alert.gui.build_fetcher", return_value=fetcher), \
-             mock.patch("xianyu_alert.gui.Storage", return_value=storage), \
-             mock.patch("xianyu_alert.gui.build_notifiers", return_value=[]), \
-             mock.patch("xianyu_alert.gui.Monitor", FakeMonitor):
+        with mock.patch("xianyu_alert.gui.app.build_fetcher", return_value=fetcher), \
+             mock.patch("xianyu_alert.gui.app.Storage", return_value=storage), \
+             mock.patch("xianyu_alert.gui.app.build_notifiers", return_value=[]), \
+             mock.patch("xianyu_alert.gui.app.Monitor", FakeMonitor):
             gui._monitor_worker(cfg, single_round=False)
 
         self.assertTrue(fetcher.closed)
@@ -520,10 +520,10 @@ class TestThreadModel(unittest.TestCase):
                 return 0
 
         # 用后台线程跑 worker，主线程 0.2s 后发停止信号，验证能及时退出
-        with mock.patch("xianyu_alert.gui.build_fetcher", return_value=FakeFetcher()), \
-             mock.patch("xianyu_alert.gui.Storage", return_value=FakeStorage()), \
-             mock.patch("xianyu_alert.gui.build_notifiers", return_value=[]), \
-             mock.patch("xianyu_alert.gui.Monitor", FakeMonitor):
+        with mock.patch("xianyu_alert.gui.app.build_fetcher", return_value=FakeFetcher()), \
+             mock.patch("xianyu_alert.gui.app.Storage", return_value=FakeStorage()), \
+             mock.patch("xianyu_alert.gui.app.build_notifiers", return_value=[]), \
+             mock.patch("xianyu_alert.gui.app.Monitor", FakeMonitor):
             thread = threading.Thread(target=gui._monitor_worker, args=(cfg, False), daemon=True)
             thread.start()
             threading.Event().wait(0.2)
