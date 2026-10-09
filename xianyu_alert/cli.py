@@ -137,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构造 argparse 解析器。"""
     parser = argparse.ArgumentParser(
         prog="xianyu-alert",
-        description="闲鱼低价提醒工具：周期性监测关键词商品，低于价格阈值时推送通知。" "常用示例：once（跑一轮）/ list --json（机器可读）/ config validate（验配置）" "/ cookie status --json（巡检健康）/ cookie keepalive --enable（空闲保活）",
+        description="闲鱼低价提醒工具：周期性监测关键词商品，低于价格阈值时推送通知。" "常用示例：autostart enable（开机自启）/ once（跑一轮）/ list --json（机器可读）/ config validate（验配置）" "/ cookie status --json（巡检健康）/ cookie keepalive --enable（空闲保活）",
     )
     parser.add_argument("--version", action="version", version=f"xianyu-alert {__version__}")
 
@@ -224,6 +224,14 @@ def build_parser() -> argparse.ArgumentParser:
             sub_ka.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
             sub_ka.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
+    # autostart 子命令（v1.9.8+）：三平台统一的开机自启
+    sub_auto = subparsers.add_parser("autostart", help="查看 / 启用 / 关闭开机自启（三平台统一）")
+    auto_subs = sub_auto.add_subparsers(dest="autostart_command")
+    for _name, _help in (("status", "查看当前状态"), ("enable", "启用开机自启"), ("disable", "关闭开机自启")):
+        _sub = auto_subs.add_parser(_name, help=_help)
+        _sub.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+        _sub.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
+
     # config 子命令（v1.9.2+）：改完配置先验一遍
     sub_cfg = subparsers.add_parser("config", help="配置相关子命令（validate：校验配置文件）")
     cfg_subs = sub_cfg.add_subparsers(dest="config_command")
@@ -236,6 +244,49 @@ def build_parser() -> argparse.ArgumentParser:
     sub_val.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
     return parser
+
+
+def cmd_autostart(args: argparse.Namespace) -> int:
+    """执行 autostart：查看 / 启用 / 关闭"开机自启"（三平台统一）。
+
+    改造前：Windows 只会在桌面建快捷方式（其实不会自启），macOS 要用户自己照文档敲脚本，
+    Linux 什么都没有。现在三平台都通过同一份逻辑处理，并支持 --json 供脚本消费。
+
+    Args:
+        args: 已解析参数（autostart_command / enable / disable / json）。
+
+    Returns:
+        0 表示成功；1 表示用法错误或配置失败。
+    """
+    from . import autostart
+
+    action = getattr(args, "autostart_command", None) or "status"
+    if getattr(args, "enable", False):
+        action = "enable"
+    elif getattr(args, "disable", False):
+        action = "disable"
+
+    if action == "enable":
+        status = autostart.enable()
+    elif action == "disable":
+        status = autostart.disable()
+    else:
+        status = autostart.status()
+
+    if getattr(args, "json", False):
+        _emit_json({"ok": status.enabled if action != "disable" else True, "action": action, **status.to_dict()})
+        return 0
+
+    mark = "✅" if status.enabled else "⭕"
+    print(f"{mark} 开机自启（{status.mechanism}）：{'已启用' if status.enabled else '未启用'}")
+    print(f"   平台判定：{status.platform}（{'支持' if status.supported else '不支持'}）")
+    if status.detail:
+        print(f"   说明：{status.detail}")
+    if status.path:
+        print(f"   文件：{status.path}")
+    if status.hint:
+        print(f"   建议：{status.hint}")
+    return 0
 
 
 def cmd_config_validate(args: argparse.Namespace) -> int:
@@ -711,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
             "status": cmd_cookie_status,
             "keepalive": cmd_cookie_keepalive,
         }.get(getattr(args, "cookie_command", None) or "status", cmd_cookie_status)
+    elif args.command == "autostart":
+        handler = cmd_autostart
     elif args.command == "config":
         handler = {"validate": cmd_config_validate}.get(
             getattr(args, "config_command", None) or "validate", cmd_config_validate

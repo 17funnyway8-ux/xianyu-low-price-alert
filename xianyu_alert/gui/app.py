@@ -13,7 +13,7 @@ import webbrowser
 from datetime import datetime
 from typing import Any
 
-from .. import __version__, secure
+from .. import __version__, autostart, secure
 
 # 防御性导入：无图形环境（如 CI / 无 tkinter 的打包机）也能 import 本模块
 # 并运行全部纯函数测试；真正构造窗口时 tkinter 必须可用。
@@ -399,6 +399,9 @@ class XianyuAlertGUI:
         save_row.pack(fill="x", padx=10, pady=(4, 12))
         ttk.Button(save_row, text="💾 保存配置", command=self.on_save_config).pack(side="left")
         ttk.Button(save_row, text="🖱 创建桌面快捷方式", command=self.on_create_shortcut).pack(
+            side="left", padx=6
+        )
+        ttk.Button(save_row, text="🚀 开机自启", command=self.on_toggle_autostart).pack(
             side="left", padx=6
         )
         ttk.Button(save_row, text="ℹ 关于", command=self.on_show_about).pack(side="left", padx=6)
@@ -1524,6 +1527,40 @@ class XianyuAlertGUI:
                 self._push("log", ("ERROR", f"[{datetime.now():%H:%M:%S}] 创建桌面快捷方式失败"))
 
         threading.Thread(target=worker, daemon=True, name="shortcut").start()
+
+    def on_toggle_autostart(self) -> None:
+        """一键切换"开机自启"（三平台统一，改造前只有 Windows 桌面快捷方式且其实不自启）。
+
+        状态查询与写入都在后台线程完成（要调用 launchctl / systemctl / powershell），
+        结果通过 UI 队列回主线程提示，避免阻塞界面。
+        """
+        self._append_log("INFO", f"[{datetime.now():%H:%M:%S}] 正在处理开机自启…")
+
+        def worker() -> None:
+            """子线程：查看并切换自启状态。"""
+            try:
+                current = autostart.status()
+                if not current.supported:
+                    self._push_message("warning", "不支持", current.detail + chr(10) + current.hint)
+                    return
+                if current.enabled:
+                    result = autostart.disable()
+                    title, level = "已关闭开机自启", "info"
+                else:
+                    result = autostart.enable()
+                    title, level = "已开启开机自启", "info"
+                text = result.detail or result.mechanism
+                if result.path:
+                    text += chr(10) + chr(10) + "文件：" + result.path
+                if result.hint:
+                    text += chr(10) + result.hint
+                self._push_message(level, title, text)
+                self._push("log", ("INFO", f"[{datetime.now():%H:%M:%S}] 开机自启：{result.detail}"))
+            except Exception as exc:  # noqa: BLE001 - 任何异常都不能崩窗
+                logger.warning("处理开机自启异常：%s", exc)
+                self._push_message("error", "操作失败", "处理开机自启失败：" + str(exc))
+
+        threading.Thread(target=worker, daemon=True, name="autostart").start()
 
     # v3.3：已移除「获取 Cookie」对话框（on_get_cookie）。
     # 自动登录入口取消；手动获取步骤说明收进「Cookie 管理」对话框的

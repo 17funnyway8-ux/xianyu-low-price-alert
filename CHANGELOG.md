@@ -2,6 +2,23 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.8] - 2026-10-10
+
+### 新增
+- **开机自启三平台统一**（改造前是 Windows 桌面快捷方式 / macOS 模板+手动脚本 / Linux 无）：
+  - 新模块 `xianyu_alert/autostart.py`：status / enable / disable 一套接口，
+    macOS 用 LaunchAgent、Linux 用 **systemd --user（无需 root）**、Windows 用启动文件夹快捷方式；
+  - CLI：`xianyu-alert autostart status|enable|disable [--json]`；
+  - GUI：Tk 与 Qt 均新增「🚀 开机自启」一键按钮。
+- **退出语义明确**：崩溃自动拉起，**主动退出不拉起**（KeepAlive.SuccessfulExit=false / Restart=on-failure），
+  避免出现关不掉的守护进程。
+- `tests/test_autostart.py`（28 条）：通过注入 runner + home，**三平台行为在一台机器上离线可测**，
+  含命令失败、写盘失败、无 systemd 环境等失败路径。
+
+### 变更
+- `scripts/install_launchagent.sh` 与 CLI 现在是同一份逻辑（脚本保留兼容，推荐直接用 CLI），
+  避免模板与代码两套真相。
+
 ## [1.9.7] - 2026-10-10
 
 ### 重构

@@ -8,6 +8,8 @@
 # 或指定 .app 路径：
 #     bash scripts/install_launchagent.sh /path/to/闲鱼低价提醒工具.app
 # ===========================================================
+# NOTE (v1.9.8): 本脚本与 CLI 子命令 autostart enable 使用同一套逻辑
+# （xianyu_alert/autostart.py）。推荐直接用 CLI；脚本保留以兼容既有文档与习惯。
 set -euo pipefail
 
 # ---------- 定位项目根（与 macos_build.sh 一致：脚本位于 scripts/ 时上级即项目根） ----------

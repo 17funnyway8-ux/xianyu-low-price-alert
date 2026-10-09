@@ -45,7 +45,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.9.7` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.9.8` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -59,7 +59,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.9.7
+  17funnyway8/xianyu-alert:1.9.8
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -68,7 +68,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.9.7   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.9.8   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -356,5 +356,33 @@ PyInstaller 单文件打包的常见误报。可用仓库内 `build/*.spec` 自�
 | 多数「缺价格」 | 价格节点改名 | 查 `price_class_patterns` |
 | 多数「缺标题」 | 标题节点改名 | 查 `title_class_patterns` |
 | 无商品 ID | 链接形式变了 | 查 `xianyu_alert/parsing.py` 的 `_ID_PATTERNS` |
+
+---
+
+## 开机自启（三平台统一）
+
+一条命令即可让工具随登录自动运行 —— 三平台共用同一套逻辑，**不再需要照文档手敲脚本**：
+
+```bash
+xianyu-alert autostart status          # 查看当前状态
+xianyu-alert autostart enable          # 开启（登录后自动启动）
+xianyu-alert autostart disable         # 关闭
+xianyu-alert autostart status --json   # 机器可读
+```
+
+图形界面里也有「🚀 开机自启」按钮（Tk / Qt 均有），一键开关并提示结果。
+
+| 平台 | 机制 | 落地位置 |
+|---|---|---|
+| macOS | LaunchAgent（launchctl） | `~/Library/LaunchAgents/com.xianyu-alert.gui.plist` |
+| Linux | **systemd --user**（无需 root） | `~/.config/systemd/user/xianyu-alert.service` |
+| Windows | 启动文件夹快捷方式 | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` |
+
+**崩溃会自动拉起，主动退出不会**（macOS 用 `KeepAlive.SuccessfulExit=false`，
+Linux 用 `Restart=on-failure`）—— 避免出现关不掉的守护进程。
+
+> 改造前：Windows 只在**桌面**建快捷方式（其实并不会自启），macOS 要用户自己跑
+> `scripts/install_launchagent.sh`，Linux 完全没有这个能力。
+> 现在那个脚本仍可用，但它与 CLI 是同一份逻辑（推荐直接用 CLI）。
 
 ---
