@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -135,10 +136,22 @@ class TestFilterReasonsInRound(MonitorSchedulerCase):
 class TestConfigHotReload(MonitorSchedulerCase):
     """M04：轮次边界热更——改配置后下一轮立即生效，不必重启。"""
 
+    def _bump_mtime(self, seconds: float = 5.0) -> None:
+        """把配置文件 mtime 显式推到未来。
+
+        v1.10.10：热更基于 mtime 比对，而 **Windows 的 mtime 粒度较粗** ——
+        测试里两次快速写入可能落在同一个 tick，`reload_if_config_changed()`
+        会返回 False，于是这个用例在 Windows CI 上偶发失败（不是热更逻辑的问题）。
+        显式设置 mtime 既确定、又不需要 sleep。
+        """
+        future = time.time() + seconds
+        os.utime(self.config_path, (future, future))
+
     def test_reload_detects_change(self) -> None:
         self.assertFalse(self.monitor.reload_if_config_changed(), "未改动时不应重载")
         self.write_config(make_config_dict(keyword="显卡"))
-        self.assertTrue(self.monitor.config.keywords[0].keyword == "Switch")
+        self._bump_mtime()
+        self.assertEqual(self.monitor.config.keywords[0].keyword, "Switch")
         self.assertTrue(self.monitor.reload_if_config_changed())
         self.assertEqual(self.monitor.config.keywords[0].keyword, "显卡")
         self.assertFalse(self.monitor.reload_if_config_changed(), "重载后 mtime 已同步")
@@ -146,6 +159,9 @@ class TestConfigHotReload(MonitorSchedulerCase):
     def test_reload_keeps_old_config_on_error(self) -> None:
         with open(self.config_path, "w", encoding="utf-8") as fp:
             fp.write("keywords: []\nmonitor: {interval_seconds: 不是数字}\n")
+        self._bump_mtime()
+        # 注意：必须真的触发重载（mtime 已变化）才谈得上"失败沿用旧配置"，
+        # 否则在粗粒度文件系统上会变成一条**空过**的用例。
         self.assertFalse(self.monitor.reload_if_config_changed())
         self.assertEqual(self.monitor.config.keywords[0].keyword, "Switch", "热更失败必须沿用旧配置")
 
