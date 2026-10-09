@@ -1,7 +1,7 @@
 """GUI v3.2 纯函数测试：默认值（600s / mtop）、web 隐藏、多 Cookie 池、
 轮换逻辑、提醒表排序、更新日志、Cookie 有效性检测。
 
-沿用 test_gui.py / test_gui_v3.py 的「抽纯函数测试」模式，**不真正显示窗口**。
+沿用 test_gui.py / test_gui_forms.py 的「抽纯函数测试」模式，**不真正显示窗口**。
 gui.py 顶部对 tkinter 采用防御性导入：无图形环境也能 import 并跑纯函数测试。
 """
 

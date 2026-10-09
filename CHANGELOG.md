@@ -2,6 +2,22 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.7] - 2026-10-10
+
+### 变更
+- **测试文件按模块重组（M20）**：26 个"版本 + QA 批次"命名的文件（`test_qa_v3_6_extra.py`、
+  `test_v1_8_2_token_refresh.py` …）改为 **`test_<模块>_<方面>.py`**（如 `test_gui_blacklist.py`、
+  `test_token_refresh.py`、`test_cookie_pool_rotation.py`）。文档里的旧名引用同步更新。
+- **新增 `tests/README.md`**：命名规范、**新旧对照表**（可追溯历史 issue/PR）、
+  四条测试约定（不依赖真实网络/时间/显示；Tk/Qt 必须探测+跳过；断言要来自已验证行为）与运行方式。
+
+### 修复
+- **Tk 测试缺守卫导致的"顺序敏感"失败**：`test_cookie_pool_rotation.py` 的
+  `TestSaveBehaviorExtra` 直接调用 `tkinter.Tk()` **没有探测守卫**，而在无显示环境（本地开发机、
+  slim 容器）会直接 Error。更隐蔽的是：**能否通过取决于模块的字母序**（前面的模块若已初始化过
+  Tcl，这里就可能侥幸成功），于是**重命名测试文件就会莫名其妙让套件变红** ——
+  本次重命名正好把它暴露出来。已统一为仓库既有模式（探测失败 → `SkipTest`），行为与顺序无关。
+
 ## [1.10.6] - 2026-10-10
 
 ### 测试（覆盖率补强，继续为"均分 9 分"补齐短板）
@@ -364,7 +380,7 @@
 
 ### 修复
 - 源码级排查修复 14 处缺陷：Cookie 池数据保真、售出判定、轮换清理、表单保存路径不得明文写 Cookie 等
-- 新增 `tests/test_v1_8_1_fixes.py`（9 条）
+- 新增 `tests/test_regression_session_leak.py`（9 条）
 
 ## [1.8.0] - 2026-08-09
 

@@ -1,6 +1,6 @@
 """QA 独立补充边界测试（v3.2 增量）——严过关（Yan）独立验证。
 
-补充视角（不与既有 test_gui_v3_2.py 重复）：
+补充视角（不与既有 test_gui_cookie_pool.py 重复）：
     1. cookie_pool 轮换的取模越界 / 负数轮次 / 重复名称 / 真实损坏密文跳过；
     2. detect_cookie_health 的 expiring 精确边界（恰 1 小时 vs 1 小时 +1ms）、
        真实损坏密文的 invalid_encrypt 分支（不 mock）；
@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import unittest
+from typing import Any
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -318,17 +319,31 @@ class TestDefaultsExtra(unittest.TestCase):
 class TestSaveBehaviorExtra(unittest.TestCase):
     """完整 on_save_config：mtop 无 Cookie 保存成功且弹 warning（不拦截）。"""
 
+    root: Any = None
+
     @classmethod
     def setUpClass(cls) -> None:
-        import tkinter
+        """尝试创建隐藏的 Tk 根窗口，失败则跳过整个类。
 
-        cls.root = tkinter.Tk()
-        cls.root.withdraw()
+        v1.10.7 补：此前这里直接 tkinter.Tk() **没有守卫** —— 在无显示环境（本地开发机、
+        slim 容器）会直接 Error，而仓库里其它 Tk 测试（test_gui / test_regression_v18）
+        都用了「探测失败即 SkipTest」。缺守卫还带来一个更隐蔽的问题：**能否通过取决于
+        模块的字母序**（前面的模块若已初始化过 Tcl，这里就可能侥幸成功），
+        于是重命名测试文件就会莫名其妙地让套件变红。统一为探测+跳过，行为与顺序无关。
+        """
+        try:
+            import tkinter
+
+            cls.root = tkinter.Tk()
+            cls.root.withdraw()
+        except Exception as exc:  # noqa: BLE001 - 无显示环境
+            raise unittest.SkipTest(f"当前环境无 GUI 显示，跳过 Tk 相关测试：{exc}") from exc
 
     @classmethod
     def tearDownClass(cls) -> None:
-        with contextlib.suppress(Exception):
-            cls.root.destroy()
+        if cls.root is not None:
+            with contextlib.suppress(Exception):
+                cls.root.destroy()
 
     def _make_app(self, tmp: str, ftype: str = "mock", pool=None) -> tuple:
         from xianyu_alert.gui import XianyuAlertGUI, fetcher_label
