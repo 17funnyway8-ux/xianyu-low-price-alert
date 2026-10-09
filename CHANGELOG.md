@@ -2,6 +2,29 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.9] - 2026-10-10
+
+### 修复
+- **Qt 版「编辑筛选」按钮点了就崩**：`MonitorConfigTab._on_edit_filters` 调用
+  `table_keywords.update_row(kw, price, ...)`，而签名是
+  `update_row(old_keyword, new_keyword, price, enabled, summary)` —— **少传一个新名参数**，
+  调用即 `TypeError: missing 1 required positional argument: 'price'`。
+  这是本轮为该方法补测试时**当场暴露**的（此前 Qt 版这条路径没有任何用例）。
+- `KeywordEditDialog.result()` 改为**全函数**：此前只在点过「确定」后才设置 `_result`，
+  未确定就调用会抛 `AttributeError`；现在以构造入参兜底（语义即「未编辑时返回原值」）。
+
+### 测试（M16：Qt 版用例与覆盖率）
+- 新增 `tests/test_gui_qt_dialogs.py`（27 条）：关键词编辑对话框（校验/回传/脏价格）、
+  预置词 / 通道 / 黑名单原因 / 刷新 Cookie 对话框、Cookie 池对话框（校验规则 / 增改 / 回传）、
+  配置页签的增删改与开关（含「编辑筛选」——正是上面那个 bug）、MonitorWorker 生命周期。
+- **`gui_qt` 覆盖率 55% → 65%**（dialogs 54%→82%、tab_config 56%→68%、widgets 73%→85%）。
+- **CI 新增 Qt 覆盖率门禁**：此前 gui_qt 只有用例数、没有数字门禁（主门禁环境无 PySide6，
+  该包被排除）。现在在装了 PySide6 的作业里单独度量并要求 **≥ 60%**。
+
+### 说明
+- 本地一度用 `timeout` 跑测试，但 macOS 没有该命令；改用「后台运行 + 看门狗 kill」。
+- Qt 测试**必须屏蔽 QMessageBox**：本轮第一次运行正是被未屏蔽的模态框挂住（本项目早期踩过同样的坑）。
+
 ## [1.10.8] - 2026-10-10
 
 ### 修复
