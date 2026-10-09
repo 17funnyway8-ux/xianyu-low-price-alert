@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/17funnyway8-ux/xianyu-low-price-alert?label=release)](https://github.com/17funnyway8-ux/xianyu-low-price-alert/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
+[![Docker Hub](https://img.shields.io/badge/docker-17funnyway8%2Fxianyu--alert-blue?logo=docker)](https://hub.docker.com/r/17funnyway8/xianyu-alert)
 
 **自托管的闲鱼「捡漏」监控**：按关键词周期性抓取最新商品，筛出**新出现且价格低于阈值**的，去重后推送到 控制台 / 微信 / 邮件 / Telegram / Bark / 企业微信。
 提供 **Docker Web**（手机随时看）与 **Windows / macOS 桌面版**（本机 7×24 挂机）双形态，同一套配置与数据。
@@ -35,6 +36,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 - **精确过滤，少打扰**：关键词 + 独立价格阈值，支持**排除词**（回收 / 置换等）与**必含词**（16G / DDR4 等），双重去重保证同一商品**永不重复提醒**。
 - **多账号 Cookie 池**：按轮次轮换取用，过期自动停用并推送提醒；Cookie **Fernet 加密落盘**（`fernet1:`），磁盘无明文，全接口脱敏。
 - **Web 全功能**：关键词 / 过滤词 / Cookie 池 / 6 种通知通道 / 运行监控（校验在架、售出撤销、黑名单、清空记录）/ SSE 实时日志；远程访问可开 `Bearer` token 认证。
+- **开箱即用**：镜像已发布 **Docker Hub（amd64 + arm64 多架构）**，`docker run` 两条命令起服务，无需克隆仓库；也可从源码构建。
 - **工程可靠**：**930+ 个全 mock 测试**（无外网依赖，20 秒跑完）+ CI 三平台矩阵（Linux/Windows/macOS）+ 覆盖率门槛 + 双平台自动构建发布 + 进程单实例锁（崩溃自动释放）+ SQLite 热备指引。
 
 ---
@@ -43,14 +45,31 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-### 1. 部署（复制下面的精简版 `docker-compose.yml`，或直接用仓库根目录的完整版）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.8.2` / `sha-<commit>`）
+
+### 1. 部署（二选一）
+
+**方式 A：直接用现成镜像（最快，不用克隆仓库）**
+
+```bash
+mkdir -p xianyu-data && sudo chown -R 1000:1000 xianyu-data   # ⚠️ 镜像以非 root(uid 1000) 运行
+
+docker run -d --name xianyu-alert \
+  -p 127.0.0.1:8080:8080 \
+  -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
+  -v "$PWD/xianyu-data:/app/data" \
+  --restart unless-stopped \
+  17funnyway8/xianyu-alert:1.8.2
+```
+
+**方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
 
 ```yaml
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    build: .
-    image: xianyu-alert:latest
+    image: 17funnyway8/xianyu-alert:1.8.2   # 想自己构建：保留下面这行并加 --build
+    # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
     environment:
@@ -78,8 +97,11 @@ services:
 ### 2. 启动 / 使用
 
 ```bash
-# 启动常驻 Web（首次自动构建镜像）
-docker compose -p xianyu-alert up -d --build
+# 启动常驻 Web（拉取 Docker Hub 现成镜像）
+docker compose -p xianyu-alert up -d
+
+# 想从源码构建（改过代码 / 无外网时）：把 compose 里的 image 换成 build: .，然后
+# docker compose -p xianyu-alert up -d --build
 
 # 健康检查（HTTP /healthz，含 monitor 线程状态）
 curl http://127.0.0.1:8080/healthz
