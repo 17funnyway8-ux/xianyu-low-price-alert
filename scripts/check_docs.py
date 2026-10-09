@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import json
 import os
@@ -27,6 +28,19 @@ import subprocess
 import sys
 
 BT = chr(96)  # 行内代码的反引号（写成常量，避免源码里出现裸反引号）
+
+
+def _force_utf8_output() -> None:
+    """把 stdout / stderr 切到 UTF-8。
+
+    v1.10.11：Windows 控制台默认 cp1252（中文系统为 gbk），本脚本会打印中文报告，
+    直接运行会在 print 阶段抛 UnicodeEncodeError 而**整个检查器崩掉** ——
+    CI 的文档门禁跑在 ubuntu 上（UTF-8），所以这个坑一直没暴露，
+    直到本轮为脚本补自测、在 Windows runner 上真的跑了一遍。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):  # 老版本 / 非文本流：忽略即可
+            stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: 只检查这些顶层目录下的路径提及，避免把示例文本误判为路径
@@ -147,6 +161,7 @@ def check_index(files: set[str]) -> list[dict]:
 
 def main() -> int:
     """入口：跑四项检查并输出报告。"""
+    _force_utf8_output()
     files = tracked_files()
     dirs = tracked_dirs(files)
     problems: list[dict] = []
