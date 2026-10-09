@@ -137,6 +137,20 @@ class TestReleaseAndHolder(SingletonCase):
     def test_lock_holder_pid_missing_file(self) -> None:
         self.assertEqual(singleton.lock_holder_pid(self.path), "")
 
+    def test_lock_holder_pid_falls_back_when_file_unreadable(self) -> None:
+        """Windows：msvcrt 锁住的文件新句柄读不了（共享冲突）-> 回退到内存 PID。
+
+        这个平台差异由 Windows CI 发现：此前会静默返回空串，冲突提示里只剩「PID 未知」。
+        这里用 mock 在任何平台上模拟同样的 OSError。
+        """
+        lock = singleton.acquire_instance_lock(self.path)
+        self.assertIsNotNone(lock)
+        try:
+            with mock.patch("builtins.open", side_effect=OSError("sharing violation")):
+                self.assertEqual(singleton.lock_holder_pid(self.path), str(os.getpid()))
+        finally:
+            singleton.release_instance_lock(lock)
+
     def test_lock_holder_pid_after_acquire(self) -> None:
         lock = singleton.acquire_instance_lock(self.path)
         self.assertIsNotNone(lock)
