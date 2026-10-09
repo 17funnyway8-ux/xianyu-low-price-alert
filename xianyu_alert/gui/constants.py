@@ -145,6 +145,7 @@ DEFAULT_CONFIG_DICT: dict[str, Any] = {
 #: 功能更新日志（v3.2：「关于」对话框展示版本历史）
 UPDATE_LOG = (
     "## 版本历史\n"
+    "- **v1.10.8** 覆盖率补强三连：cookie 75%→87%、config 81%→87%、singleton 80%→94%；修复配置顶层非映射时报 AttributeError 的问题\n"
     "- **v1.10.7** 测试文件按模块重组（26 个文件改名）+ tests/README.md 索引；修复 Tk 测试缺守卫导致的顺序敏感失败\n"
     "- **v1.10.6** 覆盖率补强：Tk 主窗口 handler 直接测试（app.py 49%→53%）、CLI 子命令与错误路径测试（cli.py 70%→83%）\n"
     "- **v1.10.5** 冷启动重评（均分 8.94，未达 9 分）+ 两个覆盖率缺口补强：web.py 56%→100%、keepalive.py 87%→100%（含线程生命周期直接断言）\n"
