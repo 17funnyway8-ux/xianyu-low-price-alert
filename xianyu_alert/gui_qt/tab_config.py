@@ -303,8 +303,11 @@ class MonitorConfigTab(QWidget):
             "exclude_keywords": excludes,
             "required_keywords": requireds,
         }
+        # v1.10.9 修：这里此前只传了 (kw, price)，与 update_row(old, new, price, ...) 的
+        # 形参错位，调用即抛 TypeError —— Qt 版「编辑筛选」按钮**点了就崩**。
+        # 编辑筛选不改关键词名，故 new_keyword 与 old_keyword 同为 kw。
         self.table_keywords.update_row(
-            kw, price,
+            kw, kw, price,
             enabled=self._keyword_enabled.get(kw, True),
             summary=keyword_filter_summary(self._keyword_filters[kw]),
         )

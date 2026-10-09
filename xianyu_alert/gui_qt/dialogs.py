@@ -95,6 +95,16 @@ class KeywordEditDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # v1.10.9：result() 需要是**全函数** —— 此前只在 _on_accept 成功后才设置 _result，
+        # 未点「确定」就调用会抛 AttributeError（测试与复用方都容易踩）。
+        # 现在先以构造入参兜底，语义即"未编辑时返回原值"。
+        self._result: tuple[str, float, list[str], list[str]] = (
+            str(keyword or ""),
+            float(price or 0.0),
+            list(exclude or []),
+            list(required or []),
+        )
+
     def _on_accept(self) -> None:
         """校验并提交（校验失败不关闭对话框）。"""
         try:
