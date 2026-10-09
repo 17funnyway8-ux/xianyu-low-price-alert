@@ -1,7 +1,7 @@
 """v3.4 QA 独立验证补充边界用例（第 2 批）。
 
 本文件由 QA（严过关）独立编写，重点覆盖工程师交付中未被
-`test_qa_v3_4_extra.py` 精确断言/或需要独立复核的边界：
+`test_price_filter_server.py` 精确断言/或需要独立复核的边界：
 
     1. format_price_bound：整数 / 浮点 / NaN / ±inf / None / 脏数据；
     2. build_search_payload：max_price=0 / None 的实际行为精确断言
