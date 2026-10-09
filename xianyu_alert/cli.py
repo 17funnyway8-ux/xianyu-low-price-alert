@@ -13,12 +13,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import logging.handlers
 import os
 import sys
 
-from . import __version__, paths
+import yaml
+
+from . import __version__, credential, paths
 from .config import Config, ConfigError, load_config
 from .cookie import (
     LoginTimeout,
@@ -93,11 +96,46 @@ def setup_logging(verbose: bool = False) -> None:
     install_file_logging()
 
 
+def _emit_json(payload: dict) -> None:
+    """以单行 JSON 输出（供脚本 / 自动化消费）。
+
+    与人类可读输出互斥：由 --json 选择。字段一旦发布即视为**稳定接口**，
+    只增不改；本函数只打印一行 JSON，不写任何日志（避免污染 stdout）。
+
+    Args:
+        payload: 可 JSON 序列化的字典。
+    """
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+def _update_monitor_fields(config_path: str, updates: dict) -> None:
+    """原子更新 config.yaml 的 monitor 节点字段，保留其余内容与密文原样。
+
+    用于 CLI 修改开关类配置（如空闲保活）。写盘用「同目录临时文件 + os.replace」，
+    进程中途被 kill 也不会留下半截文件。
+
+    Args:
+        config_path: 配置文件路径。
+        updates: 写入 monitor 节点的键值对。
+
+    Raises:
+        OSError: 文件读写失败。
+    """
+    with open(config_path, encoding="utf-8") as fp:
+        data = yaml.safe_load(fp) or {}
+    monitor = data.setdefault("monitor", {})
+    monitor.update(updates)
+    tmp = config_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fp:
+        yaml.safe_dump(data, fp, allow_unicode=True, sort_keys=False)
+    os.replace(tmp, config_path)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构造 argparse 解析器。"""
     parser = argparse.ArgumentParser(
         prog="xianyu-alert",
-        description="闲鱼低价提醒工具：周期性监测关键词商品，低于价格阈值时推送通知。",
+        description="闲鱼低价提醒工具：周期性监测关键词商品，低于价格阈值时推送通知。" "常用示例：once（跑一轮）/ list --json（机器可读）/ config validate（验配置）" "/ cookie status --json（巡检健康）/ cookie keepalive --enable（空闲保活）",
     )
     parser.add_argument("--version", action="version", version=f"xianyu-alert {__version__}")
 
@@ -118,6 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
             help=f"配置文件路径（默认 {DEFAULT_CONFIG_PATH}）",
         )
         sub.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+        sub.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
         if name == "run":
             sub.add_argument(
                 "--max-rounds", type=int, default=None,
@@ -143,6 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
                 help=f"配置文件路径（默认 {DEFAULT_CONFIG_PATH}）",
             )
             sub_status.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+            sub_status.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
 
             # `cli cookie refresh` —— 用持久化 profile **免扫码**刷新（日常续期主力）
             sub_refresh = cookie_subs.add_parser(
@@ -162,8 +202,151 @@ def build_parser() -> argparse.ArgumentParser:
                 help="强制有头模式（需要人工扫码时用；容器内无显示器则不可用）",
             )
             sub_refresh.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+            sub_refresh.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
+
+            # cookie keepalive —— 查看/开关空闲保活（v1.9.2+）
+            sub_ka = cookie_subs.add_parser(
+                "keepalive", help="查看或开关空闲保活（长时间空闲也能维持登录态）"
+            )
+            sub_ka.add_argument(
+                "-c", "--config", default=DEFAULT_CONFIG_PATH,
+                help="配置文件路径（默认见 DEFAULT_CONFIG_PATH）",
+            )
+            ka_group = sub_ka.add_mutually_exclusive_group()
+            ka_group.add_argument("--enable", action="store_true", help="开启空闲保活")
+            ka_group.add_argument("--disable", action="store_true", help="关闭空闲保活")
+            sub_ka.add_argument(
+                "--interval", type=int, default=None,
+                help="保活间隔秒数（下限 300；0 表示用配置默认）",
+            )
+            sub_ka.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
+            sub_ka.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+
+    # config 子命令（v1.9.2+）：改完配置先验一遍
+    sub_cfg = subparsers.add_parser("config", help="配置相关子命令（validate：校验配置文件）")
+    cfg_subs = sub_cfg.add_subparsers(dest="config_command")
+    sub_val = cfg_subs.add_parser("validate", help="校验配置文件并打印摘要（无效时退出码 1）")
+    sub_val.add_argument(
+        "-c", "--config", default=DEFAULT_CONFIG_PATH,
+        help="配置文件路径（默认见 DEFAULT_CONFIG_PATH）",
+    )
+    sub_val.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
+    sub_val.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
     return parser
+
+
+def cmd_config_validate(args: argparse.Namespace) -> int:
+    """执行 config validate：校验配置文件并给出摘要（无效时退出码 1）。
+
+    面向"改完配置先验一遍"和脚本化部署：成功打印关键字段摘要，
+    失败打印**精确原因**（配置解析错误本身就带字段路径）。
+
+    Args:
+        args: 已解析参数（含 config / json）。
+
+    Returns:
+        0 表示配置有效；1 表示无效。
+    """
+    path = os.path.abspath(args.config)
+    try:
+        config = load_config(args.config)
+    except ConfigError as exc:
+        if getattr(args, "json", False):
+            _emit_json({"ok": False, "config": path, "error": str(exc)})
+        else:
+            print(f"❌ 配置无效：{exc}", file=sys.stderr)
+        return 1
+
+    diag = credential.diagnose_cookie(str(config.monitor.cookies or ""))
+    payload = {
+        "ok": True,
+        "config": path,
+        "keywords": [r.keyword for r in config.keywords],
+        "keyword_count": len(config.keywords),
+        "interval_seconds": config.monitor.interval_seconds,
+        "fetcher_type": config.fetcher.type,
+        "storage_path": config.storage.path,
+        "cookie_state": diag.state,
+        "cookie_usable": diag.usable,
+        "cookie_reason": diag.reason,
+        "pool_count": len(config.monitor.cookie_pool or []),
+        "keepalive_enabled": bool(getattr(config.monitor, "keepalive_enabled", True)),
+        "keepalive_interval_seconds": int(
+            getattr(config.monitor, "keepalive_interval_seconds", 0) or 0
+        ),
+    }
+    if getattr(args, "json", False):
+        _emit_json(payload)
+        return 0
+
+    print(f"✅ 配置有效：{path}")
+    print(f"   关键词 {payload['keyword_count']} 个：" + "、".join(payload["keywords"]))
+    print(f"   抓取方式：{config.fetcher.type} | 间隔：{config.monitor.interval_seconds}s")
+    print(f"   数据库：{config.storage.path}")
+    print(f"   Cookie：{diag.state}（{'可用' if diag.usable else '不可用'}）—— {diag.reason}")
+    print(
+        "   空闲保活：" + ("开启" if payload["keepalive_enabled"] else "关闭")
+        + f"（{payload['keepalive_interval_seconds']}s）"
+    )
+    return 0
+
+
+def cmd_cookie_keepalive(args: argparse.Namespace) -> int:
+    """执行 cookie keepalive：查看或开关"空闲保活"。
+
+    空闲保活与"是否在跑监控"解耦 —— 只要服务在运行，就按间隔维持登录态，
+    避免空闲几小时后需要重新扫码。不带开关参数时只查看当前设置。
+
+    Args:
+        args: 已解析参数（含 config / enable / disable / interval / json）。
+
+    Returns:
+        0 表示成功；1 表示用法错误。
+    """
+    from .keepalive import MIN_KEEPALIVE_INTERVAL
+
+
+    config = load_config(args.config)
+    updates: dict = {}
+    if getattr(args, "enable", False):
+        updates["keepalive_enabled"] = True
+    if getattr(args, "disable", False):
+        updates["keepalive_enabled"] = False
+    interval = getattr(args, "interval", None)
+    if interval is not None:
+        if interval != 0 and interval < MIN_KEEPALIVE_INTERVAL:
+            print(
+                f"间隔过短：{interval}s（下限 {MIN_KEEPALIVE_INTERVAL}s；填 0 表示随配置默认）。",
+                file=sys.stderr,
+            )
+            return 1
+        updates["keepalive_interval_seconds"] = int(interval)
+
+    if updates:
+        _update_monitor_fields(args.config, updates)
+        config = load_config(args.config)
+
+    enabled = bool(getattr(config.monitor, "keepalive_enabled", True))
+    seconds = int(getattr(config.monitor, "keepalive_interval_seconds", 0) or 0)
+    if getattr(args, "json", False):
+        _emit_json({
+            "ok": True,
+            "config": os.path.abspath(args.config),
+            "changed": bool(updates),
+            "keepalive_enabled": enabled,
+            "keepalive_interval_seconds": seconds,
+        })
+        return 0
+
+    state = "开启" if enabled else "关闭"
+    if updates:
+        print(f"✅ 已更新：空闲保活 {state}（间隔 {seconds}s）")
+    else:
+        print(f"空闲保活：{state}（间隔 {seconds}s）")
+        if not enabled:
+            print("   提示：关闭后长时间空闲会导致 mtop 令牌过期（需重新获取 Cookie）。")
+    return 0
 
 
 def _validate_ranges(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -213,7 +396,10 @@ def cmd_once(args: argparse.Namespace) -> int:
     monitor = Monitor(config, fetcher, storage, notifiers)
     try:
         count = monitor.run_once()
-        print(f"\n本轮共触发 {count} 条低价提醒。")
+        if getattr(args, "json", False):
+            _emit_json({"ok": True, "notified": count})
+        else:
+            print(f"\n本轮共触发 {count} 条低价提醒。")
     finally:
         fetcher.close()
         storage.close()
@@ -226,6 +412,9 @@ def cmd_list(args: argparse.Namespace) -> int:
     storage = Storage(config.storage.path)
     try:
         rows = storage.list_notified(limit=args.limit)
+        if getattr(args, "json", False):
+            _emit_json({"ok": True, "total": len(rows), "records": [dict(r) for r in rows]})
+            return 0
         if not rows:
             print("暂无已提醒记录。")
             return 0
@@ -320,12 +509,43 @@ def cmd_cookie_status(args: argparse.Namespace) -> int:
     Returns:
         0 表示检测完成；用法错误返回 1。
     """
+    # 两条输出路径都要用：提到函数顶部，避免"局部导入晚于使用"的运行时陷阱
+    from . import secure
+    from .cookie import detect_cookie_health
+
     if getattr(args, "cookie_command", None) != "status":
         print("用法：xianyu-alert cookie status [--config 配置文件路径]")
         return 1
 
-    from . import secure
-    from .cookie import detect_cookie_health
+    if getattr(args, "json", False):
+        config = load_config(args.config)
+        diag = credential.diagnose_cookie(str(config.monitor.cookies or ""))
+        pool_items = []
+        for item in config.monitor.cookie_pool or []:
+            ck = str(getattr(item, "cookie", "") or "")
+            st, rs = detect_cookie_health(ck)
+            pool_items.append({
+                "name": str(getattr(item, "name", "")),
+                "enabled": bool(getattr(item, "enabled", True)),
+                "masked": secure.mask_cookie(ck) or "",
+                "state": st,
+                "reason": rs,
+            })
+        _emit_json({
+            "ok": True,
+            "version": __version__,
+            "config": os.path.abspath(args.config),
+            "fetcher": config.fetcher.type,
+            "diagnosis": diag.to_dict(),
+            "pool": pool_items,
+            "pool_count": len(pool_items),
+            "keepalive": {
+                "enabled": bool(getattr(config.monitor, "keepalive_enabled", True)),
+                "interval_seconds": int(getattr(config.monitor, "keepalive_interval_seconds", 0) or 0),
+            },
+        })
+        return 0
+
 
     config = load_config(args.config)
     print(f"配置文件：{os.path.abspath(args.config)}")
@@ -487,7 +707,12 @@ def main(argv: list[str] | None = None) -> int:
         handler = {
             "refresh": cmd_cookie_refresh,
             "status": cmd_cookie_status,
+            "keepalive": cmd_cookie_keepalive,
         }.get(getattr(args, "cookie_command", None) or "status", cmd_cookie_status)
+    elif args.command == "config":
+        handler = {"validate": cmd_config_validate}.get(
+            getattr(args, "config_command", None) or "validate", cmd_config_validate
+        )
     else:
         handler = handlers[args.command]
 

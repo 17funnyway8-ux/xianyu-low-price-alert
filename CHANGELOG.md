@@ -2,6 +2,21 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.3] - 2026-10-09
+
+### 新增
+- **CLI 机器可读输出**：once / list / cookie status 支持 --json（单行 JSON，字段视为稳定接口），
+  便于 cron、NAS 巡检与外部脚本消费
+- **config validate**：校验配置文件并打印摘要（关键词、抓取方式、Cookie 分层状态、保活设置）；
+  无效时退出码 1 并给出精确原因 —— 改完配置先验一遍
+- **cookie keepalive**：查看/开关空闲保活与调整间隔（此前只能手改 YAML）
+- --help 补常用示例，命令可发现性提升
+
+### 修复
+- 修复 cmd_cookie_status 的"局部导入晚于使用"陷阱：函数内后段才 import 的
+  detect_cookie_health / secure，被新增的 JSON 分支提前引用 —— 配了 Cookie 池再跑
+  --json 会直接 UnboundLocalError（由 ruff F823/F821 抓出，已提前到函数顶部导入）
+
 ## [1.9.2] - 2026-10-09
 
 ### 修复
