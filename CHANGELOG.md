@@ -2,6 +2,30 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.8] - 2026-10-10
+
+### 修复
+- **配置顶层不是映射时抛出可读的 ConfigError**：`load_config` 此前只挡了"文件为空"，
+  若 YAML 顶层是列表/标量，会一路走到 `raw.get(...)` 抛 `AttributeError` ——
+  用户看到的是 Python 堆栈而不是"配置哪里写错了"，与本模块"精确报错"的契约不符。
+  现在报：`配置文件顶层必须是映射（键值对形式），当前是 list：<路径>`。
+
+### 测试（覆盖率补强，M06 / M10 / M11）
+- 新增 `tests/test_config_parsing.py`（13 条）：表驱动钉住**每个字段的报错文案**
+  （keywords / monitor / fetcher / notify / cookie_pool），以及少数"回退 + 告警"的点
+  与文件级路径。**`config.py` 81% → 87%**。
+- 新增 `tests/test_singleton_edges.py`（16 条）：权限失败放行 / `strict=True` 抛出 /
+  被占用 / 探测失败保守判忙 / 释放与持有者查询。**`singleton.py` 80% → 94%**。
+- 新增 `tests/test_cookie_capture.py`（9 条）：用**注入的假 playwright 包**把
+  "免扫码自动续期"整条链路离线跑通（未装依赖 / 无 profile 快速失败 / 启动失败 /
+  目录不可建 / 正常取到 `_m_h5_tk` / 等满超时）。**`cookie.py` 75% → 87%**。
+
+### 说明（本轮踩的坑）
+- 写假 playwright 包时**必须给 `__path__`**：否则真 playwright 的 `sync_api` 在被导入时
+  会去反查 `playwright._impl`，撞上假包报 `AttributeError`（环境里其实装着真包）。
+- 配置测试第一版按"脏数据一律回退"写，跑出来 11 个失败 —— 实际契约是**结构性错误直接明确报错**。
+  这提醒：**先写期望再对齐实现**时，期望必须来自真实行为。
+
 ## [1.10.7] - 2026-10-10
 
 ### 变更
