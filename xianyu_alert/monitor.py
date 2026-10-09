@@ -12,16 +12,20 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from .config import Config, KeywordRule
 from .fetcher import MTOP_TOKEN_COOKIE, Fetcher, FetchError
 from .filters import (
+    filter_decision,
     hits_exclude_keywords,
     matches_required_keywords,
-    product_passes_filter,
     product_search_text,
 )
 from .models import Product
@@ -51,6 +55,19 @@ _COOKIE_ALERT_GUIDE = (
 #: 2026-09-24 实测同一份 Cookie，搜索接口报 `RGV587_ERROR`（风控）、
 #: 详情接口报 `FAIL_SYS_TOKEN_EXOIRED`（令牌）。此时笼统地提示
 #: 「请重新登录」会把排查方向带偏 —— 风控时重登根本没用。
+def _stopped(stop_event: Any | None) -> bool:
+    """外部停止信号是否已置位（None 视为未置位）。
+
+    兼容任意可注入的替身对象（测试常用 SimpleNamespace），因此这里做防御性取值。
+    """
+    if stop_event is None:
+        return False
+    try:
+        return bool(stop_event.is_set())
+    except Exception:  # noqa: BLE001 - 替身对象可能没有 is_set
+        return False
+
+
 _FETCH_FAILURE_HINTS = {
     "token": "（令牌层：服务端会自动下发新令牌并重试，连续失败才需重新登录）",
     "session": "（会话层：登录态已失效，需重新登录获取 Cookie）",
@@ -59,7 +76,16 @@ _FETCH_FAILURE_HINTS = {
 }
 
 
+#: 过滤原因的中文标签（v1.10：让日志与指标可读）
+FILTER_REASON_LABELS = {
+    "missing_required": "缺必含词",
+    "excluded": "命中排除词",
+}
+
+
 @dataclass
+
+
 class RoundResult:
     """单轮监测的统计结果（便于日志与测试断言）。"""
 
@@ -70,6 +96,12 @@ class RoundResult:
     notified: int = 0
     failed_keywords: list[str] = field(default_factory=list)
     notified_products: list[Product] = field(default_factory=list)
+    #: 轮次序号（v1.10：轮次指标用）
+    round_no: int = 0
+    #: 本轮耗时（毫秒，v1.10）
+    duration_ms: float = 0.0
+    #: 被过滤商品的原因分布（v1.10）：missing_required / excluded -> 条数
+    filtered_reasons: dict[str, int] = field(default_factory=dict)
 
 
 class Monitor:
@@ -88,6 +120,7 @@ class Monitor:
         fetcher: Fetcher,
         storage: Storage,
         notifiers: list[Notifier],
+        config_path: str | None = None,
     ) -> None:
         """初始化监测器。
 
@@ -110,6 +143,14 @@ class Monitor:
         self._last_cookie_check_at: float = 0.0
         #: v1.9：最近一次已鉴权请求时间（保活与轮次都会刷新）
         self._last_auth_at: float = 0.0
+        #: v1.10：配置文件路径（用于轮次边界热更；None 表示关闭热更）
+        self.config_path: str | None = config_path
+        #: v1.10：上次加载配置时的 mtime（热更检测）
+        self._config_mtime: float = 0.0
+        #: v1.10：轮次级指标环形缓冲（最近 200 轮）
+        self._round_metrics: deque[dict] = deque(maxlen=200)
+        if config_path:
+            self._config_mtime = self._read_config_mtime()
 
     # ------------------------------------------------------------------ #
     def _resolve_cookie(self, round_index: int = 0) -> str:
@@ -314,6 +355,7 @@ class Monitor:
             本轮实际触发通知的商品总数。
         """
         ts = round_ts or datetime.now()
+        started_at = time.monotonic()
         # 轮换：本轮使用池中的第 self._round_no 条 Cookie（池为空则用单值）
         cookie = self._resolve_cookie(self._round_no)
         self._apply_cookie(cookie)
@@ -334,8 +376,21 @@ class Monitor:
             self._process_keyword(rule, ts, result, log_item_details=log_item_details)
 
         self.last_result = result
+        result.round_no = self._round_no
+        result.duration_ms = (time.monotonic() - started_at) * 1000.0
+        self._round_metrics.append({
+            "round": result.round_no,
+            "duration_ms": round(result.duration_ms, 1),
+            "fetched": result.fetched,
+            "filtered": result.filtered,
+            "filtered_reasons": dict(result.filtered_reasons),
+            "new_products": result.new_products,
+            "notified": result.notified,
+            "failed_keywords": list(result.failed_keywords),
+        })
         logger.info(
-            "✅ 本轮完成：抓取 %d 个，新商品 %d 个，通知 %d 个，失败关键词 %s",
+            "✅ 本轮完成（耗时 %.1fs）：抓取 %d 个，新商品 %d 个，通知 %d 个，失败关键词 %s",
+            result.duration_ms / 1000.0,
             result.fetched,
             result.new_products,
             result.notified,
@@ -392,17 +447,25 @@ class Monitor:
         # 1.5) 关键词过滤（v3.1）：必含词缺失 / 排除词命中 → 跳过。
         #      过滤是业务规则，发生在 fetcher 返回后、阈值检查前；
         #      被过滤的商品不进入「新商品」判定与已见记录。
-        filtered_products: list[Product] = [
-            p
-            for p in products
-            if product_passes_filter(p, rule.required_keywords, rule.exclude_keywords)
-        ]
+        filtered_products: list[Product] = []
+        for product in products:
+            decision = filter_decision(product, rule.required_keywords, rule.exclude_keywords)
+            if decision.passed:
+                filtered_products.append(product)
+            else:
+                result.filtered_reasons[decision.reason] = (
+                    result.filtered_reasons.get(decision.reason, 0) + 1
+                )
         skipped = len(products) - len(filtered_products)
         result.filtered += skipped
         if skipped:
+            # v1.10：不只说"跳过了几个"，还说清"因为什么被跳过"
+            breakdown = "、".join(
+                FILTER_REASON_LABELS.get(k, k) + " " + str(v)
+                for k, v in sorted(result.filtered_reasons.items())
+            )
             logger.info(
-                "关键词「%s」：按过滤规则（排除词 / 必含词）跳过 %d 个商品",
-                keyword, skipped,
+                "关键词「%s」：按过滤规则跳过 %d 个商品（%s）", keyword, skipped, breakdown
             )
 
         # 1) 与上一轮对比，筛出「新出现」的商品
@@ -540,14 +603,128 @@ class Monitor:
             "last_auth_at": self._last_auth_at,
         }
 
-    def run_forever(self, max_rounds: int | None = None) -> int:
+    def _read_config_mtime(self) -> float:
+        """读取配置文件 mtime（读不到返回 0）。"""
+        if not self.config_path:
+            return 0.0
+        try:
+            return os.path.getmtime(self.config_path)
+        except OSError:
+            return 0.0
+
+    def reload_if_config_changed(self) -> bool:
+        """轮次边界热更：配置文件被外部改动时重新加载。
+
+        v1.10（M04）：此前过滤规则（排除词 / 必含词）改动后，必须重启或整体重载才生效；
+        现在每个轮次边界检测一次 mtime，变了就就地重载——**下一轮立即按新规则过滤**。
+
+        Returns:
+            True 表示本次确实重载了。
+        """
+        if not self.config_path:
+            return False
+        mtime = self._read_config_mtime()
+        if not mtime or mtime == self._config_mtime:
+            return False
+        try:
+            from .config import load_config
+
+            fresh = load_config(self.config_path)
+        except Exception as exc:  # noqa: BLE001 - 热更失败不能影响正在跑的循环
+            logger.warning("配置热更失败（沿用旧配置）：%s", exc)
+            return False
+        self.config = fresh
+        self._config_mtime = mtime
+        logger.info(
+            "🔄 配置已热更：关键词 %d 个（排除词 / 必含词 / 阈值下一轮生效）",
+            len(fresh.keywords),
+        )
+        return True
+
+    def _maybe_keepalive(self) -> bool:
+        """按需保活（v1.10：**与轮次同一个时间源**）。
+
+        此前保活由 Service 层独立线程按自己的节拍驱动，主循环又按 interval 睡眠，
+        两套节奏并存、看代码时很难判断"到底什么时候会发请求"。现在保活判断
+        直接挂在主循环上（轮次之间与分片睡眠期间都会检查），只有一个时间源。
+        """
+        from .keepalive import keepalive_due
+
+        snap = self.auth_snapshot()
+        if not keepalive_due(
+            now=time.time(),
+            last_auth_at=self._last_auth_at,
+            interval=int(snap["interval"] or 0),
+            enabled=bool(snap["enabled"]),
+        ):
+            return False
+        return self.keepalive_once()
+
+    def _interruptible_sleep(self, seconds: float, stop_event: Any | None = None) -> bool:
+        """分片睡眠：期间响应停止信号（含外部 stop_event）并做保活检查。
+
+        Args:
+            seconds: 目标睡眠时长。
+            stop_event: 外部停止信号；提供时用 Event.wait 实现**即时**唤醒。
+
+        Returns:
+            True 表示睡满了（可继续下一轮）；False 表示期间收到停止信号。
+        """
+        remaining = max(0.0, float(seconds))
+        while remaining > 0 and not self._stop and not _stopped(stop_event):
+            slice_seconds = min(1.0, remaining)
+            if stop_event is not None:
+                if stop_event.wait(slice_seconds):
+                    break
+            else:
+                time.sleep(slice_seconds)
+            remaining -= slice_seconds
+            self._maybe_keepalive()
+        return not self._stop and not _stopped(stop_event)
+
+    def metrics(self) -> dict:
+        """轮次级指标快照（v1.10：耗时 / 抓取 / 过滤原因 / 命中）。
+
+        Returns:
+            形如 {"rounds": [...最近 200 轮...], "last": {...}, "totals": {...}}。
+        """
+        rounds = list(self._round_metrics)
+        return {
+            "rounds": rounds,
+            "last": rounds[-1] if rounds else None,
+            "totals": {
+                "rounds": len(rounds),
+                "fetched": sum(r["fetched"] for r in rounds),
+                "filtered": sum(r["filtered"] for r in rounds),
+                "new_products": sum(r["new_products"] for r in rounds),
+                "notified": sum(r["notified"] for r in rounds),
+                "failed_keywords": sum(len(r["failed_keywords"]) for r in rounds),
+                "avg_duration_ms": round(
+                    sum(r["duration_ms"] for r in rounds) / len(rounds), 1
+                ) if rounds else 0.0,
+            },
+        }
+
+    def run_forever(
+        self,
+        max_rounds: int | None = None,
+        stop_event: Any | None = None,
+        on_round: Callable[[int], None] | None = None,
+    ) -> int:
         """按配置间隔持续运行监测循环。
 
         单轮内部的异常会被捕获并记录，循环不会因此退出；
         收到 KeyboardInterrupt 时优雅退出。
 
+        v1.10（M05 单一时间源）：本循环是唯一的时间节奏 —— 轮次间隔、保活节拍、
+        配置热更、停止信号都在同一个循环里处理。Web 服务原先自己写
+        stop_event.wait(interval) 循环，现改为传入 stop_event 复用本方法，
+        于是 CLI / GUI / Web 三条路径的时间行为完全一致。
+
         Args:
             max_rounds: 最多运行多少轮，None 表示无限（测试可传有限值）。
+            stop_event: 外部停止信号（threading.Event）；置位后立即唤醒并退出。
+            on_round: 每轮结束后的回调，参数为本轮通知数（服务层累计指标用）。
 
         Returns:
             累计通知的商品总数。
@@ -569,11 +746,18 @@ class Monitor:
         self.preflight_cookie()
 
         try:
-            while not self._stop:
+            while not self._stop and not _stopped(stop_event):
+                # v1.10：轮次边界先热更配置（过滤规则/阈值改动立即生效）与按需保活
+                if self.reload_if_config_changed():
+                    interval = self.config.monitor.interval_seconds
+                self._maybe_keepalive()
                 round_no += 1
                 logger.info("===== 第 %d 轮监测开始 =====", round_no)
                 try:
-                    total_notified += self.run_once()
+                    notified = self.run_once()
+                    total_notified += notified
+                    if on_round is not None:
+                        on_round(notified)
                 except Exception as exc:  # noqa: BLE001 - 保证长期运行不被单轮异常打断
                     logger.exception("第 %d 轮监测异常，已跳过：%s", round_no, exc)
 
@@ -581,7 +765,9 @@ class Monitor:
                     break
                 if self._stop:
                     break
-                time.sleep(interval)
+                # 分片睡眠：等待期间同样能停、能保活（v1.10 单一时间源）
+                if not self._interruptible_sleep(interval, stop_event=stop_event):
+                    break
         except KeyboardInterrupt:
             logger.info("收到 Ctrl+C，正在退出……")
 
