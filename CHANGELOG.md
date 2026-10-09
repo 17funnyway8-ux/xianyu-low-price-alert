@@ -2,7 +2,7 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
-## [未发布]
+## [1.8.3] - 2026-10-09
 
 ### 新增
 - **CI 质量门禁**（`.github/workflows/ci.yml`）：push / PR 触发 ruff、mypy、Linux+Windows+macOS 三平台单测、覆盖率双门槛
@@ -11,10 +11,13 @@
 - `SECURITY.md`：漏洞与凭据泄露的私密报告渠道、响应时限
 - `docs/` 分层为 `user/ `、`dev/`、`archive/`，并新增 `docs/README.md` 索引
 - README 增加界面截图、CI/Release/License 徽章与常见问题章节
+- **命中战果展示商品主图**：后端解析 mtop 的 picUrl 与网页卡片图（协议相对 / http 统一升级 https），库表新增 image_url 列（旧库自动迁移），前端卡片左侧渲染 56px 缩略图，无图显示占位
 - **Docker Hub 多架构镜像发布**（`.github/workflows/docker-publish.yml`）：推 `17funnyway8/xianyu-alert`（linux/amd64 + linux/arm64），打 `v*` tag 自动发布，也可在 Actions 手动触发
 - `docs/dev/` 与 README 增加「静默异常改为 contextlib.suppress + S110 门禁」说明
 
 ### 变更
+- **升级到本版需注意**：库表会**自动**新增 image_url 列（幂等），但**存量记录不会有图**，只有新命中的商品才带主图 —— 需要旧记录补图要另做「回填」
+- 若此前用 root 运行旧镜像，数据卷里可能残留 root 属主的 state/instance.lock，升级到非 root 镜像后需删除该文件并按数据属主设置 user（详见部署文档）
 - **容器改为非 root（uid 1000）运行**：挂载宿主数据卷前需 `chown -R 1000:1000`（README 已说明）
 - **README / docker-compose 默认改用已发布镜像**（`17funnyway8/xianyu-alert:1.8.2`），无需克隆仓库即可部署；从源码构建改为可选路径
 - `gui_qt` 的 24 个 Qt 用例改为**独立 CI job 执行**（此前因未装 PySide6 全量 skip；与其他用例同进程会 segfault）
