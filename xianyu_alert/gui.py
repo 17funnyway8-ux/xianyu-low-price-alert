@@ -2683,11 +2683,11 @@ class XianyuAlertGUI:
 
         def _on_save() -> None:
             """校验并保存（不通过不落盘）。"""
-            from .cookie import detect_cookie_health
+            from .cookie import cookie_accept_state, detect_cookie_health
 
             new_cookie = text_cookie.get("1.0", "end").strip()
             state, reason = detect_cookie_health(new_cookie)
-            if state != "ok":
+            if not cookie_accept_state(state):
                 messagebox.showerror(
                     "校验失败",
                     f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。",
@@ -2986,14 +2986,14 @@ class XianyuAlertGUI:
             text_cookie.pack(fill="both", expand=True, pady=(2, 6))
 
             def on_save() -> None:
-                from .cookie import detect_cookie_health
+                from .cookie import cookie_accept_state, detect_cookie_health
 
                 cookie = text_cookie.get("1.0", "end").strip()
                 if not cookie:
                     messagebox.showwarning("Cookie 为空", "请粘贴 Cookie 内容。", parent=refresh_dialog)
                     return
                 state, reason = detect_cookie_health(cookie)
-                if state != "ok":
+                if not cookie_accept_state(state):
                     messagebox.showerror(
                         "校验失败",
                         f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。",
