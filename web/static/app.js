@@ -328,6 +328,7 @@ window.XY.App = (function () {
   async function init() {
     UI.setView(UI.initialView(), { silent: true });
     bindGlobalEvents();
+    if (window.XY.Lightbox) window.XY.Lightbox.init();   // 商品大图：悬停预览 + 点击放大
     // 先渲染一次骨架，避免首屏空白
     VTargets.render(false);
     VHits.render();

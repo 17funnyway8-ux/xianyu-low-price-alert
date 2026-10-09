@@ -227,6 +227,29 @@ window.XY.Util = (function () {
     return (list || []).join("\n");
   }
 
+  /**
+   * 在图片地址后追加阿里 CDN 的尺寸后缀（如 _200x200.jpg）。
+   * 已带尺寸后缀的地址先替换旧后缀，避免叠成 xxx.jpg_200x200.jpg_400x400.jpg；
+   * 非 http(s) 或非静态图扩展名的地址原样返回（加载失败由调用方回退原图）。
+   */
+  function imageVariant(url, suffix) {
+    const text = String(url || "").trim();
+    if (!text || !/^https?:\/\//i.test(text)) return text;
+    const base = text.replace(/_\d+x\d+(\.[a-z]+)$/i, "$1");
+    if (!/\.(jpg|jpeg|png|webp)$/i.test(base)) return text;
+    return base + suffix;
+  }
+
+  /** 列表缩略图规格（约 7KB）。 */
+  function imageSmall(url) {
+    return imageVariant(url, "_200x200.jpg");
+  }
+
+  /** 悬停预览规格（约 48KB）。 */
+  function imageLarge(url) {
+    return imageVariant(url, "_800x800.jpg");
+  }
+
   return {
     $: $,
     $$: $$,
@@ -247,5 +270,8 @@ window.XY.Util = (function () {
     fieldError: fieldError,
     linesToList: linesToList,
     listToLines: listToLines,
+    imageVariant: imageVariant,
+    imageSmall: imageSmall,
+    imageLarge: imageLarge,
   };
 })();

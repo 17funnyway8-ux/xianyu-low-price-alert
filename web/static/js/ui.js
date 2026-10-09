@@ -168,10 +168,21 @@ window.XY.UI = (function () {
         '<button class="btn sm danger-ghost" type="button" data-action="black-one">拉黑</button>' +
         "</div>";
 
-    // 商品主图（v1.8.3）：有图则缩略图，无图占位；CDN 拒绝/失效时隐藏，避免破图
+    // 商品主图（v1.8.3 缩略图；v1.8.4 悬停预览 + 点击看大图，见 lightbox.js）：
+    // 列表用 CDN 小图变体省流量，悬停取中图、点击取原图（同一 URL 前缀，浏览器只缓存一次）
     const thumbHtml = r.image_url
-      ? '<img class="hit-thumb" src="' + esc(r.image_url) + '" alt="" loading="lazy"' +
-        ' referrerpolicy="no-referrer" onerror="this.style.visibility=&#39;hidden&#39;">'
+      ? '<button type="button" class="hit-thumb-btn"' +
+        ' data-full="' + esc(r.image_url) + '"' +
+        ' data-title="' + esc(r.title) + '"' +
+        ' data-keyword="' + esc(r.keyword || "") + '"' +
+        ' data-price="' + esc(r.price == null ? "" : String(r.price)) + '"' +
+        ' data-url="' + esc(r.url || "") + '"' +
+        ' aria-label="查看商品大图（点击放大）" title="点击查看大图">' +
+        '<img class="hit-thumb" src="' + esc(U.imageSmall(r.image_url)) + '" alt=""' +
+        ' loading="lazy" referrerpolicy="no-referrer"' +
+        ' data-fallback="' + esc(r.image_url) + '"' +
+        ' onerror="if(this.dataset.tried){this.style.visibility=&#39;hidden&#39;;}else{this.dataset.tried=&#39;1&#39;;this.src=this.dataset.fallback;}">' +
+        '</button>'
       : '<div class="hit-thumb empty" aria-hidden="true"></div>';
 
     return (
