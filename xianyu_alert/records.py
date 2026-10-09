@@ -94,6 +94,10 @@ class NotifiedRecord(Record):
     sold_out: int = 0
     sold_at: str = ""
     sold_reason: str = ""
+    #: v1.10.3 新增（同样追加在末尾）
+    seller: str = ""
+    location: str = ""
+    original_price: float | None = None
 
     @property
     def is_sold_out(self) -> bool:
@@ -104,6 +108,11 @@ class NotifiedRecord(Record):
     def price_text(self) -> str:
         """价格的展示文本（¥12.34）。"""
         return "¥" + format(float(self.price or 0), ".2f")
+
+    @property
+    def original_price_text(self) -> str:
+        """原价展示（无原价返回空串）。"""
+        return f"¥{float(self.original_price):.2f}" if self.original_price else ""
 
     @property
     def display_title(self) -> str:
