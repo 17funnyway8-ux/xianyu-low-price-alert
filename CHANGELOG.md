@@ -2,6 +2,24 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.12] - 2026-10-10
+
+### 测试（M16 Qt worker + M15 Tk 守卫）
+- 新增 `tests/test_gui_qt_workers.py`（8 条）：`MonitorWorker.run()` 的
+  **命中投递 / 单轮异常不终止 / 启动失败不崩窗 / 停止信号响应 / 资源必然关闭**，
+  以及循环模式下"等待间隔时被打断"的即时退出；`LogBridge` 的跨线程投递。
+  **`gui_qt/workers.py` 35% → 64%**，`gui_qt` 整体 **65% → 67%**。
+- `tests/test_gui_handlers.py` 增补 8 条**守卫分支**用例（Tk，不需真实窗口）：
+  校验在架的四种拒绝路径（运行中 / 无记录 / 非 mtop / 配置有误）、
+  标记售出与加黑名单的"未选中 / 缺商品 ID"提示契约。
+  **`xianyu_alert/gui/app.py` 54% → 57%**。
+
+### 说明
+- v1.10.10 起的 **Docker 镜像推送**仍受 **Docker Hub 429** 阻塞（多次重跑均失败）。
+  已确认这不是仓库配置问题：workflow 先登录再构建，属于共享出口的限额；
+  本机与 NAS 都无法代推（NAS 无 arm64 模拟且未登录 Docker Hub）。
+  影响范围：容器用户暂时拉不到新标签；Windows/macOS 资产与 GitHub Release 正常。
+
 ## [1.10.11] - 2026-10-10
 
 ### 测试（M18 前端契约 + M24 脚本）
