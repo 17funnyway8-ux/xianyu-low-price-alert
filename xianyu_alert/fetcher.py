@@ -35,7 +35,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .config import DEFAULT_USER_AGENT, Config
-from .models import Product
+from .models import Product, normalize_image_url
 
 logger = logging.getLogger(__name__)
 
@@ -623,6 +623,8 @@ def parse_mtop_item(item: Any, keyword: str) -> Product | None:
     # ---- 其余字段 ----
     publish_time = format_publish_time(args.get("publishTime") or ex_content.get("publishTime"))
     url = ITEM_URL_TEMPLATE.format(product_id=product_id)
+    # 主图：站点返回协议相对地址（//img.alicdn.com/...），归一化由 Product 统一处理
+    image_url = coerce_text(ex_content.get("picUrl") or ex_content.get("pic_url") or "")
 
     try:
         return Product(
@@ -632,6 +634,7 @@ def parse_mtop_item(item: Any, keyword: str) -> Product | None:
             url=url,
             publish_time=publish_time,
             keyword=keyword,
+            image_url=image_url,
         )
     except ValueError as exc:
         logger.debug("[mtop] 跳过非法商品 %s：%s", product_id, exc)
@@ -1451,6 +1454,7 @@ class WebFetcher(Fetcher):
 
             seen.add(product_id)
             url = href if href.startswith("http") else urljoin(BASE_URL, href)
+            image_url = self._extract_image(anchor, container)
             try:
                 results.append(
                     Product(
@@ -1460,11 +1464,35 @@ class WebFetcher(Fetcher):
                         url=url,
                         publish_time=parse_publish_time(container_text or full_text),
                         keyword=keyword,
+                        image_url=image_url,
                     )
                 )
             except ValueError as exc:
                 logger.debug("[web] 跳过非法商品卡片 %s：%s", product_id, exc)
         return results
+
+    @staticmethod
+    def _extract_image(anchor: Any, container: Any) -> str:
+        """从商品卡片提取主图地址（优先 img 的 src，兼容懒加载 data-src）。
+
+        Args:
+            anchor: 商品卡片锚点节点。
+            container: 锚点的父容器（锚点内无图时向上找一层）。
+
+        Returns:
+            归一化后的 https 图片地址；找不到返回空串。
+        """
+        for node in (anchor, container):
+            if node is None or not hasattr(node, "find"):
+                continue
+            img = node.find("img")
+            if img is None:
+                continue
+            src = img.get("src") or img.get("data-src") or img.get("data-ks-lazyload") or ""
+            normalized = normalize_image_url(src)
+            if normalized:
+                return normalized
+        return ""
 
     @staticmethod
     def _extract_title(anchor: Any) -> str:
