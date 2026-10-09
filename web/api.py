@@ -95,7 +95,7 @@ def require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="未认证或 token 错误")
 
 
-app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.10.0")
+app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.10.1")
 
 
 @app.middleware("http")
@@ -519,13 +519,8 @@ def api_blacklist(
         return fail("product_id 不能为空", status_code=400)
     reason = (body.reason if body is not None else "人工剔除") or "人工剔除"
     try:
-        keyword = ""
-        cur = service.storage.conn.execute(
-            "SELECT keyword FROM product WHERE product_id = ? LIMIT 1", (pid,)
-        )
-        row = cur.fetchone()
-        if row is not None:
-            keyword = str(row["keyword"] or "")
+        # v1.10.1：改用存储层的具名方法 —— 此前这里直接写 SELECT，SQL 细节泄漏到 Web 层
+        keyword = service.storage.find_keyword_by_product_id(pid)
         service.storage.add_blacklist(pid, keyword=keyword, reason=reason)
     except Exception as exc:  # noqa: BLE001
         return fail(f"加入黑名单失败：{exc}", status_code=500)
