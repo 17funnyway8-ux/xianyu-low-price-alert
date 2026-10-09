@@ -15,6 +15,9 @@ config.yaml
 # 个人工作区数据（记忆日志、QA 临时文件）
 .workbuddy/
 
+# Node（Web 前端 e2e 的 jsdom 依赖，仅开发/CI 用）
+node_modules/
+
 # Python
 __pycache__/
 *.py[cod]
