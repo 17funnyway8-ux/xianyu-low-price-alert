@@ -727,4 +727,13 @@ def load_config(path: str | None = None) -> Config:
     if raw is None:
         raise ConfigError(f"配置文件为空：{path}")
 
+    # v1.10.8：顶层不是映射时给出可读的 ConfigError。
+    # 此前会一路走到 config_from_dict 的 raw.get(...) 抛 AttributeError（Python 堆栈），
+    # 与本模块"精确报错"的契约不符。
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            "配置文件顶层必须是映射（键值对形式），当前是 "
+            f"{type(raw).__name__}：{os.path.abspath(path)}"
+        )
+
     return config_from_dict(raw)
