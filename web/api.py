@@ -45,6 +45,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from xianyu_alert import __version__, gui, paths, secure
 from xianyu_alert.config import ConfigError, NotifyChannel
 from xianyu_alert.cookie import save_cookies_validated_encrypted
+from xianyu_alert.deployment import detect_deployment
 from xianyu_alert.notifier import build_notifier
 
 from .monitor_service import (
@@ -95,7 +96,7 @@ def require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="未认证或 token 错误")
 
 
-app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.10.3")
+app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.10.4")
 
 
 @app.middleware("http")
@@ -228,6 +229,9 @@ def healthz(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN
         "status": "ok",
         "version": str(__version__),
         "data_dir": paths.data_dir(),
+        # v1.10.4：部署形态快照（容器 / 便携 / 源码 / 自定义卷）——
+        # NAS 上排查「数据到底落在哪」时一条 curl 就能看清，不用再猜。
+        "deployment": detect_deployment().to_dict(),
         "monitor_running": st["running"],
         "last_round_at": st["last_round_at"],
         "round_count": st["round_count"],

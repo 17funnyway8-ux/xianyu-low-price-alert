@@ -45,7 +45,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.10.3` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.10.4` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -59,7 +59,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.10.3
+  17funnyway8/xianyu-alert:1.10.4
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -68,7 +68,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.10.3   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.10.4   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -137,6 +137,54 @@ cp <桌面版>/state/xianyu_alert.db       ./xianyu-data/state/xianyu_alert.db
 ```
 
 > ⚠️ 老版 Windows `dpapi1:` 密文跨平台不可解（预期降级），Web 里重新粘贴 Cookie 即可。
+
+---
+
+## ⬆️ 从旧版升级（root → 非 root 必读）
+
+v1.8.2 起镜像改为**非 root（uid 1000）**运行。从更早的 root 版升级时，数据目录里会残留
+root 属主的文件（最典型是 ```state/instance.lock```），新容器可能启动失败或反复重启。
+
+**三步升级**：
+
+```bash
+# 1) 备份数据目录（务必先做）
+cp -a <数据目录> <数据目录>.bak-$(date +%Y%m%d)
+
+# 2) 修正属主 —— 二选一：
+#    A. 把数据交给容器用户（需要 sudo）
+sudo chown -R 1000:1000 <数据目录>
+#    B. 让容器跟随数据属主（NAS 上推荐，无需 sudo）
+#       docker-compose.yml 里设置： user: "<属主uid>:<属组gid>"   例如 "1005:1001"
+
+# 3) 起容器并确认
+docker compose -p xianyu-alert up -d
+curl -s http://127.0.0.1:8899/healthz | python3 -m json.tool | head -20
+```
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| 日志「无法创建单实例锁文件」 | 旧 root 文件残留 | 删除 ```state/instance.lock```，或按上面第 2 步修正属主 |
+| 日志「已有实例运行中」 | 同上（锁文件被误判为活跃） | 启动时会打印**可操作诊断**（含 PID 与处置），照提示做即可 |
+| 容器反复重启 | 数据目录不可写 | ```docker compose logs xianyu-alert``` 看具体路径，再按第 2 步处理 |
+
+### 查看当前部署形态（排查路径问题）
+
+```/healthz``` 现在直接返回部署形态快照，不用再猜数据落在哪：
+
+```bash
+curl -s http://127.0.0.1:8899/healthz | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['deployment'])"
+# {'kind': 'custom', 'label': '自定义数据目录', 'data_dir': '/app/data', ...}
+```
+
+### 固定镜像版本（可复现部署）
+
+```latest``` 会随发布移动；需要「每次都跑同一个镜像」时用 digest 固定：
+
+```bash
+docker pull 17funnyway8/xianyu-alert@sha256:<digest>
+# digest 可在 Docker Hub 的 tags 页面，或 docker inspect 的输出中找到
+```
 
 ---
 
