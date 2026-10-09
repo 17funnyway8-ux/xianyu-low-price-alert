@@ -2,6 +2,23 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.6] - 2026-10-10
+
+### 测试（覆盖率补强，继续为"均分 9 分"补齐短板）
+- 新增 `tests/test_gui_handlers.py`（16 条）：**Tk 主窗口 handler 的直接测试** ——
+  用 SimpleNamespace + `__get__` 绑定，无需真实 Tk 窗口/xvfb。
+  覆盖 `_set_running`（loop/once 两模式的按钮态）、`_handle_ui_message`（6 种消息分发 + 未知类型）、
+  `on_clear_records`（运行中拒绝 / 用户取消 / 真清空）、`_tick`（关闭中早退 / 运行中 / 停止态）。
+  **`xianyu_alert/gui/app.py` 覆盖率 49% → 53%**。
+- 新增 `tests/test_cli_commands.py`（12 条）：once/list/shortcut/secure 的**真实执行**，
+  以及 `main()` 的四条出口（ConfigError→2 / KeyboardInterrupt→0 / 未预期异常→1 /
+  单实例冲突→2）。**`xianyu_alert/cli.py` 覆盖率 70% → 83%**。
+
+### 说明
+- 本轮测试暴露了两处**我自己写错的断言**（shortcut 在非 Windows 返回 1 是既有契约、
+  run 的日志走 logging 不进 stdout），都已按实际契约改正 —— 这是"先写期望再对齐实现"的正常代价，
+  但也提醒：断言必须来自**已验证的行为**，而不是想当然。
+
 ## [1.10.5] - 2026-10-10
 
 ### 变更
