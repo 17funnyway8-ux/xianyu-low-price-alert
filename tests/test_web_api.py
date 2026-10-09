@@ -566,7 +566,7 @@ class WebApiTestCase(unittest.TestCase):
                     pass
 
             fake = _FakeFetcher()
-            with mock.patch.object(ms, "build_fetcher", return_value=fake):
+            with mock.patch.object(ms.shelf_check, "build_fetcher", return_value=fake):
                 resp = self.client.post(
                     "/api/records/check_shelf", json={"product_ids": ["111", "222"]}
                 )

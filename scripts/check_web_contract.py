@@ -29,7 +29,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 API_PY = os.path.join(ROOT, "web", "api.py")
-SERVICE_PY = os.path.join(ROOT, "web", "monitor_service.py")
+# v1.9.7: web/monitor_service.py 已拆为包，源码需拼接包内各模块
+SERVICE_DIR = os.path.join(ROOT, "web", "monitor_service")
+SERVICE_PY = os.path.join(SERVICE_DIR, "service.py")
 # v1.9.5：gui.py 已拆为 gui/ 包，通道元数据等常量现位于 gui/constants.py
 GUI_PY = os.path.join(ROOT, "xianyu_alert", "gui", "constants.py")
 STORAGE_PY = os.path.join(ROOT, "xianyu_alert", "storage.py")
@@ -165,7 +167,11 @@ def _func(tree: ast.AST, name: str) -> ast.FunctionDef:
 
 
 def parse_form_contract() -> dict:
-    src = open(SERVICE_PY, encoding="utf-8").read()
+    src = "".join(
+        open(os.path.join(SERVICE_DIR, _f), encoding="utf-8").read()
+        for _f in sorted(os.listdir(SERVICE_DIR))
+        if _f.endswith(".py")
+    )
     tree = ast.parse(src)
 
     # --- config_from_web_form: 收集 form.get("X" [, default]) ---
