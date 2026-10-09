@@ -1,4 +1,4 @@
-"""QA 独立补充用例（v3.6）——不依赖工程师 test_gui_v3_6.py 的实现细节。
+"""QA 独立补充用例（v3.6）——不依赖工程师 test_gui_blacklist.py 的实现细节。
 
 覆盖：
 1. 黑名单：add 幂等 / is_blacklisted 跨关键词全局生效 / remove 恢复 / list 排序 /
