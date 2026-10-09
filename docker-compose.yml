@@ -8,7 +8,8 @@
 #      docker compose -p xianyu-alert <子命令>
 #
 # 常用命令：
-#   docker compose -p xianyu-alert up -d --build     # 启动常驻 Web
+#   docker compose -p xianyu-alert up -d             # 启动常驻 Web（拉取 Docker Hub 现成镜像）
+#   docker compose -p xianyu-alert up -d --build     # 从源码构建并启动（需启用 build: .）
 #   curl http://127.0.0.1:8080/healthz               # 健康检查
 #   docker compose -p xianyu-alert logs -f           # 查看容器日志
 #   docker compose -p xianyu-alert down              # 停止（SIGTERM 优雅退出）
@@ -29,8 +30,10 @@
 
 services:
   xianyu-alert:
-    build: .
-    image: xianyu-alert:1.8.0
+    # 默认使用 Docker Hub 已发布的多架构镜像（amd64 + arm64）；
+    # 想从源码构建：注释掉 image 行、启用下面的 build 行，并加 --build。
+    image: 17funnyway8/xianyu-alert:1.8.2
+    # build: .
     container_name: xianyu-alert
     # 7×24：宿主机重启 / 容器崩溃自动拉起（P3-03 确认保留）
     restart: unless-stopped

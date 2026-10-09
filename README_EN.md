@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/17funnyway8-ux/xianyu-low-price-alert?label=release)](https://github.com/17funnyway8-ux/xianyu-low-price-alert/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.13-blue)](https://www.python.org/)
+[![Docker Hub](https://img.shields.io/badge/docker-17funnyway8%2Fxianyu--alert-blue?logo=docker)](https://hub.docker.com/r/17funnyway8/xianyu-alert)
 
 **xianyu-alert** watches Xianyu (闲鱼 / Goofish, a Chinese second-hand marketplace) for **newly listed items that match your keywords and fall below your price threshold**, de-duplicates them, and pushes alerts to Console / WeChat / Email / Telegram / Bark / WeCom.
 
@@ -27,16 +28,33 @@ It ships in two forms sharing the same config and data:
 
 ## Quick start (Docker)
 
-```bash
-git clone https://github.com/17funnyway8-ux/xianyu-low-price-alert.git
-cd xianyu-low-price-alert
+Prebuilt multi-arch images (**linux/amd64 + linux/arm64**) are published on Docker Hub: [`17funnyway8/xianyu-alert`](https://hub.docker.com/r/17funnyway8/xianyu-alert).
 
+**Option A — run the published image (no clone needed):**
+
+```bash
 # The container runs as non-root (uid 1000) since v1.8.2 — align the volume owner first
 mkdir -p xianyu-data && sudo chown -R 1000:1000 xianyu-data
 
-docker compose up -d --build
-curl http://127.0.0.1:8080/healthz     # health check
+docker run -d --name xianyu-alert \
+  -p 127.0.0.1:8080:8080 \
+  -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
+  -v "$PWD/xianyu-data:/app/data" \
+  --restart unless-stopped \
+  17funnyway8/xianyu-alert:1.8.2
 ```
+
+**Option B — docker compose (adds healthcheck & resource limits):**
+
+```bash
+git clone https://github.com/17funnyway8-ux/xianyu-low-price-alert.git
+cd xianyu-low-price-alert
+docker compose up -d              # pulls the published image
+# To build from source instead: set build: . in docker-compose.yml, then:
+# docker compose up -d --build
+```
+
+Health check: `curl http://127.0.0.1:8080/healthz`
 
 Open <http://127.0.0.1:8080>. Data (config, Fernet key, SQLite) lives in `./xianyu-data`.
 

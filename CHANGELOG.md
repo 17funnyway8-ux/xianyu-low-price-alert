@@ -11,9 +11,13 @@
 - `SECURITY.md`：漏洞与凭据泄露的私密报告渠道、响应时限
 - `docs/` 分层为 `user/ `、`dev/`、`archive/`，并新增 `docs/README.md` 索引
 - README 增加界面截图、CI/Release/License 徽章与常见问题章节
+- **Docker Hub 多架构镜像发布**（`.github/workflows/docker-publish.yml`）：推 `17funnyway8/xianyu-alert`（linux/amd64 + linux/arm64），打 `v*` tag 自动发布，也可在 Actions 手动触发
+- `docs/dev/` 与 README 增加「静默异常改为 contextlib.suppress + S110 门禁」说明
 
 ### 变更
 - **容器改为非 root（uid 1000）运行**：挂载宿主数据卷前需 `chown -R 1000:1000`（README 已说明）
+- **README / docker-compose 默认改用已发布镜像**（`17funnyway8/xianyu-alert:1.8.2`），无需克隆仓库即可部署；从源码构建改为可选路径
+- `gui_qt` 的 24 个 Qt 用例改为**独立 CI job 执行**（此前因未装 PySide6 全量 skip；与其他用例同进程会 segfault）
 - 打包流水线的依赖安装统一走 `requirements-dev.txt`，消除测试依赖漂移
 - 许可证明确为 MIT
 

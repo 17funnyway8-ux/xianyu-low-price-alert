@@ -3,9 +3,12 @@
 # ===========================================================
 # 部署目标：飞牛 fnOS（x86_64，10.0.0.26，Docker 28.5.2 / Compose v2.40.3）
 #
-#   - 镜像：xianyu-alert:1.8.1-amd64
-#     Mac 为 arm64、NAS 为 x86_64，故用 `docker buildx build --platform
-#     linux/amd64` 交叉构建后 `docker save | ssh nas 'docker load'` 导入。
+#   - 镜像：17funnyway8/xianyu-alert:1.8.2（Docker Hub 已发布 amd64 + arm64 多架构）
+#     NAS 为 x86_64，直接 `docker compose -p xianyu-alert pull` 即可，无需再交叉构建
+#     后 save/load 导入。
+#   - ⚠️ 镜像以非 root(uid 1000) 运行：首次部署或升级后需
+#       sudo chown -R 1000:1000 ./data
+#     否则容器内无法写入数据卷。
 #   - 端口：宿主机 8899 → 容器 8080（8080 已被 qbittorrent 占用，
 #     8188/8190 为 ComfyUI 与 gateway，均已在 2026-09 实测避开）。
 #   - 数据：/vol1/1000/Docker/xianyu-alert/data → /app/data
@@ -14,6 +17,7 @@
 #   - 认证：未启用 XY_WEB_TOKEN（仅内网使用；如需外网访问请取消注释并设强随机串）。
 #
 # 常用命令（在 /vol1/1000/Docker/xianyu-alert 下执行）：
+#   docker compose -p xianyu-alert pull         # 拉取/更新镜像
 #   docker compose -p xianyu-alert up -d        # 启动
 #   docker compose -p xianyu-alert logs -f      # 查看日志
 #   docker compose -p xianyu-alert down         # 停止（SIGTERM 优雅退出）
@@ -22,7 +26,7 @@
 
 services:
   xianyu-alert:
-    image: xianyu-alert:1.8.2-amd64
+    image: 17funnyway8/xianyu-alert:1.8.2
     container_name: xianyu-alert
     # 7×24 常驻：宿主机重启 / 容器崩溃自动拉起
     restart: unless-stopped
