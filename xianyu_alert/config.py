@@ -41,6 +41,10 @@ VALID_CHANNEL_TYPES = ("console", "serverchan", "email", "telegram", "bark", "we
 DEFAULT_PRESET_EXCLUDE_KEYWORDS: list[str] = ["回收", "置换", "收购", "高价回收", "收"]
 
 
+#: 配置结构版本（v1.10.1）。字段语义变化时递增，并在 migrate_config 里补迁移。
+CONFIG_VERSION = 1
+
+
 class ConfigError(ValueError):
     """配置文件缺失、格式错误或校验不通过时抛出。"""
 
@@ -189,6 +193,8 @@ class Config:
     preset_exclude_keywords: list[str] = field(
         default_factory=lambda: list(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
     )
+    #: 配置结构版本（v1.10.1）：便于识别"这份配置是按哪一版结构写的"
+    config_version: int = CONFIG_VERSION
 
     # ------------------------------------------------------------------ #
     def keyword_map(self) -> dict[str, float]:
@@ -400,6 +406,31 @@ def serialize_cookie_pool(
     return result
 
 
+def _parse_keepalive(data: dict) -> tuple[bool, int]:
+    """解析空闲保活的两个字段（v1.10.1 从 _parse_monitor 抽出）。
+
+    脏数据一律回退默认值：保活属于锦上添花，不该因为一个字段写错就不让程序启动。
+
+    Args:
+        data: monitor 节点字典。
+
+    Returns:
+        (enabled, interval_seconds)。
+    """
+    enabled_raw = data.get("keepalive_enabled", True)
+    if isinstance(enabled_raw, str):
+        enabled = enabled_raw.strip().lower() not in ("0", "false", "no", "off", "")
+    else:
+        enabled = bool(enabled_raw)
+    try:
+        interval = int(data.get("keepalive_interval_seconds", 1800))
+    except (TypeError, ValueError):
+        interval = 1800
+    if interval < 0:
+        interval = 0
+    return enabled, interval
+
+
 def _parse_monitor(raw: Any) -> MonitorConfig:
     """解析并校验 monitor 节点。
 
@@ -459,17 +490,7 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
             f"`monitor.cookie_check_interval_seconds` 不能为负数，当前 {cookie_check_interval}"
         )
 
-    keepalive_enabled = data.get("keepalive_enabled", True)
-    if isinstance(keepalive_enabled, str):
-        keepalive_enabled = keepalive_enabled.strip().lower() not in ("0", "false", "no", "off", "")
-    else:
-        keepalive_enabled = bool(keepalive_enabled)
-    try:
-        keepalive_interval_seconds = int(data.get("keepalive_interval_seconds", 1800))
-    except (TypeError, ValueError):
-        keepalive_interval_seconds = 1800
-    if keepalive_interval_seconds < 0:
-        keepalive_interval_seconds = 0
+    keepalive_enabled, keepalive_interval_seconds = _parse_keepalive(data)
 
     return MonitorConfig(
         interval_seconds=interval,
@@ -590,6 +611,37 @@ def _parse_preset_exclude_keywords(data: dict[str, Any]) -> list[str]:
     return list(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
 
 
+def migrate_config(data: dict) -> list[str]:
+    """把配置字典迁移到当前 CONFIG_VERSION（v1.10.1）。
+
+    为什么需要：配置是**用户手上的文件**，可能来自更旧或更新的版本。
+    没有版本号时，"这份配置是否被正确理解"只能靠猜：字段缺失是"旧版没有"还是"写错了"？
+    有了版本号就能明确处理——旧版补默认值并提示，新版只警告不阻断（降级可用好过拒绝启动）。
+
+    Args:
+        data: 原始配置字典（会被就地补上 config_version）。
+
+    Returns:
+        迁移说明列表（空表示无需迁移）。
+    """
+    notes: list[str] = []
+    try:
+        version = int(data.get("config_version", 0) or 0)
+    except (TypeError, ValueError):
+        version = 0
+    if version > CONFIG_VERSION:
+        notes.append(
+            "配置文件由更新版本写入（v" + str(version) + "，当前支持 v" + str(CONFIG_VERSION)
+            + "），未知字段将被忽略"
+        )
+    elif version < CONFIG_VERSION:
+        notes.append(
+            "配置已从 v" + str(version) + " 迁移到 v" + str(CONFIG_VERSION) + "（缺失字段用默认值补齐）"
+        )
+    data["config_version"] = CONFIG_VERSION
+    return notes
+
+
 def config_from_dict(data: dict[str, Any]) -> Config:
     """从已解析的字典构造 Config（便于测试直接注入配置）。
 
@@ -602,8 +654,12 @@ def config_from_dict(data: dict[str, Any]) -> Config:
     Raises:
         ConfigError: 任意字段校验失败。
     """
+    for _note in migrate_config(data):
+        logger.warning("配置迁移：%s", _note)
+
     data = _as_dict(data, "<root>")
     return Config(
+        config_version=int(data.get("config_version", CONFIG_VERSION) or CONFIG_VERSION),
         keywords=_parse_keywords(data.get("keywords")),
         monitor=_parse_monitor(data.get("monitor")),
         fetcher=_parse_fetcher(data.get("fetcher")),

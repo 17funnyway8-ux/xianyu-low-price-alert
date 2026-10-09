@@ -2,6 +2,31 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.1] - 2026-10-10
+
+### 新增
+- **存储层类型化记录（M09）**：新增 `xianyu_alert/records.py` ——
+  `NotifiedRecord` / `SoldOutRecord` / `BlacklistEntry`；
+  `Storage.list_notified` / `list_sold_out` / `list_blacklist` 改为返回这些对象。
+  **保留字典式访问**（`row["title"]`），因此既有调用点零改动；新代码可用 `rec.title`
+  获得类型、补全与派生属性（`price_text` / `is_sold_out` / `display_title`）。
+- **配置版本号与迁移（M10）**：配置新增 `config_version`（当前 v1）；
+  `migrate_config()` 识别旧版配置并补默认值 + 提示，遇到更新版本只警告不阻断
+  （降级可用好过拒绝启动）。
+
+### 变更
+- **Web 层不再有裸 SQL**：`web/api.py` 里那条 `SELECT keyword FROM product ...`
+  收敛为存储层具名方法 `find_keyword_by_product_id()`。
+- `_parse_monitor` 抽出 `_parse_keepalive()`，长函数瘦身。
+
+### 修复
+- 记录对象的 `from_row` 早期版本误用 `list(row)`（sqlite3.Row 迭代出的是**值**而不是列名），
+  会导致字段静默为空；已改为 `row.keys()` 并补注释与测试。
+
+### 测试
+- 新增 `tests/test_storage_records.py`（20 条）：记录语义（字典式 / 类型化 / 容错 / 不可变）、
+  三个 list 的类型与取值、反查方法、配置版本与迁移三分支。
+
 ## [1.10.0] - 2026-10-10
 
 ### 新增
