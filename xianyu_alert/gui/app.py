@@ -103,6 +103,11 @@ from .helpers import (
     normalize_channel_options,
     parse_enabled_flag,
     parse_keyword_lines,
+    pool_delete_entry,
+    pool_disable_indexes,
+    pool_expired_indexes,
+    pool_toggle_entry,
+    pool_upsert_entry,
     resolve_preset_exclude_keywords,
     save_raw_config,
     sort_alert_rows,
@@ -1826,7 +1831,9 @@ class XianyuAlertGUI:
                     )
                     if not proceed:
                         return
-                self._cookie_pool.append({"name": name, "cookie": cookie, "enabled": True})
+                self._cookie_pool = pool_upsert_entry(
+                    self._cookie_pool, {"name": name, "cookie": cookie, "enabled": True}
+                )
                 _refresh()
                 add_dialog.destroy()
 
@@ -1866,8 +1873,9 @@ class XianyuAlertGUI:
                 if not cookie:
                     messagebox.showwarning("Cookie 为空", "请粘贴 Cookie 内容。", parent=edit_dialog)
                     return
-                item["name"] = name
-                item["cookie"] = cookie
+                self._cookie_pool = pool_upsert_entry(
+                    self._cookie_pool, {"name": name, "cookie": cookie}, index
+                )
                 _refresh()
                 edit_dialog.destroy()
 
@@ -1883,7 +1891,7 @@ class XianyuAlertGUI:
             name = self._cookie_pool[index].get("name", "")
             if not messagebox.askyesno("确认删除", f"确定删除 Cookie「{name}」吗？", parent=dialog):
                 return
-            self._cookie_pool.pop(index)
+            self._cookie_pool = pool_delete_entry(self._cookie_pool, index)
             _refresh()
 
         def _on_toggle() -> None:
@@ -1892,8 +1900,7 @@ class XianyuAlertGUI:
             if index is None:
                 messagebox.showinfo("提示", "请先在表格中选中要切换的条目。", parent=dialog)
                 return
-            item = self._cookie_pool[index]
-            item["enabled"] = not bool(item.get("enabled", True))
+            self._cookie_pool = pool_toggle_entry(self._cookie_pool, index)
             _refresh()
 
         def _on_refresh_selected() -> None:
@@ -1953,14 +1960,12 @@ class XianyuAlertGUI:
             对池中检测为 expired / no_token / missing / invalid_encrypt 的条目
             统一停用（不删除）；写内存态前 `askyesno` 确认，落盘由主界面保存完成。
             """
-            from ..cookie import detect_cookie_health
 
-            invalid_indexes = [
-                i
-                for i, e in enumerate(self._cookie_pool)
-                if detect_cookie_health(str(e.get("cookie") or ""))[0]
-                not in ("ok", "expiring")
-            ]
+            # v1.10.10：与 Qt 版统一判定标准。此前 Tk 用 detect_cookie_health
+            # (not in ok/expiring)，Qt 用 cookie_prefers_rotation —— 同一个按钮两种行为。
+            # 按 v1.9 四层模型，令牌层问题**可自愈**，不应被自动停用；
+            # 只有登录态缺失 / 无法解密这类服务端大概率会拒的才算「需要停用」。
+            invalid_indexes = pool_expired_indexes(self._cookie_pool)
             if not invalid_indexes:
                 messagebox.showinfo("无需处理", "池中没有需要停用的过期条目。", parent=dialog)
                 return
@@ -1974,8 +1979,7 @@ class XianyuAlertGUI:
                 parent=dialog,
             ):
                 return
-            for i in invalid_indexes:
-                self._cookie_pool[i]["enabled"] = False
+            self._cookie_pool = pool_disable_indexes(self._cookie_pool, invalid_indexes)
             _refresh()
             self._append_log(
                 "INFO",
