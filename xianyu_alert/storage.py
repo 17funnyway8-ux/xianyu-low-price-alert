@@ -86,6 +86,13 @@ _IMAGE_MIGRATIONS = (
     ("image_url", "TEXT NOT NULL DEFAULT ''"),
 )
 
+#: v1.10.3：卖家 / 地区 / 原价（老库需要 ALTER 补列，幂等）
+_PROFILE_MIGRATIONS = (
+    ("seller", "TEXT NOT NULL DEFAULT ''"),
+    ("location", "TEXT NOT NULL DEFAULT ''"),
+    ("original_price", "REAL"),
+)
+
 
 def _fmt_ts(ts: datetime | None = None) -> str:
     """把 datetime 格式化为可读字符串；None 表示取当前时间。"""
@@ -128,7 +135,7 @@ class Storage:
         """创建表结构（幂等），并补齐 v3.7 存量库迁移列。"""
         with self.conn:
             self.conn.executescript(_SCHEMA)
-        self._migrate_product_columns(_SOLD_OUT_MIGRATIONS + _IMAGE_MIGRATIONS)
+        self._migrate_product_columns(_SOLD_OUT_MIGRATIONS + _IMAGE_MIGRATIONS + _PROFILE_MIGRATIONS)
 
     def _migrate_product_columns(self, migrations: tuple[tuple[str, str], ...]) -> None:
         """为旧版 `product` 表补齐后加的列（含 v3.7 售出标记与 v1.8.3 主图地址，幂等）。
@@ -186,8 +193,9 @@ class Storage:
                 """
                 INSERT INTO product
                     (keyword, product_id, title, price, url, publish_time, image_url,
+                     seller, location, original_price,
                      first_seen, last_seen, notified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT (keyword, product_id) DO UPDATE SET
                     title        = excluded.title,
                     price        = excluded.price,
@@ -195,6 +203,10 @@ class Storage:
                     publish_time = excluded.publish_time,
                     image_url    = CASE WHEN excluded.image_url != ''
                                         THEN excluded.image_url ELSE product.image_url END,
+                    seller       = CASE WHEN excluded.seller != '' THEN excluded.seller ELSE product.seller END,
+                    location     = CASE WHEN excluded.location != '' THEN excluded.location ELSE product.location END,
+                    original_price = CASE WHEN excluded.original_price IS NOT NULL
+                                          THEN excluded.original_price ELSE product.original_price END,
                     last_seen    = excluded.last_seen
                 """,
                 (
@@ -205,6 +217,9 @@ class Storage:
                     product.url,
                     product.publish_time,
                     product.image_url,
+                    product.seller,
+                    product.location,
+                    product.original_price,
                     ts,
                     ts,
                 ),
