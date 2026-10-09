@@ -78,6 +78,42 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -p "test_gui_qt*.py" -v
 
+  web-e2e:
+    name: Web UI contract + e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 安装 jsdom（DOM e2e 依赖）
+        run: npm ci
+
+      - name: 前端与后端契约交叉校验（路由/通道/表单/记录字段）
+        run: python scripts/check_web_contract.py
+
+      - name: 真实 HTTP + SQLite 冒烟 e2e
+        run: python scripts/e2e_web_smoke.py
+
+      - name: DOM 级交互 e2e（jsdom）
+        run: node scripts/e2e_web_dom.js
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

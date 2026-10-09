@@ -361,11 +361,30 @@ def main() -> int:
         )
         fake = "cookie2=SECRET_TOKEN_SHOULD_NOT_LEAK; a=1"
         st, ck, _ = call("POST", "/api/cookie/save", {"cookie": fake})
-        rep.check("无效 Cookie → 400 且拒绝保存", st == 400 and ck.get("ok") is False, f"msg={ck.get('message')}")
+        # v1.9 契约：缺 _m_h5_tk 属"可自愈"（首轮自动申领令牌），允许保存；
+        # 只有"空 / 密文无法解密"才拒绝。
         rep.check(
-            "错误信息不含 Cookie 明文（脱敏约束）",
+            "缺 _m_h5_tk 的 Cookie 允许保存（v1.9：首轮自动申领）",
+            st == 200 and ck.get("ok") is True,
+            f"status={st} msg={ck.get('message')}",
+        )
+        rep.check(
+            "返回体不含 Cookie 明文（脱敏约束）",
             "SECRET_TOKEN_SHOULD_NOT_LEAK" not in json.dumps(ck, ensure_ascii=False),
             "未泄漏",
+        )
+        st, empty, _ = call("POST", "/api/cookie/save", {"cookie": "   "})
+        rep.check(
+            "空 Cookie → 400 且拒绝保存",
+            st == 400 and empty.get("ok") is False,
+            f"msg={empty.get('message')}",
+        )
+        st, diag, _ = call("GET", "/api/cookie/status")
+        rep.check(
+            "GET /api/cookie/status 返回分层诊断（v1.9 新增）",
+            st == 200 and diag.get("ok") is True and isinstance(diag.get("diagnosis", {}).get("layers"), list)
+            and len(diag["diagnosis"]["layers"]) == 4,
+            f"layers={len((diag.get('diagnosis') or {}).get('layers') or [])}",
         )
         st, add, _ = call("POST", "/api/cookie/pool", {"action": "add", "name": "e2e", "cookie": fake})
         rep.check("Cookie 池 add 缺 _m_h5_tk → 400 且给出二次确认文案",
