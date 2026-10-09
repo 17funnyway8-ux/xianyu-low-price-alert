@@ -48,6 +48,9 @@ jobs:
       - name: Mypy type check（配置见 mypy.ini）
         run: mypy
 
+      - name: 文档一致性校验（相对链接 / 仓库路径 / 版本标签 / 索引）
+        run: python scripts/check_docs.py
+
       - name: Dependency audit（pip-audit，仅提示不阻断）
         continue-on-error: true
         run: pip-audit -r requirements.txt -r requirements-web.txt

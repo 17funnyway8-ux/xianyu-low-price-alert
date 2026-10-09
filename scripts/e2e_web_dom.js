@@ -88,8 +88,12 @@ function freePort() {
 }
 
 function pickPython() {
+  // 与 run.sh / quality_audit.sh 保持一致：优先显式指定的解释器（PYTHON / XY_PY），
+  // 否则再按候选路径探测 —— 否则在多环境机器上会挑到缺依赖的系统 python3。
+  const explicit = process.env.PYTHON || process.env.XY_PY;
+  if (explicit && fs.existsSync(explicit)) return explicit;
   for (const p of PY_CANDIDATES) if (fs.existsSync(p)) return p;
-  return "python3";
+  return process.env.PYTHON || process.env.XY_PY || "python3";
 }
 
 const LAUNCHER = (root, data, port) => `
