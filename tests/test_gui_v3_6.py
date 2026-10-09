@@ -560,7 +560,8 @@ class TestUiNonBlocking(unittest.TestCase):
             """run_once 真正调用 fetcher（触发慢网络），并通知测试线程已进入 fetch。"""
 
             def __init__(self, _config: object, fetcher: object,
-                         _storage: object, _notifiers: object) -> None:
+                         _storage: object, _notifiers: object, **_kwargs: object) -> None:
+                # **_kwargs：生产代码新增可选参数（如 config_path）时替身不应报错
                 self._fetcher = fetcher
                 self.last_result = SimpleNamespace(notified_products=[])
 

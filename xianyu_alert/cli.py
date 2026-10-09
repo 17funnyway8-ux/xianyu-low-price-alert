@@ -433,7 +433,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     """执行 run 子命令。"""
     config = load_config(args.config)
     fetcher, storage, notifiers = _prepare(config)
-    monitor = Monitor(config, fetcher, storage, notifiers)
+    monitor = Monitor(config, fetcher, storage, notifiers, config_path=args.config)
     try:
         monitor.run_forever(max_rounds=getattr(args, "max_rounds", None))
     finally:
@@ -446,7 +446,7 @@ def cmd_once(args: argparse.Namespace) -> int:
     """执行 once 子命令。"""
     config = load_config(args.config)
     fetcher, storage, notifiers = _prepare(config)
-    monitor = Monitor(config, fetcher, storage, notifiers)
+    monitor = Monitor(config, fetcher, storage, notifiers, config_path=args.config)
     try:
         count = monitor.run_once()
         if getattr(args, "json", False):

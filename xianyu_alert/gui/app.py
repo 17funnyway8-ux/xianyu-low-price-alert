@@ -2628,7 +2628,14 @@ class XianyuAlertGUI:
             fetcher = build_fetcher(config)
             storage = Storage(config.storage.path)
             notifiers = build_notifiers(config)
-            monitor = Monitor(config, fetcher, storage, notifiers)
+            monitor = Monitor(
+                config,
+                fetcher,
+                storage,
+                notifiers,
+                # 测试里 GUI 常被替换成 stub，故防御性取值（无路径则关闭热更）
+                config_path=getattr(self, "config_path", None),
+            )
             interval = config.monitor.interval_seconds
 
             # 启动预检：Cookie 过期 → warning 日志（不阻断运行）

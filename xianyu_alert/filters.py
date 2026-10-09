@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
 
 from .models import Product
 
@@ -128,6 +130,57 @@ def hits_exclude_keywords(text: str, exclude_keywords: Iterable[str]) -> bool:
     return any(token.lower() in lowered for token in normalize_keywords(exclude_keywords))
 
 
+@dataclass(frozen=True)
+class FilterDecision:
+    """一条商品的过滤判定结果（v1.10 新增）。
+
+    改造前只有 True/False，运维与排障时无法回答"**为什么**这条没提醒"：
+    是缺必含词、命中排除词，还是价格没到阈值？现在把原因随判定一起回传，
+    由调用方聚合成"本轮过滤原因分布"，可直接在日志/界面上看到。
+    """
+
+    passed: bool
+    #: ok / missing_required / excluded
+    reason: str
+    #: 人类可读说明（含命中的具体词）
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """转成可 JSON 序列化的字典。"""
+        return {"passed": self.passed, "reason": self.reason, "detail": self.detail}
+
+
+def filter_decision(
+    product: Product,
+    required_keywords: Iterable[str],
+    exclude_keywords: Iterable[str],
+) -> FilterDecision:
+    """给出过滤判定**及其原因**（v1.10）。
+
+    判定顺序与既有行为一致：先必含词、后排除词（这样"缺必含词"优先于"命中排除词"，
+    与 _item_reason 的标注顺序保持同一套口径）。
+
+    Args:
+        product: 商品对象。
+        required_keywords: 必含词列表（空 = 不强制）。
+        exclude_keywords: 排除词列表（空 = 不排除）。
+
+    Returns:
+        FilterDecision；passed=True 时 reason 为 ok。
+    """
+    text = product_search_text(product)
+    # 判定一律复用既有 helpers —— 它们定义了"大小写不敏感 + 归一化"的语义；
+    # 自己再写一遍 str(k) in text 会悄悄丢掉这些语义（本轮真的踩过）。
+    lowered = str(text or "").lower()
+    if not matches_required_keywords(text, required_keywords):
+        missing = [tk for tk in normalize_keywords(required_keywords) if tk not in lowered]
+        return FilterDecision(False, "missing_required", "缺少必含词：" + "、".join(missing[:3]))
+    if hits_exclude_keywords(text, exclude_keywords):
+        hit = [tk for tk in normalize_keywords(exclude_keywords) if tk in lowered]
+        return FilterDecision(False, "excluded", "命中排除词：" + "、".join(hit[:3]))
+    return FilterDecision(True, "ok")
+
+
 def product_passes_filter(
     product: Product,
     required_keywords: Iterable[str],
@@ -143,7 +196,4 @@ def product_passes_filter(
     Returns:
         True 表示通过过滤（应继续参与价格阈值检查）。
     """
-    text = product_search_text(product)
-    if not matches_required_keywords(text, required_keywords):
-        return False
-    return not hits_exclude_keywords(text, exclude_keywords)
+    return filter_decision(product, required_keywords, exclude_keywords).passed

@@ -164,6 +164,9 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
                     logger.warning("配置文件变更检测失败：%s", exc)
                 if stop_event.is_set():
                     break
+                # v1.10（M05 单一时间源）：保活判断并入本循环，
+                # 与轮次共用同一节拍（保活线程在监控运行期间会被停掉）。
+                monitor._maybe_keepalive()  # noqa: SLF001 - 服务层与 Monitor 是同一模块族
                 try:
                     notified = monitor.run_once(log_item_details=not self._detail_only)
                     with self._lock:
@@ -174,7 +177,10 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
                     self._persist_refreshed_token(monitor.fetcher)
                 except Exception as exc:  # noqa: BLE001 - 单轮异常不打断循环
                     logger.exception("监测轮次异常，已跳过：%s", exc)
-                if stop_event.wait(monitor.config.monitor.interval_seconds):
+                # 复用 Monitor 的分片睡眠：等待期间同样做保活检查，且 stop_event 即时唤醒
+                if not monitor._interruptible_sleep(  # noqa: SLF001
+                    monitor.config.monitor.interval_seconds, stop_event=stop_event
+                ):
                     break
         finally:
             # 仅当本线程仍是「当前活跃 worker」时才复位运行状态：
@@ -207,7 +213,9 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
                 return {"ok": False, "message": "配置尚未加载"}
             fetcher = build_fetcher(config)
             notifiers = build_notifiers(config)
-            monitor = Monitor(config, fetcher, self._storage, notifiers)
+            monitor = Monitor(
+                config, fetcher, self._storage, notifiers, config_path=self.config_path
+            )
             stop_event = threading.Event()
             thread = threading.Thread(
                 target=self._worker,
@@ -221,6 +229,9 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
             self._thread = thread
             self._running = True
             thread.start()
+            # v1.10（M05 单一时间源）：监控循环自己会按同一节拍保活，
+            # 因此停掉独立保活线程；stop() 时再恢复（空闲期仍能保活）。
+            self.stop_keepalive()
             logger.info(
                 "监测已启动：关键词 %s，间隔 %d 秒，抓取器 %s",
                 [r.keyword for r in config.keywords],
@@ -263,6 +274,8 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
                     fetcher.close()
             self._running = False
             logger.info("监测已停止")
+        # v1.10（M05）：监控已停，恢复独立保活线程（空闲期维持登录态）
+        self.start_keepalive()
         return {"ok": True, "message": "监测已停止"}
 
     def run_once(self) -> dict[str, Any]:

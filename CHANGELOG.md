@@ -2,6 +2,26 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.0] - 2026-10-10
+
+### 新增
+- **配置热更（M04）**：轮次边界按文件 mtime 检测变化并就地重载 —— 改关键词 / 排除词 /
+  必含词 / 阈值后**下一轮立即生效**，不必重启或整体重载；热更失败自动沿用旧配置。
+- **过滤原因回传（M04）**：新增 `FilterDecision`，判定同时给出原因
+  （`missing_required` / `excluded`）与命中的具体词；日志打印本轮原因分布，
+  排障时能直接回答「这条为什么没提醒」。
+- **轮次级指标（M05）**：每轮记录耗时 / 抓取 / 过滤（含原因分布）/ 新出现 / 命中 / 失败关键词，
+  经 `Monitor.metrics()` 暴露（最近 200 轮 + 累计均值）。
+
+### 变更
+- **单一时间源（M05）**：保活节拍并入主循环（`_maybe_keepalive` + `_interruptible_sleep`），
+  Web 服务在监控运行期间停掉独立保活线程、停止后再恢复；CLI / Tk / Qt / Web 的构造点
+  均传入 `config_path` 以启用热更。
+- `run_forever` 支持外部 `stop_event` 与 `on_round` 回调（供服务层复用同一循环）。
+
+### 测试
+- 新增 `tests/test_monitor_scheduler.py`（21 条）：过滤原因与优先级、热更（含失败回退）、
+  保活三条分支、可中断睡眠、轮次指标累计。
 ## [1.9.9] - 2026-10-10
 
 ### 重构

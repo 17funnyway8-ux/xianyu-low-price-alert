@@ -95,7 +95,7 @@ def require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="未认证或 token 错误")
 
 
-app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.9.9")
+app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.10.0")
 
 
 @app.middleware("http")
