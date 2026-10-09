@@ -2,6 +2,32 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.2] - 2026-10-10
+
+### 新增
+- **通知静默时段 + 命中聚合（M13）**：`notify.quiet_hours`（如 `23:00-07:00`，支持跨午夜）与
+  `notify.aggregate_seconds` —— 密集命中不再逐条刷屏，夜里不再被吵醒。
+  聚合/静默逻辑抽成纯状态机（`xianyu_alert/notify_policy.py`），可注入时钟完整离线测试。
+- **渠道级重试（M13）**：`notify.retry_attempts`；重试次数作为**渠道实例属性**由配置注入，
+  不改变 `safe_notify` 的调用签名（自定义渠道零改动）。
+- **单实例锁可操作诊断（M11）**：`lock_diagnosis()` / `is_lock_stale()` ——
+  区分「真被占用」与「旧版本残留的锁文件」，并给出各自处置；权限失败时日志带出恢复指引。
+- **密钥轮换（M08）**：`secure.rotate_key()` 与 CLI `xianyu-alert secure rotate` ——
+  生成新密钥并把配置里全部密文重加密，旧密钥与配置自动备份；另有
+  `xianyu-alert secure status` 输出密钥状态与恢复指引。
+
+### 变更
+- 配置新增字段：`notify.quiet_hours` / `notify.aggregate_seconds` / `notify.retry_attempts`
+  （脏数据一律回退默认，不阻断启动）。
+
+### 修复
+- `lock_diagnosis()` 早期版本会对不存在的锁文件做探测，而探测用 `O_CREAT` 会**顺手建出文件**
+  （诊断函数不该有写副作用）；已改为先判存在。
+
+### 测试
+- 新增 `tests/test_resilience.py`（28 条）：锁诊断与陈旧锁、静默时段（含跨午夜与边界）、
+  聚合窗口、渠道重试、配置字段容错、密钥轮换（含密文重加密、备份、失败中止）、CLI JSON。
+
 ## [1.10.1] - 2026-10-10
 
 ### 新增

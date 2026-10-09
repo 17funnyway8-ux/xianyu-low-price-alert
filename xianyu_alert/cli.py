@@ -137,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
     """构造 argparse 解析器。"""
     parser = argparse.ArgumentParser(
         prog="xianyu-alert",
-        description="闲鱼低价提醒工具：周期性监测关键词商品，低于价格阈值时推送通知。" "常用示例：autostart enable（开机自启）/ once（跑一轮）/ list --json（机器可读）/ config validate（验配置）" "/ cookie status --json（巡检健康）/ cookie keepalive --enable（空闲保活）",
+        description="闲鱼低价提醒工具：周期性监测关键词商品，低于价格阈值时推送通知。" "常用示例：secure rotate（轮换密钥）/ autostart enable（开机自启）/ once（跑一轮）/ list --json（机器可读）/ config validate（验配置）" "/ cookie status --json（巡检健康）/ cookie keepalive --enable（空闲保活）",
     )
     parser.add_argument("--version", action="version", version=f"xianyu-alert {__version__}")
 
@@ -224,6 +224,15 @@ def build_parser() -> argparse.ArgumentParser:
             sub_ka.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
             sub_ka.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
+    # secure 子命令（v1.10.2）：密钥状态与轮换
+    sub_sec = subparsers.add_parser("secure", help="Cookie 加密密钥：查看状态 / 轮换")
+    sec_subs = sub_sec.add_subparsers(dest="secure_command")
+    for _name, _help in (("status", "查看密钥状态与恢复指引"), ("rotate", "轮换密钥并重加密配置里全部密文")):
+        _sub = sec_subs.add_parser(_name, help=_help)
+        _sub.add_argument("-c", "--config", default=DEFAULT_CONFIG_PATH, help="配置文件路径")
+        _sub.add_argument("--json", action="store_true", help="以 JSON 输出（供脚本消费）")
+        _sub.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
+
     # autostart 子命令（v1.9.8+）：三平台统一的开机自启
     sub_auto = subparsers.add_parser("autostart", help="查看 / 启用 / 关闭开机自启（三平台统一）")
     auto_subs = sub_auto.add_subparsers(dest="autostart_command")
@@ -244,6 +253,47 @@ def build_parser() -> argparse.ArgumentParser:
     sub_val.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
 
     return parser
+
+
+def cmd_secure(args: argparse.Namespace) -> int:
+    """执行 secure 子命令：查看密钥状态 / 轮换密钥（v1.10.2）。
+
+    改造前密钥首次生成后无法更换 —— 泄露了只能删数据目录重来。现在可以：
+        secure status   看密钥位置、是否存在、以及解不开时的恢复指引；
+        secure rotate   生成新密钥并把配置里的密文全部重加密（自动备份旧密钥与配置）。
+
+    Args:
+        args: 已解析参数（secure_command / config / json）。
+
+    Returns:
+        0 表示成功；1 表示失败。
+    """
+    from . import secure
+
+    action = getattr(args, "secure_command", None) or "status"
+
+    if action == "rotate":
+        result = secure.rotate_key(args.config)
+        if getattr(args, "json", False):
+            _emit_json({"action": "rotate", **result})
+            return 0 if result.get("ok") else 1
+        mark = "✅" if result.get("ok") else "❌"
+        print(mark + " " + str(result.get("message", "")))
+        if result.get("key_backup"):
+            print("   旧密钥备份：" + str(result["key_backup"]))
+        if result.get("config_backup"):
+            print("   配置备份：" + str(result["config_backup"]))
+        return 0 if result.get("ok") else 1
+
+    status = secure.key_status()
+    if getattr(args, "json", False):
+        _emit_json({"action": "status", **status})
+        return 0
+    print("密钥文件：" + str(status["key_path"]))
+    print("是否存在：" + ("是" if status["key_exists"] else "否"))
+    print("加密可用：" + ("是" if status["crypto_available"] else "否"))
+    print("说明：" + str(status["hint"]))
+    return 0
 
 
 def cmd_autostart(args: argparse.Namespace) -> int:
@@ -762,6 +812,8 @@ def main(argv: list[str] | None = None) -> int:
             "status": cmd_cookie_status,
             "keepalive": cmd_cookie_keepalive,
         }.get(getattr(args, "cookie_command", None) or "status", cmd_cookie_status)
+    elif args.command == "secure":
+        handler = cmd_secure
     elif args.command == "autostart":
         handler = cmd_autostart
     elif args.command == "config":

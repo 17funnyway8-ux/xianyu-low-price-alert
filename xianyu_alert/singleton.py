@@ -182,6 +182,13 @@ def acquire_instance_lock(
         if parent:
             os.makedirs(parent, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except PermissionError as exc:
+        # NAS 上真实踩过：旧版本以 root 运行留下的锁文件，非 root 进程既删不掉也写不了。
+        # 这里**必须放行**（不能因为一个锁文件就让服务起不来），但要把原因和处置说清楚。
+        if strict:
+            raise
+        logger.warning("无法打开单实例锁文件 %s（%s）。%s", path, exc, lock_diagnosis(path))
+        return None
     except OSError as exc:
         if strict:
             raise
@@ -194,6 +201,7 @@ def acquire_instance_lock(
         # 已被其它进程占用（flock LOCK_NB / msvcrt LK_NBLCK 的非阻塞失败路径）
         with contextlib.suppress(Exception):
             os.close(fd)
+        logger.info("单实例锁被占用：%s", lock_diagnosis(path))
         return None
     except Exception as exc:  # noqa: BLE001 - 其它 IO 异常
         with contextlib.suppress(Exception):
@@ -241,6 +249,47 @@ def lock_holder_pid(lock_path: str | None = None) -> str:
             return fp.read().strip()
     except OSError:
         return ""
+
+
+def lock_diagnosis(lock_path: str | None = None) -> str:
+    """对锁文件状态给出**可操作的处置建议**（v1.10.2）。
+
+    NAS 事故复盘：容器报"已有实例运行中"或"无法创建锁文件"时，
+    用户只看到一句失败，不知道"是真的有实例在跑"还是"旧版本留下的残留文件"。
+    本函数把两种情形和各自的处置写清楚，直接进日志与界面提示。
+
+    Args:
+        lock_path: 锁文件路径。
+
+    Returns:
+        一段可直接展示给用户的处置建议。
+    """
+    path = _resolve_lock_path(lock_path)
+    if not os.path.exists(path):
+        # 先判存在：_probe_is_busy 会 O_CREAT 建出文件，诊断函数不应有写副作用
+        return "锁文件 " + path + " 当前不存在（将在启动时创建）。"
+    holder = lock_holder_pid(path)
+    if _probe_is_busy(path):
+        return (
+            "锁文件 " + path + " 正被 PID " + (holder or "未知") + " 占用。"
+            + "若确认该进程已不存在，删除该文件后重试；"
+            + "若在容器中且文件属主是 root，请按数据属主设置 user 或先删除它。"
+        )
+    if os.path.exists(path):
+        return (
+            "锁文件 " + path + " 存在但已无人持有（陈旧锁），可以安全删除后重试。"
+        )
+    return "锁文件 " + path + " 当前不存在（将在启动时创建）。"
+
+
+def is_lock_stale(lock_path: str | None = None) -> bool:
+    """锁文件是否属于"陈旧态"（存在但无人持有）。
+
+    注意：flock/msvcrt 会随进程退出自动释放，因此"陈旧"主要表现为**文件残留**——
+    此时启动不应失败，只需提示用户可以清理。
+    """
+    path = _resolve_lock_path(lock_path)
+    return os.path.exists(path) and not _probe_is_busy(path)
 
 
 def _probe_is_busy(path: str) -> bool:
