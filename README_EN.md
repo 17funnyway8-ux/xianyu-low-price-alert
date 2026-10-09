@@ -41,7 +41,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.9.5
+  17funnyway8/xianyu-alert:1.9.6
 ```
 
 **Option B — docker compose (adds healthcheck & resource limits):**
@@ -105,3 +105,10 @@ Chinese docs are split by audience in [`docs/`](docs/README.md): `user/` (operat
 ## License & disclaimer
 
 [MIT](LICENSE). This tool is intended for **personal, self-hosted monitoring only**. Respect the target site's terms of service and keep request rates reasonable; you are responsible for any account risk arising from its use.
+
+## Fetching paths: mtop (default) + web fallback
+
+The default path uses the **mtop signed API**. A web-page parsing fallback exists for when
+mtop is unavailable. Its selectors live in `xianyu_alert/web_parse.py` (`WebSelectors`),
+and can be regression-tested offline with the HTML fixtures in `tests/test_webfetcher.py`.
+When it returns 0 items it logs a diagnostic line explaining why (see README for the table).
