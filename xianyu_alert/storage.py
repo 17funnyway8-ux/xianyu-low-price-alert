@@ -24,6 +24,7 @@ from datetime import datetime
 
 from . import paths
 from .models import Product
+from .records import BlacklistEntry, NotifiedRecord, SoldOutRecord
 
 logger = logging.getLogger(__name__)
 
@@ -288,7 +289,7 @@ class Storage:
         keyword: str | None = None,
         limit: int = 100,
         include_sold: bool = False,
-    ) -> list[sqlite3.Row]:
+    ) -> list[NotifiedRecord]:
         """列出最近已提醒的商品记录（调试 / CLI / GUI 提醒记录展示用）。
 
         v3.6：自动排除已加入黑名单的商品（`product_id` 命中 `blacklist` 表），
@@ -322,7 +323,7 @@ class Storage:
                 "ORDER BY last_seen DESC LIMIT ?",
                 (keyword, int(limit)),
             )
-        return list(cur.fetchall())
+        return [NotifiedRecord.from_row(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------ #
     # 售出 / 下架标记（v3.7）：已卖掉或已下架的商品不再显示在提醒记录
@@ -410,7 +411,7 @@ class Storage:
         row = cur.fetchone()
         return bool(row["sold_out"]) if row is not None else False
 
-    def list_sold_out(self, limit: int = 500) -> list[sqlite3.Row]:
+    def list_sold_out(self, limit: int = 500) -> list[SoldOutRecord]:
         """列出全部已标记「售出/下架」的商品记录（GUI「显示已下架」用）。
 
         Args:
@@ -423,7 +424,7 @@ class Storage:
             "SELECT * FROM product WHERE sold_out = 1 ORDER BY sold_at DESC, last_seen DESC LIMIT ?",
             (int(limit),),
         )
-        return list(cur.fetchall())
+        return [SoldOutRecord.from_row(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------ #
     # 临时黑名单（v3.6）：用户人工剔除的商品，不再提醒 / 不再进提醒记录
@@ -489,7 +490,7 @@ class Storage:
             cur = self.conn.execute("DELETE FROM blacklist WHERE product_id = ?", (pid,))
             return int(cur.rowcount)
 
-    def list_blacklist(self, limit: int = 500) -> list[sqlite3.Row]:
+    def list_blacklist(self, limit: int = 500) -> list[BlacklistEntry]:
         """列出全部黑名单商品（GUI「黑名单管理」展示用）。
 
         Args:
@@ -503,7 +504,7 @@ class Storage:
             "SELECT * FROM blacklist ORDER BY created_at DESC LIMIT ?",
             (int(limit),),
         )
-        return list(cur.fetchall())
+        return [BlacklistEntry.from_row(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------ #
     # 轮次状态（用于「新商品」判定，跨重启保持）
@@ -557,6 +558,26 @@ class Storage:
     # ------------------------------------------------------------------ #
     # 通用 meta 读写（v1.8：Cookie 过期提醒去抖状态，跨重启有效）
     # ------------------------------------------------------------------ #
+    def find_keyword_by_product_id(self, product_id: str) -> str:
+        """按 product_id 反查所属关键词（取首个匹配）。
+
+        v1.10.1：此前 Web 层为了拿这个值**直接写了一条 SELECT**，
+        SQL 细节因此泄漏到上层；现在收敛为存储层的具名方法。
+
+        Args:
+            product_id: 商品 ID。
+
+        Returns:
+            关键词字符串；查不到返回空串。
+        """
+        if not product_id:
+            return ""
+        cur = self.conn.execute(
+            "SELECT keyword FROM product WHERE product_id = ? LIMIT 1", (product_id,)
+        )
+        row = cur.fetchone()
+        return str(row["keyword"] or "") if row is not None else ""
+
     def get_meta_value(self, key: str) -> str | None:
         """读取 meta 表 key 的 value。
 
