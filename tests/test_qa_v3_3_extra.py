@@ -344,13 +344,14 @@ class TestVersion(unittest.TestCase):
     def test_version_current(self) -> None:
         from xianyu_alert import __version__
 
-        # v1.9.1 更新项：保活线程接线修正 + GUI 校验统一
-        # （由 1.9.0 升级到 1.9.1，故旧断言同步更新）
-        self.assertEqual(__version__, "1.9.1")
+        # v1.9.2 更新项：保活探测把服务端刷新的令牌节流落盘
+        # （由 1.9.1 升级到 1.9.2，故旧断言同步更新）
+        self.assertEqual(__version__, "1.9.2")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
 
+        self.assertIn("v1.9.2", UPDATE_LOG)
         self.assertIn("v1.9.1", UPDATE_LOG)
         self.assertIn("v1.9.0", UPDATE_LOG)
         self.assertIn("v1.8.5", UPDATE_LOG)
