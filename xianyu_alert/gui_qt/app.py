@@ -158,6 +158,10 @@ class XianyuAlertQtApp(QMainWindow):
         act_exit = menu_file.addAction("退出")
         act_exit.triggered.connect(self.close)
 
+        menu_record = bar.addMenu("记录")
+        act_blacklist = menu_record.addAction("黑名单管理")
+        act_blacklist.triggered.connect(self._show_blacklist_manager)
+
         menu_help = bar.addMenu("帮助")
         act_about = menu_help.addAction("关于")
         act_about.triggered.connect(self._show_about)
@@ -167,6 +171,30 @@ class XianyuAlertQtApp(QMainWindow):
         act_logs.triggered.connect(self._open_log_dir)
         act_version = menu_help.addAction("版本")
         act_version.triggered.connect(self._show_version)
+
+    def _show_blacklist_manager(self) -> None:
+        """黑名单管理（v1.10.3：补齐 Qt 版缺失的查看/移除入口）。
+
+        条目来自 Storage.list_blacklist()（已是类型化记录），移除交给
+        Storage.remove_blacklist() —— 对话框只负责展示与收集选择。
+        """
+        from .dialogs import BlacklistManageDialog
+
+        if self._storage is None:
+            QMessageBox.information(self, "未就绪", "存储尚未就绪，请稍后再试。")
+            return
+        try:
+            entries = [record.to_dict() for record in self._storage.list_blacklist()]
+        except Exception as exc:  # noqa: BLE001 - 读取失败不应崩窗
+            QMessageBox.warning(self, "读取失败", f"无法读取黑名单：{exc}")
+            return
+        dialog = BlacklistManageDialog(entries, self._storage.remove_blacklist, parent=self)
+        dialog.exec()
+        removed = len(entries) - dialog.table.rowCount()
+        self.tab_run.append_log(
+            "INFO", f"[{datetime.now():%H:%M:%S}] 黑名单管理：剩余 {dialog.table.rowCount()} 条（移除 {removed} 条）"
+        )
+        self._reload_alerts()
 
     def _build_status_bar(self) -> None:
         self.statusBar().showMessage("就绪")

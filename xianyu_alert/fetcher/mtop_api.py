@@ -377,6 +377,14 @@ def parse_mtop_item(item: Any, keyword: str) -> Product | None:
     url = ITEM_URL_TEMPLATE.format(product_id=product_id)
     # 主图：站点返回协议相对地址（//img.alicdn.com/...），归一化由 Product 统一处理
     image_url = coerce_text(ex_content.get("picUrl") or ex_content.get("pic_url") or "")
+    # v1.10.3：卖家 / 地区 / 原价（mtop 的 exContent 里通常都有，此前直接丢掉了）
+    seller = coerce_text(
+        ex_content.get("userNickName") or ex_content.get("sellerNick") or args.get("userNickName") or ""
+    )
+    location = coerce_text(ex_content.get("area") or ex_content.get("city") or args.get("area") or "")
+    original_price = parse_price(
+        coerce_text(ex_content.get("originalPrice") or ex_content.get("oriPrice") or args.get("originalPrice"))
+    )
 
     try:
         return Product(
@@ -387,6 +395,9 @@ def parse_mtop_item(item: Any, keyword: str) -> Product | None:
             publish_time=publish_time,
             keyword=keyword,
             image_url=image_url,
+            seller=seller,
+            location=location,
+            original_price=original_price,
         )
     except ValueError as exc:
         logger.debug("[mtop] 跳过非法商品 %s：%s", product_id, exc)

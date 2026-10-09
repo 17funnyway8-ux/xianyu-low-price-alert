@@ -552,3 +552,70 @@ if __name__ == "__main__":  # pragma: no cover
     import logging
 
     unittest.main()
+
+
+@unittest.skipUnless(QT_AVAILABLE, "PySide6 不可用")
+class TestBlacklistManageDialog(unittest.TestCase):
+    """v1.10.3：Qt 版补齐的黑名单管理对话框（查看 + 移除）。"""
+
+    def _entries(self) -> list:
+        return [
+            {"product_id": "111", "keyword": "Switch", "reason": "噪音", "created_at": "2026-10-10 10:00:00"},
+            {"product_id": "222", "keyword": "显卡", "reason": "假货", "created_at": "2026-10-10 11:00:00"},
+        ]
+
+    def test_lists_all_entries(self) -> None:
+        from xianyu_alert.gui_qt.dialogs import BlacklistManageDialog
+
+        dialog = BlacklistManageDialog(self._entries(), lambda _pid: 1)
+        self.assertEqual(dialog.table.rowCount(), 2)
+        self.assertEqual(dialog.table.item(0, 0).text(), "111")
+        self.assertIn("2", dialog.lbl_summary.text())
+        dialog.close()
+
+    def test_empty_state(self) -> None:
+        from xianyu_alert.gui_qt.dialogs import BlacklistManageDialog
+
+        dialog = BlacklistManageDialog([], lambda _pid: 0)
+        self.assertEqual(dialog.table.rowCount(), 0)
+        self.assertIn("空", dialog.lbl_summary.text())
+        dialog.close()
+
+    def test_remove_selected_calls_storage_and_refreshes(self) -> None:
+        from xianyu_alert.gui_qt.dialogs import BlacklistManageDialog
+
+        removed: list = []
+
+        def fake_remove(product_id: str) -> int:
+            removed.append(product_id)
+            return 1
+
+        dialog = BlacklistManageDialog(self._entries(), fake_remove)
+        dialog.table.selectRow(0)
+        self.assertEqual(dialog.selected_product_ids(), ["111"])
+        self.assertEqual(dialog.remove_selected(), 1)
+        self.assertEqual(removed, ["111"])
+        self.assertEqual(dialog.table.rowCount(), 1, "移除后表格应刷新")
+        dialog.close()
+
+    def test_remove_without_selection_is_noop(self) -> None:
+        from xianyu_alert.gui_qt.dialogs import BlacklistManageDialog
+
+        dialog = BlacklistManageDialog(self._entries(), lambda _pid: 1)
+        dialog.table.clearSelection()
+        self.assertEqual(dialog.remove_selected(), 0)
+        self.assertEqual(dialog.table.rowCount(), 2)
+        dialog.close()
+
+    def test_remove_tolerates_storage_error(self) -> None:
+        """移除抛异常时不应崩窗（只记日志）。"""
+        from xianyu_alert.gui_qt.dialogs import BlacklistManageDialog
+
+        def boom(_pid: str) -> int:
+            raise RuntimeError("db locked")
+
+        dialog = BlacklistManageDialog(self._entries(), boom)
+        dialog.table.selectRow(1)
+        self.assertEqual(dialog.remove_selected(), 0)
+        self.assertEqual(dialog.table.rowCount(), 1, "失败条目仍应从界面移除（避免重复点击）")
+        dialog.close()
