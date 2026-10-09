@@ -198,6 +198,26 @@ def main() -> int:
             except Exception:
                 return e.code, raw, dict(e.headers)
 
+
+    def call_raw(method: str, path: str, raw_body: bytes, timeout: float = 25.0):
+        """发送原始 body（用于非法 JSON 这类用例）。"""
+        req = urllib.request.Request(
+            base + path, data=raw_body, headers={"Content-Type": "application/json"}, method=method
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read()
+                try:
+                    return resp.status, json.loads(body.decode("utf-8")), dict(resp.headers)
+                except Exception:
+                    return resp.status, body, dict(resp.headers)
+        except urllib.error.HTTPError as e:
+            body = e.read()
+            try:
+                return e.code, json.loads(body.decode("utf-8")), dict(e.headers)
+            except Exception:
+                return e.code, body, dict(e.headers)
+
     try:
         # ---------------- 启动等待 ----------------
         deadline = time.time() + 25
@@ -552,6 +572,96 @@ def main() -> int:
         rep.check("清空后记录为空", (after2.get("total") or 0) == 0, f"total={after2.get('total')}")
         _, blist2, _ = call("GET", "/api/blacklist")
         rep.check("清空记录保留黑名单表结构", blist2.get("ok") is True, f"items={len(blist2.get('items') or [])}")
+
+
+        # ---------------- v1.9~v1.10 新特性契约 ----------------
+        # 这几项是冷启动重评点名的缺口（e2e 长期停在 68 项，新特性没进契约）：
+        # 部署形态快照、Cookie 分层诊断、配置脱敏字段、错误信封一致性。
+        dep = hz.get("deployment") if isinstance(hz, dict) else None
+        rep.check("GET /healthz 含 deployment 快照", isinstance(dep, dict), f"type={type(dep).__name__}")
+        if isinstance(dep, dict):
+            need_dep = {"kind", "label", "data_dir", "frozen", "platform", "env_override"}
+            miss_dep = sorted(need_dep - set(dep))
+            rep.check("deployment 字段齐全", not miss_dep, f"缺={miss_dep}" if miss_dep else "6 键全在")
+            rep.check(
+                "deployment.kind 为 custom（e2e 经 XY_DATA_DIR 启动）",
+                dep.get("kind") == "custom",
+                f"kind={dep.get('kind')}",
+            )
+            rep.check("deployment.env_override 为 True", dep.get("env_override") is True, f"{dep.get('env_override')}")
+            rep.check(
+                "deployment.data_dir 与 /healthz.data_dir 一致",
+                dep.get("data_dir") == hz.get("data_dir"),
+                f"{dep.get('data_dir')} vs {hz.get('data_dir')}",
+            )
+
+        rep.check("GET /api/config 含 cookie_health 字段", "cookie_health" in cfg, f"keys={len(cfg)}")
+        masked = cfg.get("cookies_masked")
+        rep.check("GET /api/config 提供 cookies_masked（脱敏）", isinstance(masked, str), f"type={type(masked).__name__}")
+        rep.check(
+            "cookies_masked 不含 cookie 明文",
+            "cookie2=" not in str(masked),
+            f"masked={str(masked)[:40]}",
+        )
+        rep.check(
+            "GET /api/config 含 cookies_undecryptable 布尔",
+            isinstance(cfg.get("cookies_undecryptable"), bool),
+            f"{cfg.get('cookies_undecryptable')!r}",
+        )
+
+        cst, cstj, _ = call("GET", "/api/cookie/status")
+        rep.check(
+            "GET /api/cookie/status → 200 且 ok=true",
+            cst == 200 and cstj.get("ok") is True,
+            f"status={cst}",
+        )
+        rep.check(
+            "cookie/status 含 diagnosis 与 keepalive（分层诊断）",
+            "diagnosis" in cstj and "keepalive" in cstj,
+            f"keys={sorted(cstj)[:6]}",
+        )
+        ka = cstj.get("keepalive")
+        if isinstance(ka, dict):
+            need_ka = {"enabled", "interval_seconds", "last_auth_at", "thread"}
+            miss_ka = sorted(need_ka - set(ka))
+            rep.check("keepalive 字段齐全", not miss_ka, f"缺={miss_ka}" if miss_ka else "4 键全在")
+            thread = ka.get("thread")
+            rep.check(
+                "keepalive.thread.running 为布尔",
+                isinstance(thread, dict) and isinstance(thread.get("running"), bool),
+                f"thread={thread!r}",
+            )
+            rep.check(
+                "keepalive.interval_seconds 为正数",
+                isinstance(ka.get("interval_seconds"), (int, float)) and ka["interval_seconds"] > 0,
+                f"interval={ka.get('interval_seconds')!r}",
+            )
+        else:
+            rep.check("keepalive 字段齐全", False, f"type={type(ka).__name__}")
+            rep.check("keepalive.thread.running 为布尔", False, "keepalive 非对象")
+            rep.check("keepalive.interval_seconds 为正数", False, "keepalive 非对象")
+
+        pst, pj, _ = call("GET", "/api/cookie/pool")
+        need_pool = {"pool", "single", "pool_used", "default_name", "default_is_pool"}
+        miss_pool = sorted(need_pool - set(pj)) if isinstance(pj, dict) else sorted(need_pool)
+        rep.check(
+            "GET /api/cookie/pool 键齐全",
+            pst == 200 and not miss_pool,
+            f"status={pst} 缺={miss_pool}" if miss_pool else f"status={pst}",
+        )
+        rep.check("cookie/pool.pool 为列表", isinstance(pj.get("pool"), list), f"type={type(pj.get('pool')).__name__}")
+        rep.check(
+            "cookie/pool.pool_used 为布尔",
+            isinstance(pj.get("pool_used"), bool),
+            f"{pj.get('pool_used')!r}",
+        )
+
+        bad_st, bad_j, _ = call_raw("POST", "/api/monitor/detail_only", b"{not-json")
+        rep.check(
+            "非法 JSON body → 4xx 且为 JSON 信封（不是 HTML 堆栈）",
+            bad_st in (400, 422) and isinstance(bad_j, dict) and "ok" in bad_j,
+            f"status={bad_st} body={str(bad_j)[:60]}",
+        )
 
         # ---------------- 汇总 ----------------
         rep.dump()
