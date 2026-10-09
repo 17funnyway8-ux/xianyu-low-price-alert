@@ -2,6 +2,19 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.9] - 2026-10-10
+
+### 重构
+- **抓取层 `fetcher.py`（1451 行）拆为包** `xianyu_alert/fetcher/`：
+  `constants` / `base`（Fetcher ABC / FetchError）/ `mtop_api`（**mtop 纯函数：签名、令牌、请求体、解析，无 IO**）/ `mtop` / `web` / `mock` / `factory`（build_fetcher）。
+- **兼容性**：模块级 59 个名字与四个抓取器类的公开成员**零缺失**（重构前后 dir() 机械比对），
+  `from xianyu_alert.fetcher import MtopFetcher, build_fetcher` 等调用点无需改动。
+- 拆分时显式声明**依赖 DAG**（constants -> base -> mtop_api -> mtop -> factory），
+  避免「互相引用」形成的循环导入（第一版就没绕开，已修正）。
+
+### 文档
+- 维护交接文档与开发状态指南同步到新包路径。
+
 ## [1.9.8] - 2026-10-10
 
 ### 新增
