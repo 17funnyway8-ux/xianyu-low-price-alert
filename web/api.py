@@ -95,7 +95,7 @@ def require_auth(request: Request) -> None:
         raise HTTPException(status_code=401, detail="未认证或 token 错误")
 
 
-app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.8.5")
+app = FastAPI(title="闲鱼低价提醒工具 Web", version="1.9.0")
 
 
 @app.middleware("http")
@@ -334,6 +334,19 @@ def api_cookie_save(body: CookieSaveBody, service: MonitorService = Depends(get_
         },
         message="Cookie 已更新并加密保存，下一轮生效",
     )
+
+
+@api_router.get("/cookie/status")
+def api_cookie_status(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN401 - 路由可能返回 dict / JSONResponse / StreamingResponse / FileResponse
+    """v1.9：Cookie 分层诊断（登录态 / 会话凭据 / 签名令牌 / 风控指纹）+ 保活状态。
+
+    与 /cookie/pool 的区别：本接口回答"这份 Cookie 现在到底能不能用、还剩多久、
+    需不需要重新登录"，不再把"令牌过期"混同于"登录失效"。
+    """
+    try:
+        return ok(service.cookie_status())
+    except Exception as exc:  # noqa: BLE001 - 读取失败转 500
+        return fail(f"读取 Cookie 状态失败：{exc}", status_code=500)
 
 
 @api_router.get("/cookie/pool")

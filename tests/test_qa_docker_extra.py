@@ -82,7 +82,8 @@ def make_form(**overrides) -> dict:
 
 
 def valid_cookie() -> str:
-    return f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+    # v1.9：内嵌时间戳是过期时刻 → 取 3 小时后才是"有效令牌"
+    return f"_m_h5_tk=abc_{int(time.time() * 1000) + 3 * 3600 * 1000}; cookie2=xyz"
 
 
 class QaDockerExtraTestCase(unittest.TestCase):

@@ -344,13 +344,14 @@ class TestVersion(unittest.TestCase):
     def test_version_current(self) -> None:
         from xianyu_alert import __version__
 
-        # v1.8.5 更新项：宽屏自适应布局 + 顶栏启停按钮
-        # （由 1.8.4 升级到 1.8.5，故旧断言同步更新）
-        self.assertEqual(__version__, "1.8.5")
+        # v1.9.0 更新项：Cookie 管理大改造（分层凭据 + 可用性规则 + 空闲保活）
+        # （由 1.8.5 升级到 1.9.0，故旧断言同步更新）
+        self.assertEqual(__version__, "1.9.0")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
 
+        self.assertIn("v1.9.0", UPDATE_LOG)
         self.assertIn("v1.8.5", UPDATE_LOG)
         self.assertIn("v1.8.4", UPDATE_LOG)
         self.assertIn("v1.8.3", UPDATE_LOG)

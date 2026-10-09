@@ -201,11 +201,11 @@ class TestPoolUsableAndResolve(unittest.TestCase):
 
         return SimpleNamespace(cookie_pool=self._pool(pool_items), cookies=single)
 
-    def test_pool_usable_only_ok_and_expiring(self) -> None:
-        """pool_usable_cookies 保序且只含 ok/expiring；停用/空/过期被排除。"""
+    def test_pool_usable_prefers_healthy_tier(self) -> None:
+        """v1.9：优先档 = 正常，或仅令牌层问题（过期/缺失均可自愈）。"""
         from xianyu_alert.cookie import pool_usable_cookies
 
-        ok_cookie = "_m_h5_tk=t; c=1"                      # 无时间戳 → ok（历史样本兼容）
+        ok_cookie = "_m_h5_tk=t; cookie2=v"
         expiring = self._expiring_cookie()
         expired = self._expired_cookie()
         pool = self._pool(
@@ -213,56 +213,56 @@ class TestPoolUsableAndResolve(unittest.TestCase):
                 {"name": "a", "cookie": ok_cookie, "enabled": True},
                 {"name": "b", "cookie": expiring, "enabled": True},
                 {"name": "c", "cookie": expired, "enabled": True},
-                {"name": "d", "cookie": "no_token_cookie", "enabled": True},
-                {"name": "e", "cookie": ok_cookie, "enabled": False},  # 停用 → 排除
-                {"name": "f", "cookie": "", "enabled": True},          # 空 → 排除
+                {"name": "d", "cookie": "dpapi1:broken", "enabled": True},
+                {"name": "e", "cookie": "no_session_cookie", "enabled": True},
+                {"name": "f", "cookie": ok_cookie, "enabled": False},
+                {"name": "g", "cookie": "", "enabled": True},
             ]
         )
-        result = pool_usable_cookies(pool)
-        self.assertEqual(result, [ok_cookie, expiring])
+        self.assertEqual(pool_usable_cookies(pool), [ok_cookie, expiring, expired])
 
-    def test_resolve_skips_expired_and_rotates_healthy(self) -> None:
-        """池混入 expired/no_token 条目时只返回有效条目（保序轮换）。"""
+    def test_resolve_rotates_self_healing_entries(self) -> None:
+        """v1.9：令牌过期的条目**不再被跳过**（可自愈），轮换覆盖全部优先条目。"""
         from xianyu_alert.cookie import resolve_cookie_for_round
 
-        ok_cookie = "_m_h5_tk=t; c=1"
+        ok_cookie = "_m_h5_tk=t; cookie2=v"
         expiring = self._expiring_cookie()
+        expired = self._expired_cookie()
         mon = self._monitor(
             [
-                {"name": "expired1", "cookie": self._expired_cookie(), "enabled": True},
+                {"name": "expired1", "cookie": expired, "enabled": True},
                 {"name": "ok1", "cookie": ok_cookie, "enabled": True},
                 {"name": "expiring1", "cookie": expiring, "enabled": True},
-                {"name": "no_token", "cookie": "cookie2=x", "enabled": True},
             ]
         )
-        # 健康条目 = [ok_cookie, expiring] → 轮换
-        self.assertEqual(resolve_cookie_for_round(mon, 0), ok_cookie)
-        self.assertEqual(resolve_cookie_for_round(mon, 1), expiring)
-        self.assertEqual(resolve_cookie_for_round(mon, 2), ok_cookie)  # 取模循环
+        self.assertEqual(resolve_cookie_for_round(mon, 0), expired)
+        self.assertEqual(resolve_cookie_for_round(mon, 1), ok_cookie)
+        self.assertEqual(resolve_cookie_for_round(mon, 2), expiring)
+        self.assertEqual(resolve_cookie_for_round(mon, 3), expired)
 
-    def test_resolve_all_expired_falls_back_to_single_healthy(self) -> None:
-        """池全部失效 → 回退单值（单值健康才用）。"""
+    def test_resolve_prefers_pool_then_single(self) -> None:
+        """v1.9：池有可参与条目时优先用池（令牌过期也算）；池全损坏才回退单值。"""
         from xianyu_alert.cookie import resolve_cookie_for_round
 
         mon = self._monitor(
-            [
-                {"name": "e1", "cookie": self._expired_cookie(), "enabled": True},
-                {"name": "e2", "cookie": "cookie2=no_token", "enabled": True},
-            ],
-            single="_m_h5_tk=t; single=1",
+            [{"name": "e1", "cookie": self._expired_cookie(), "enabled": True}],
+            single="_m_h5_tk=t; single=1; cookie2=v",
         )
-        self.assertEqual(resolve_cookie_for_round(mon, 0), "_m_h5_tk=t; single=1")
+        self.assertEqual(resolve_cookie_for_round(mon, 0), self._expired_cookie())
 
-    def test_resolve_all_invalid_returns_empty(self) -> None:
-        """池全部失效且单值也不健康 → 返回空串 + C14 warning。"""
+        mon2 = self._monitor(
+            [{"name": "b1", "cookie": "dpapi1:broken", "enabled": True}],
+            single="_m_h5_tk=t; single=1; cookie2=v",
+        )
+        self.assertEqual(resolve_cookie_for_round(mon2, 0), "_m_h5_tk=t; single=1; cookie2=v")
+
+    def test_resolve_all_unusable_returns_empty(self) -> None:
+        """池与单值均为损坏密文（本地拿不到内容）→ 空串 + 告警。"""
         from xianyu_alert.cookie import resolve_cookie_for_round
 
         mon = self._monitor(
-            [
-                {"name": "e1", "cookie": self._expired_cookie(), "enabled": True},
-                {"name": "e2", "cookie": "cookie2=no_token", "enabled": True},
-            ],
-            single="cookie2=only",
+            [{"name": "b1", "cookie": "dpapi1:broken", "enabled": True}],
+            single="dpapi1:broken",
         )
         with self.assertLogs("xianyu_alert.cookie", level="WARNING") as logs:
             result = resolve_cookie_for_round(mon, 0)
@@ -296,25 +296,21 @@ class TestSaveCookiesValidated(unittest.TestCase):
         save_cookies_validated(self.config_path, "_m_h5_tk=t; c=1")
         self.assertEqual(_read_yaml(self.config_path)["monitor"]["cookies"], "_m_h5_tk=t; c=1")
 
-    def test_expired_cookie_rejected_and_not_saved(self) -> None:
-        """过期 Cookie → ValueError 且 config 不变。"""
+    def test_expired_token_cookie_accepted_and_saved(self) -> None:
+        """v1.9：令牌过期的 Cookie 允许保存（令牌会自愈）。"""
         from xianyu_alert.cookie import save_cookies_validated
 
         before = _read_yaml(self.config_path)
-        with self.assertRaises(ValueError) as ctx:
-            save_cookies_validated(self.config_path, "_m_h5_tk=abc_1000000000000; c=1")
-        self.assertIn("已过期", str(ctx.exception))
-        self.assertEqual(_read_yaml(self.config_path), before)
+        save_cookies_validated(self.config_path, "_m_h5_tk=abc_1000000000000; cookie2=v")
+        self.assertNotEqual(_read_yaml(self.config_path), before)
 
-    def test_no_token_cookie_rejected_and_not_saved(self) -> None:
-        """缺 _m_h5_tk → ValueError 且 config 不变。"""
+    def test_no_token_cookie_accepted_and_saved(self) -> None:
+        """v1.9：缺 _m_h5_tk 的 Cookie 允许保存（首轮自动申领）。"""
         from xianyu_alert.cookie import save_cookies_validated
 
         before = _read_yaml(self.config_path)
-        with self.assertRaises(ValueError) as ctx:
-            save_cookies_validated(self.config_path, "cookie2=only")
-        self.assertIn("缺少", str(ctx.exception))
-        self.assertEqual(_read_yaml(self.config_path), before)
+        save_cookies_validated(self.config_path, "cookie2=only")
+        self.assertNotEqual(_read_yaml(self.config_path), before)
 
     def test_empty_cookie_rejected(self) -> None:
         """空串 → ValueError（missing）。"""
@@ -373,25 +369,21 @@ class TestSaveCookiesValidatedEncrypted(unittest.TestCase):
         self.assertTrue(cookies.startswith("fernet1:"))
         self.assertNotIn(cookie, open(self.config_path, encoding="utf-8").read())
 
-    def test_expired_cookie_rejected_and_not_saved(self) -> None:
-        """过期 Cookie → ValueError 且 config 不变。"""
+    def test_expired_token_cookie_accepted_and_saved(self) -> None:
+        """v1.9：令牌过期的 Cookie 允许加密保存（令牌会自愈）。"""
         from xianyu_alert.cookie import save_cookies_validated_encrypted
 
         before = self._load()
-        with self.assertRaises(ValueError) as ctx:
-            save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=abc_1000000000000; c=1")
-        self.assertIn("已过期", str(ctx.exception))
-        self.assertEqual(self._load(), before)
+        save_cookies_validated_encrypted(self.config_path, "_m_h5_tk=abc_1000000000000; cookie2=v")
+        self.assertNotEqual(self._load(), before)
 
-    def test_no_token_cookie_rejected_and_not_saved(self) -> None:
-        """缺 _m_h5_tk → ValueError 且 config 不变。"""
+    def test_no_token_cookie_accepted_and_saved(self) -> None:
+        """v1.9：缺 _m_h5_tk 的 Cookie 允许加密保存（首轮自动申领）。"""
         from xianyu_alert.cookie import save_cookies_validated_encrypted
 
         before = self._load()
-        with self.assertRaises(ValueError) as ctx:
-            save_cookies_validated_encrypted(self.config_path, "cookie2=only")
-        self.assertIn("缺少", str(ctx.exception))
-        self.assertEqual(self._load(), before)
+        save_cookies_validated_encrypted(self.config_path, "cookie2=only")
+        self.assertNotEqual(self._load(), before)
 
     def test_empty_cookie_rejected(self) -> None:
         """空串 → ValueError（missing）。"""

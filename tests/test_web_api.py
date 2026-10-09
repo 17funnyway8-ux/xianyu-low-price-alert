@@ -50,8 +50,8 @@ def make_mock_config_dict() -> dict:
 
 
 def valid_cookie() -> str:
-    """构造一个当前有效的 Cookie（_m_h5_tk 时间戳为当前毫秒，24h 内）。"""
-    return f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+    """构造一个当前有效的 Cookie（v1.9：内嵌时间戳=过期时刻，这里取 3 小时后）。"""
+    return f"_m_h5_tk=abc_{int(time.time() * 1000) + 3 * 3600 * 1000}; cookie2=xyz"
 
 
 def make_form(**overrides) -> dict:
@@ -186,15 +186,19 @@ class WebApiTestCase(unittest.TestCase):
 
     # ------------------------------------------------------------------ #
     def test_cookie_save_reject_invalid(self) -> None:
-        """缺 _m_h5_tk 的 Cookie 被拒绝（400 + 中文原因），不落盘。"""
-        resp = self.client.post("/api/cookie/save", json={"cookie": "cookie2=abc"})
+        """v1.9：空 Cookie 拒绝（400）；令牌过期的 Cookie 允许保存（令牌自愈）。"""
+        resp = self.client.post("/api/cookie/save", json={"cookie": "   "})
         self.assertEqual(resp.status_code, 400)
         data = resp.json()
         self.assertFalse(data["ok"])
         self.assertIn("Cookie", data["message"])
-        # 未落盘：config 中 cookies 仍为空
         saved = gui.load_raw_config(self.config_path)
         self.assertEqual(saved["monitor"].get("cookies", ""), "")
+
+        expired = f"_m_h5_tk=abc_{int(time.time() * 1000) - 3600 * 1000}; cookie2=xyz"
+        resp2 = self.client.post("/api/cookie/save", json={"cookie": expired})
+        self.assertEqual(resp2.status_code, 200)
+        self.assertTrue(resp2.json()["ok"])
 
     def test_cookie_save_accept_and_encrypt(self) -> None:
         """有效 Cookie 保存成功：Fernet 密文落盘 + 脱敏回显 + 触发重载。"""
@@ -470,22 +474,24 @@ class WebApiTestCase(unittest.TestCase):
         self.assertTrue(data["default_is_pool"])
 
     def test_cookie_pool_refresh_rejects_invalid(self) -> None:
-        """refresh_selected 校验非 ok → 400 且不落盘。"""
+        """v1.9：池条目刷新拒绝空 Cookie（400）且不落盘；令牌过期不再拒绝。"""
         self.client.post(
             "/api/cookie/pool",
             json={"action": "add", "name": "小号", "cookie": valid_cookie()},
         )
         resp = self.client.post(
             "/api/cookie/pool",
-            json={"action": "refresh_selected", "name": "小号", "cookie": "cookie2=bad"},
+            json={"action": "refresh_selected", "name": "小号", "cookie": "   "},
         )
         self.assertEqual(resp.status_code, 400)
-        raw = open(self.config_path, encoding="utf-8").read()
-        self.assertNotIn("cookie2=bad", raw)
 
-    # ------------------------------------------------------------------ #
-    # P2-02：黑名单 API
-    # ------------------------------------------------------------------ #
+        expired = f"_m_h5_tk=abc_{int(time.time() * 1000) - 3600 * 1000}; cookie2=xyz"
+        resp2 = self.client.post(
+            "/api/cookie/pool",
+            json={"action": "refresh_selected", "name": "小号", "cookie": expired},
+        )
+        self.assertEqual(resp2.status_code, 200)
+
     def test_blacklist_list_and_restore(self) -> None:
         """GET /api/blacklist 4 字段 + restore 幂等移出。"""
         self.client.post("/api/monitor/run_once")
