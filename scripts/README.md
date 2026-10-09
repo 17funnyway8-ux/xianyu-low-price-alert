@@ -5,8 +5,9 @@
 ## CI 使用（改动必须同步 .github/workflows/ci.yml）
 | 脚本 | 用途 |
 |---|---|
+| `check_docs.py` | 文档检查：版本号 / 链接 / 时效标注等（CI「文档门禁」使用，0 项问题才通过） |
 | `check_web_contract.py` | 前端 ↔ 后端**机械契约**交叉校验（路由 / 通道元数据 / 配置表单 / 记录字段），有 P0 则退出码 1 |
-| `e2e_web_smoke.py` | 真实 uvicorn + socket + SQLite 的 API 冒烟（68 项断言） |
+| `e2e_web_smoke.py` | 真实 uvicorn + socket + SQLite 的 API 冒烟（**86 项断言**） |
 | `e2e_web_dom.js` | jsdom 加载真实页面 + DOM 交互 e2e（62 项断言，需 `npm ci`） |
 | `web_contract_probe.js` | 被 `check_web_contract.py` 调用：抓取前端数据层真实发出的 URL/Method |
 
