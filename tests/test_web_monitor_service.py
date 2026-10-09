@@ -395,7 +395,7 @@ class MonitorServiceTestCase(unittest.TestCase):
                 pass
 
         fake = _FakeFetcher()
-        with mock.patch.object(ms, "build_fetcher", return_value=fake):
+        with mock.patch.object(ms.shelf_check, "build_fetcher", return_value=fake):
             result = self.service.start_check_shelf(ids)
         self.assertTrue(result["ok"])
         self.assertEqual(result["count"], 3)
@@ -441,7 +441,7 @@ class MonitorServiceTestCase(unittest.TestCase):
                 def close(self) -> None:
                     pass
 
-            with mock.patch.object(ms, "build_fetcher", return_value=_SlowFetcher()):
+            with mock.patch.object(ms.shelf_check, "build_fetcher", return_value=_SlowFetcher()):
                 # 10 条 → 正常跑完要 15s；取消应在 2s 内生效
                 result = service.start_check_shelf([str(i) for i in range(10)])
             self.assertTrue(result["ok"])

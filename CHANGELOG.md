@@ -2,6 +2,17 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.7] - 2026-10-10
+
+### 重构
+- **Web 后端 `monitor_service.py`（1561 行）拆为包** `web/monitor_service/`：
+  `constants` / `logging_bridge`（SSE 广播与日志桥）/ `forms`（表单<->配置纯转换）/ `cookie_pool` / `shelf_check` / `keepalive` / `service`。
+- **主服务类按功能拆 mixin**：`CookiePoolMixin`（530 行）/ `ShelfCheckMixin`（168 行）/ `KeepaliveMixin`（57 行），本体只剩生命周期与状态（**service.py 1561 -> 489 行**）。
+- **兼容性**：模块级命名空间（56 个名字）与 `MonitorService` 的 35 个成员**零缺失**
+  （重构前后 dir() 机械比对），`from web.monitor_service import get_service` 等调用点无需改动。
+- **打桩目标注意**：`mock.patch.object(ms, "build_fetcher")` 需指向真正持有该名字的子模块
+  （在架校验 worker 现位于 `shelf_check`，故为 `ms.shelf_check`）；仓库内 3 处测试已同步。
+
 ## [1.9.6] - 2026-10-10
 
 ### 重构
@@ -157,7 +168,7 @@
 
 ### 修复
 - `gui_qt/app.py` 对 `sqlite3.Row` 调用 `.get()`（运行到"提醒记录"列表会抛 AttributeError）
-- `web/monitor_service.py` 向 `Monitor` 传入 `Storage | None`
+- `web/monitor_service/` 向 `Monitor` 传入 `Storage | None`
 - `WebFetcher` 无 `check_item_status` 能力却直接调用（改为能力探测）
 - `web/api.py` 23 处返回注解与 FastAPI 响应模型冲突
 - Linux CI 上 Tk 测试因无 DISPLAY 直接失败（改用 xvfb）
