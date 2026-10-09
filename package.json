@@ -1,0 +1,17 @@
+{
+  "name": "xianyu-low-price-alert-web-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Web 前端 DOM 级 e2e（jsdom）——仅开发/CI 使用，不参与运行时",
+  "scripts": {
+    "e2e:dom": "node scripts/e2e_web_dom.js",
+    "e2e:live": "node scripts/e2e_web_dom_live.js",
+    "contract": "node scripts/web_contract_probe.js"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
