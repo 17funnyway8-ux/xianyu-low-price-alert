@@ -10,6 +10,8 @@
  * =========================================================== */
 
 :root {
+  /* 内容区宽度上限：宽屏不再写死 1080px，最多 1720px 或视口的 96% */
+  --shell-max: min(1720px, 96vw);
   --bg: #f6f7f9;
   --surface: #ffffff;
   --surface-2: #f2f3f6;
@@ -195,7 +197,7 @@ code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
 /* ---------------- 错误条 / 未保存条 ---------------- */
 .error-banner {
   display: flex; align-items: center; gap: 10px;
-  max-width: 1080px; margin: 12px auto 0; padding: 10px 16px;
+  max-width: var(--shell-max); margin: 12px auto 0; padding: 10px 16px;
   background: var(--danger-soft); border: 1px solid #f3c9c9;
   border-radius: var(--r-md); font-size: 13px; color: var(--danger);
 }
@@ -204,13 +206,13 @@ code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
 
 .dirty-bar {
   display: flex; align-items: center; gap: 10px;
-  max-width: 1080px; margin: 12px auto 0; padding: 8px 16px;
+  max-width: var(--shell-max); margin: 12px auto 0; padding: 8px 16px;
   background: var(--warn-soft); border: 1px solid #f0dcb4;
   border-radius: var(--r-md); font-size: 13px; color: #8a5306;
 }
 
 /* ---------------- 布局 ---------------- */
-.shell { max-width: 1080px; margin: 0 auto; padding: 18px 24px 8px; }
+.shell { max-width: var(--shell-max); margin: 0 auto; padding: 18px 24px 8px; }
 .view { display: none; }
 .view.active { display: block; animation: slideIn .2s ease-out; }
 
@@ -719,7 +721,7 @@ textarea { resize: vertical; line-height: 1.6; }
 
 /* ---------------- 页脚 ---------------- */
 .foot {
-  max-width: 1080px; margin: 0 auto; padding: 16px 24px 30px;
+  max-width: var(--shell-max); margin: 0 auto; padding: 16px 24px 30px;
   display: flex; align-items: center; justify-content: center; gap: 10px;
   font-size: 12px; color: var(--text-3);
 }
@@ -727,6 +729,16 @@ textarea { resize: vertical; line-height: 1.6; }
 .foot-text { text-align: center; }
 
 /* ---------------- 响应式 ---------------- */
+/* 宽屏：命中列表改多列，用宽度换"一屏看更多"，而不是把单行拉长 */
+@media (min-width: 1280px) {
+  #hitsList {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(620px, 1fr));
+    align-items: start;
+  }
+  .hitcard { height: 100%; }
+}
+
 @media (max-width: 900px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .form-grid, .ch-fields, .kw-fields, .kv-grid { grid-template-columns: 1fr; }

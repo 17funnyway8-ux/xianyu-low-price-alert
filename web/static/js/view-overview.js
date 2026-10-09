@@ -230,26 +230,29 @@ window.XY.ViewOverview = (function () {
 
   /* ---------------- 事件 ---------------- */
 
+  /** 开始 / 停止监控（顶栏状态胶囊与启停按钮共用）。 */
+  async function toggleMonitor(btn) {
+    const running = !!(st.status && st.status.running);
+    U.setBtnLoading(btn, true);
+    try {
+      const res = running
+        ? await window.XY.Data.stopMonitor()
+        : await window.XY.Data.startMonitor();
+      U.toast(res.message || (running ? "监测已停止" : "监测已启动"), "hit");
+      window.dispatchEvent(new CustomEvent("xy:refresh-status"));
+    } catch (e) {
+      U.toast(e.message, true);
+    } finally {
+      U.setBtnLoading(btn, false);
+      window.XY.UI.renderTopbar();
+    }
+  }
+
   function init() {
     const pulse = U.$("#pulseBtn");
-    if (pulse) {
-      pulse.addEventListener("click", async () => {
-        const running = !!(st.status && st.status.running);
-        U.setBtnLoading(pulse, true);
-        try {
-          const res = running
-            ? await window.XY.Data.stopMonitor()
-            : await window.XY.Data.startMonitor();
-          U.toast(res.message || (running ? "监测已停止" : "监测已启动"), "hit");
-          window.dispatchEvent(new CustomEvent("xy:refresh-status"));
-        } catch (e) {
-          U.toast(e.message, true);
-        } finally {
-          U.setBtnLoading(pulse, false);
-          window.XY.UI.renderTopbar();
-        }
-      });
-    }
+    if (pulse) pulse.addEventListener("click", () => toggleMonitor(pulse));
+    const toggle = U.$("#monitorToggleBtn");
+    if (toggle) toggle.addEventListener("click", () => toggleMonitor(toggle));
 
     const health = U.$("#healthBtn");
     if (health) health.addEventListener("click", () => UI.navigate("targets"));
