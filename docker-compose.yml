@@ -32,7 +32,7 @@ services:
   xianyu-alert:
     # 默认使用 Docker Hub 已发布的多架构镜像（amd64 + arm64）；
     # 想从源码构建：注释掉 image 行、启用下面的 build 行，并加 --build。
-    image: 17funnyway8/xianyu-alert:1.9.3
+    image: 17funnyway8/xianyu-alert:1.9.4
     # build: .
     container_name: xianyu-alert
     # 7×24：宿主机重启 / 容器崩溃自动拉起（P3-03 确认保留）
