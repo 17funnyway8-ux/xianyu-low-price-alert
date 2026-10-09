@@ -41,7 +41,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.9.7
+  17funnyway8/xianyu-alert:1.9.8
 ```
 
 **Option B — docker compose (adds healthcheck & resource limits):**
@@ -112,3 +112,10 @@ The default path uses the **mtop signed API**. A web-page parsing fallback exist
 mtop is unavailable. Its selectors live in `xianyu_alert/web_parse.py` (`WebSelectors`),
 and can be regression-tested offline with the HTML fixtures in `tests/test_webfetcher.py`.
 When it returns 0 items it logs a diagnostic line explaining why (see README for the table).
+
+## Autostart (all three platforms)
+
+Use the CLI subcommand autostart (status / enable / disable); a button is also available in the GUI.
+macOS uses a LaunchAgent, Linux uses a systemd --user unit (no root needed),
+Windows uses a Startup-folder shortcut. Crashes are restarted automatically;
+a normal exit is not revived.

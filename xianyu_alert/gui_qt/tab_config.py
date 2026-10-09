@@ -164,6 +164,9 @@ class MonitorConfigTab(QWidget):
             bottom_row.addWidget(self.btn_shortcut)
         else:
             self.btn_shortcut = None  # type: ignore[assignment]
+        self.btn_autostart = QPushButton("🚀 开机自启")
+        self.btn_autostart.clicked.connect(self._on_toggle_autostart)
+        bottom_row.addWidget(self.btn_autostart)
         bottom_row.addStretch(1)
         root.addLayout(bottom_row)
 
@@ -328,6 +331,25 @@ class MonitorConfigTab(QWidget):
         self._cookies_undecryptable = False
         self._refresh_cookie_light()
         self.cookie_changed.emit()
+
+    def _on_toggle_autostart(self) -> None:
+        """一键切换开机自启（三平台统一；改造前 macOS 需手动脚本、Linux 无能力）。"""
+        from .. import autostart
+
+        current = autostart.status()
+        if not current.supported:
+            QMessageBox.warning(self, "不支持", current.detail + chr(10) + current.hint)
+            return
+        result = autostart.disable() if current.enabled else autostart.enable()
+        text = (result.detail or result.mechanism) + (chr(10) + chr(10) + "文件：" + result.path if result.path else "")
+        if result.hint:
+            text += chr(10) + result.hint
+        if current.enabled and not result.enabled:
+            QMessageBox.information(self, "已关闭开机自启", text)
+        elif result.enabled:
+            QMessageBox.information(self, "已开启开机自启", text)
+        else:
+            QMessageBox.warning(self, "操作失败", text)
 
     def _on_create_shortcut(self) -> None:
         """创建桌面快捷方式（仅 Windows；macOS 不渲染该按钮）。"""
