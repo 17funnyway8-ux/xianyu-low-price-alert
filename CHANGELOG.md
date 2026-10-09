@@ -2,6 +2,17 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.1] - 2026-10-09
+
+### 修复
+- **保活线程接线修正**：Web 入口此前自建了一个 MonitorService 临时实例并在其上启动保活，
+  而 API（get_service）用的是进程内单例 —— 导致保活虽然启动，但 /api/cookie/status
+  读到的却是"未运行"（状态误报）。改为入口与 API 共用同一单例
+- **GUI 校验规则统一到 v1.9 语义**（顺带修复 CI 的 Qt 任务连续卡死）：可用性放宽后，
+  Qt/Tk 对话框会接受此前被拒的输入，测试随即走到未 patch 的模态对话框上无限阻塞；
+  现统一用 cookie_accept_state()（只有"未配置 / 密文无法解密"拒绝），
+  "自动停用过期项"改用 cookie_prefers_rotation()（令牌过期可自愈，不再自动停用）
+
 ## [1.9.0] - 2026-10-09
 
 ### 新增
