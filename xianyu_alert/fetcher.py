@@ -26,16 +26,21 @@ import random
 import re
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus
 
 import requests
-from bs4 import BeautifulSoup
 
+from . import web_parse
 from .config import DEFAULT_USER_AGENT, Config
-from .models import Product, normalize_image_url
+from .models import Product
+from .parsing import (  # noqa: F401 - 再导出：既有调用点与测试无需改动
+    extract_product_id,
+    parse_price,
+    parse_publish_time,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,20 +99,6 @@ COOKIE_GUIDE = (
 )
 
 # 从链接中提取商品 ID：/item/123456、/items/123456、?id=123456
-_ID_PATTERNS = (
-    re.compile(r"/items?/(\d{6,})"),
-    re.compile(r"[?&]id=(\d{6,})"),
-)
-# 价格文本：¥1,299.00 / 1299 / 1299.5
-_PRICE_PATTERN = re.compile(r"(\d+(?:,\d{3})*(?:\.\d+)?)")
-#: 无法定价的关键词（闲鱼常见「面议 / 电议 / 私聊 / 咨询」文案，直接放弃解析）
-_PRICE_BLOCK_WORDS = ("面议", "电议", "私聊", "咨询")
-# 发布时间文案：3分钟前 / 2小时前 / 昨天 / 2024-05-01
-_TIME_PATTERN = re.compile(
-    r"(\d+\s*(?:秒|分钟|小时|天|周|个月|月|年)前|刚刚|今天\s*\d{1,2}:\d{2}|昨天\s*\d{1,2}:\d{2}"
-    r"|昨天|前天|\d{4}-\d{1,2}-\d{1,2}(?:\s+\d{1,2}:\d{2})?|\d{1,2}-\d{1,2}\s*(?:发布)?)"
-)
-
 #: 翻页之间的固定限速（秒）：降低多页抓取触发风控的概率
 PAGE_SLEEP = 2.0
 
@@ -196,75 +187,6 @@ class Fetcher(ABC):
 # ---------------------------------------------------------------------- #
 # 工具函数
 # ---------------------------------------------------------------------- #
-def extract_product_id(url: str) -> str:
-    """从商品链接中提取数字商品 ID。
-
-    Args:
-        url: 商品链接（可能是相对路径）。
-
-    Returns:
-        商品 ID 字符串；提取不到时返回空串。
-    """
-    if not url:
-        return ""
-    for pattern in _ID_PATTERNS:
-        match = pattern.search(url)
-        if match:
-            return match.group(1)
-    return ""
-
-
-def parse_price(text: str) -> float | None:
-    """从任意文本中解析出第一个价格数字（v3 增强版）。
-
-    支持：
-        - 旧格式（保持既有行为）：`¥1,299.00` / `1299` / `1299.5`；
-        - 万换算（移植 exe 资产）：`1.2万` -> 12000.0、`3.5万` -> 35000.0；
-        - 关键词过滤：「面议 / 电议 / 私聊 / 咨询」等非定价文案返回 None。
-
-    Args:
-        text: 含价格的文本。
-
-    Returns:
-        解析出的价格；解析失败或命中过滤关键词时返回 None。
-    """
-    if not text:
-        return None
-    s = str(text).strip()
-    # 去掉货币符号、千分位逗号与空白
-    s = s.replace("￥", "").replace("¥", "").replace(",", "").replace(" ", "")
-    if not s:
-        return None
-    # 「面议 / 电议 / 私聊 / 咨询」等无法定价的文案直接放弃
-    if any(word in s for word in _PRICE_BLOCK_WORDS):
-        return None
-    multiplier = 1
-    if "万" in s:
-        multiplier = 10000
-        s = s.replace("万", "")
-    match = _PRICE_PATTERN.search(s)
-    if not match:
-        return None
-    try:
-        return float(match.group(1).replace(",", "")) * multiplier
-    except ValueError:  # pragma: no cover - 正则已保证可转换
-        return None
-
-
-def parse_publish_time(text: str) -> str:
-    """尽力从文本中提取发布时间文案。
-
-    Args:
-        text: 商品卡片纯文本。
-
-    Returns:
-        发布时间文案；提取不到时返回空串。
-    """
-    if not text:
-        return ""
-    match = _TIME_PATTERN.search(text)
-    return match.group(1).strip() if match else ""
-
 
 # ---------------------------------------------------------------------- #
 # mtop 工具函数（纯函数，便于单测）
@@ -1361,166 +1283,13 @@ class WebFetcher(Fetcher):
         if not html:
             return []
 
-        products: list[Product] = self._parse_from_inline_json(html, keyword)
+        products, report = web_parse.parse_search_html(html, keyword)
         if products:
-            return products
-        return self._parse_from_dom(html, keyword)
-
-    def _parse_from_inline_json(self, html: str, keyword: str) -> list[Product]:
-        """尝试从内联 JSON 中提取商品（闲鱼常把首屏数据塞进 script）。"""
-        results: list[Product] = []
-        seen: set = set()
-
-        for match in re.finditer(
-            r"window\.__(?:INIT_DATA|NEXT_DATA|PAGE_DATA)__\s*=\s*(\{.*?\})\s*[;<]",
-            html,
-            re.DOTALL,
-        ):
-            raw = match.group(1)
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            for item in self._walk_json_items(data):
-                product = self._product_from_json_item(item, keyword)
-                if product is not None and product.product_id not in seen:
-                    seen.add(product.product_id)
-                    results.append(product)
-        return results
-
-    @staticmethod
-    def _walk_json_items(node: Any) -> Iterable[dict[str, Any]]:
-        """深度遍历 JSON，产出「看起来像商品」的 dict 节点。"""
-        stack: list[Any] = [node]
-        while stack:
-            current = stack.pop()
-            if isinstance(current, dict):
-                keys = set(current.keys())
-                if keys & {"itemId", "id"} and keys & {"title", "name", "content"}:
-                    yield current
-                stack.extend(current.values())
-            elif isinstance(current, list):
-                stack.extend(current)
-
-    def _product_from_json_item(self, item: dict[str, Any], keyword: str) -> Product | None:
-        """把 JSON 节点转换为 Product，字段缺失时返回 None。"""
-        product_id = str(item.get("itemId") or item.get("id") or "").strip()
-        if not product_id.isdigit():
-            return None
-        title = str(item.get("title") or item.get("name") or item.get("content") or "").strip()
-        if not title:
-            return None
-        price = parse_price(str(item.get("price") or item.get("soldPrice") or ""))
-        if price is None:
-            return None
-        publish_time = str(
-            item.get("publishTime") or item.get("pubTime") or item.get("time") or ""
-        ).strip()
-        url = str(item.get("url") or "").strip() or ITEM_URL_TEMPLATE.format(product_id=product_id)
-        try:
-            return Product(
-                product_id=product_id,
-                title=title,
-                price=price,
-                url=url,
-                publish_time=publish_time,
-                keyword=keyword,
-            )
-        except ValueError:
-            return None
-
-    def _parse_from_dom(self, html: str, keyword: str) -> list[Product]:
-        """回退方案：用 BeautifulSoup 遍历商品链接卡片。"""
-        soup = BeautifulSoup(html, "html.parser")
-        results: list[Product] = []
-        seen: set = set()
-
-        for anchor in soup.find_all("a", href=True):
-            href = str(anchor["href"])
-            product_id = extract_product_id(href)
-            if not product_id or product_id in seen:
-                continue
-
-            # 卡片文本：优先取 <a> 自身，再向上找一层容器补充信息
-            card_text = anchor.get_text(" ", strip=True)
-            container = anchor.parent
-            container_text = container.get_text(" ", strip=True) if container is not None else ""
-            full_text = card_text or container_text
-
-            title = self._extract_title(anchor) or full_text
-            price = parse_price(self._extract_price_text(anchor, container) or full_text)
-            if not title or price is None:
-                continue
-
-            seen.add(product_id)
-            url = href if href.startswith("http") else urljoin(BASE_URL, href)
-            image_url = self._extract_image(anchor, container)
-            try:
-                results.append(
-                    Product(
-                        product_id=product_id,
-                        title=title[:200],
-                        price=price,
-                        url=url,
-                        publish_time=parse_publish_time(container_text or full_text),
-                        keyword=keyword,
-                        image_url=image_url,
-                    )
-                )
-            except ValueError as exc:
-                logger.debug("[web] 跳过非法商品卡片 %s：%s", product_id, exc)
-        return results
-
-    @staticmethod
-    def _extract_image(anchor: Any, container: Any) -> str:
-        """从商品卡片提取主图地址（优先 img 的 src，兼容懒加载 data-src）。
-
-        Args:
-            anchor: 商品卡片锚点节点。
-            container: 锚点的父容器（锚点内无图时向上找一层）。
-
-        Returns:
-            归一化后的 https 图片地址；找不到返回空串。
-        """
-        for node in (anchor, container):
-            if node is None or not hasattr(node, "find"):
-                continue
-            img = node.find("img")
-            if img is None:
-                continue
-            src = img.get("src") or img.get("data-src") or img.get("data-ks-lazyload") or ""
-            normalized = normalize_image_url(src)
-            if normalized:
-                return normalized
-        return ""
-
-    @staticmethod
-    def _extract_title(anchor: Any) -> str:
-        """从卡片中提取标题（优先带 title 语义的节点）。"""
-        for attr in ("title", "aria-label"):
-            value = anchor.get(attr)
-            if value:
-                return str(value).strip()
-        node = anchor.find(attrs={"class": re.compile(r"title|name|desc", re.I)})
-        if node is not None:
-            text = node.get_text(" ", strip=True)
-            if text:
-                return text
-        return ""
-
-    @staticmethod
-    def _extract_price_text(anchor: Any, container: Any) -> str:
-        """从卡片中提取价格文本。"""
-        for scope in (anchor, container):
-            if scope is None:
-                continue
-            node = scope.find(attrs={"class": re.compile(r"price", re.I)})
-            if node is not None:
-                text = node.get_text(" ", strip=True)
-                if text:
-                    return text
-        return ""
-
+            logger.debug('[web] %s', report.summary())
+        else:
+            # 0 条是最需要排障的时刻：把"扫描了多少、为何被跳过"和排查建议一并打出来
+            logger.warning('[web] %s | %s', report.summary(), report.hint())
+        return products
 
 # ---------------------------------------------------------------------- #
 # Mock 抓取器
