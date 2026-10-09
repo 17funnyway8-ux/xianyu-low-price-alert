@@ -85,7 +85,10 @@ class MonitorWorker(QThread):
             fetcher = build_fetcher(self._config)
             storage = Storage(self._config.storage.path)
             notifiers = build_notifiers(self._config)
-            monitor = Monitor(self._config, fetcher, storage, notifiers)
+            monitor = Monitor(
+                self._config, fetcher, storage, notifiers,
+                config_path=getattr(self, "_config_path", None),
+            )
             interval = self._config.monitor.interval_seconds
 
             # 启动预检：Cookie 过期 → warning 日志（不阻断运行）

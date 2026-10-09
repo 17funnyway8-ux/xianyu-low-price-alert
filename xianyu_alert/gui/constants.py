@@ -145,6 +145,7 @@ DEFAULT_CONFIG_DICT: dict[str, Any] = {
 #: 功能更新日志（v3.2：「关于」对话框展示版本历史）
 UPDATE_LOG = (
     "## 版本历史\n"
+    "- **v1.10.0** 监控调度与过滤补强：配置按轮次热更（改完不必重启）；过滤判定回传原因；保活与轮次统一到单一时间源；新增轮次级指标（耗时/抓取/过滤/命中）\n"
     "- **v1.9.9** 抓取层 fetcher.py（1451 行）拆为包：constants / base / mtop_api（纯函数）/ mtop / web / mock / factory；对外命名空间零缺失\n"
     "- **v1.9.8** 开机自启三平台统一：新增 autostart 模块（macOS LaunchAgent / Linux systemd --user / Windows 启动文件夹）+ CLI 子命令 + GUI 一键按钮（Tk/Qt）\n"
     "- **v1.9.7** Web 后端（monitor_service.py 1561 行）拆为包：constants / logging_bridge / forms / cookie_pool / shelf_check / keepalive / service；主服务类按功能拆 mixin，service.py 降到 489 行（对外命名空间零缺失）\n"
