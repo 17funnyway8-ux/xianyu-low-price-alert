@@ -2,6 +2,19 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.5] - 2026-10-10
+
+### 重构
+- **gui.py（3932 行单文件）拆为 `xianyu_alert/gui/` 包**，按职责分层：
+  `constants.py`（常量）/ `helpers.py`（39 个纯函数）/ `app.py`（QueueLogHandler + 主窗口类 + 入口）
+  / `__init__.py`（门面）。最大单文件从 3932 行降到 2826 行。
+- **兼容性**：模块级命名空间（118 个名字）与 `XianyuAlertGUI` 的 72 个成员
+  **零缺失**（重构前后 dir() 机械比对），既有 `from xianyu_alert.gui import X` 无需改动。
+- **打桩目标注意**：`mock.patch("xianyu_alert.gui.X")` 必须指向真正持有该名字的模块。
+  主窗口逻辑现在 app.py，故为 `xianyu_alert.gui.app.X`；仓库内 33 处测试已同步。
+  （`main` 例外：cli 通过门面属性动态取用，仍打 `xianyu_alert.gui.main`。）
+- CI 覆盖率排除规则同步为 `*/gui/*`。
+
 ## [1.9.4] - 2026-10-09
 
 ### 修复

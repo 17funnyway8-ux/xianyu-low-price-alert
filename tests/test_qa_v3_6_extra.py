@@ -258,7 +258,7 @@ class TestButtonSplitExtra(unittest.TestCase):
             def showerror(*a, **k):
                 calls.append(("error", a))
 
-        patcher = mock.patch.object(gui, "messagebox", FakeMsg)
+        patcher = mock.patch.object(gui.app, "messagebox", FakeMsg)
         patcher.start()
         self.addCleanup(patcher.stop)
         return calls
@@ -365,11 +365,11 @@ class TestUiNonBlockingExtra(unittest.TestCase):
             def close(self):
                 pass
 
-        with mock.patch("xianyu_alert.gui.build_fetcher", return_value=SlowFetcher()), \
-             mock.patch("xianyu_alert.gui.Storage", return_value=SimpleNamespace(close=lambda: None)), \
-             mock.patch("xianyu_alert.gui.build_notifiers", return_value=[]), \
+        with mock.patch("xianyu_alert.gui.app.build_fetcher", return_value=SlowFetcher()), \
+             mock.patch("xianyu_alert.gui.app.Storage", return_value=SimpleNamespace(close=lambda: None)), \
+             mock.patch("xianyu_alert.gui.app.build_notifiers", return_value=[]), \
              mock.patch(
-                 "xianyu_alert.gui.Monitor",
+                 "xianyu_alert.gui.app.Monitor",
                  lambda *a, **k: SimpleNamespace(
                      last_result=SimpleNamespace(notified_products=[]),
                      preflight_cookie=lambda: None,
@@ -434,12 +434,12 @@ class TestUiNonBlockingExtra(unittest.TestCase):
             def run_once(self, log_item_details=False):
                 return 0
 
-        with mock.patch("xianyu_alert.gui.build_fetcher",
+        with mock.patch("xianyu_alert.gui.app.build_fetcher",
                         return_value=SimpleNamespace(close=lambda: None)), \
-             mock.patch("xianyu_alert.gui.Storage",
+             mock.patch("xianyu_alert.gui.app.Storage",
                         return_value=SimpleNamespace(close=lambda: None)), \
-             mock.patch("xianyu_alert.gui.build_notifiers", return_value=[]), \
-             mock.patch("xianyu_alert.gui.Monitor", FakeMonitor):
+             mock.patch("xianyu_alert.gui.app.build_notifiers", return_value=[]), \
+             mock.patch("xianyu_alert.gui.app.Monitor", FakeMonitor):
             # 后台线程直接执行 _monitor_worker，若触碰毒药即抛 AssertionError
             gui.XianyuAlertGUI._monitor_worker.__get__(app)(cfg, True, True)
         # 若走到这里说明后台线程 0 控件访问

@@ -312,7 +312,14 @@ class TestCookieRemoval(unittest.TestCase):
         """gui 模块不应 import acquire_via_playwright（cookie.py 保留）。"""
         import xianyu_alert.gui as gui_module
 
-        source = inspect.getsource(gui_module)
+
+        # v1.9.5：gui 已拆为包，"源码里必须包含某段文案" 这类断言不能只看 __init__，
+        # 而应拼接包内各模块源码（未来继续拆分也不会失效）。
+        source = "".join(
+            inspect.getsource(getattr(gui_module, _m))
+            for _m in ("constants", "helpers", "app")
+            if hasattr(gui_module, _m)
+        )
         self.assertNotIn("acquire_via_playwright", source.split("def ")[0])  # 顶层 import 区无引用
         self.assertNotIn("from .cookie import acquire_via_playwright", source)
         self.assertNotIn("import acquire_via_playwright", source)
@@ -324,7 +331,14 @@ class TestCookieRemoval(unittest.TestCase):
     def test_manual_help_button_text_in_source(self) -> None:
         import xianyu_alert.gui as gui_module
 
-        source = inspect.getsource(gui_module)
+
+        # v1.9.5：gui 已拆为包，"源码里必须包含某段文案" 这类断言不能只看 __init__，
+        # 而应拼接包内各模块源码（未来继续拆分也不会失效）。
+        source = "".join(
+            inspect.getsource(getattr(gui_module, _m))
+            for _m in ("constants", "helpers", "app")
+            if hasattr(gui_module, _m)
+        )
         self.assertIn("❓ 如何获取 Cookie？", source)
         self.assertNotIn("on_get_cookie(", source)
 
@@ -344,13 +358,14 @@ class TestVersion(unittest.TestCase):
     def test_version_current(self) -> None:
         from xianyu_alert import __version__
 
-        # v1.9.4 更新项：CLI 日志改走 stderr，保证 stdout 是纯 JSON
-        # （由 1.9.3 升级到 1.9.4，故旧断言同步更新）
-        self.assertEqual(__version__, "1.9.4")
+        # v1.9.5 更新项：gui.py 拆为 gui/ 包（constants / helpers / app）
+        # （由 1.9.4 升级到 1.9.5，故旧断言同步更新）
+        self.assertEqual(__version__, "1.9.5")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
 
+        self.assertIn("v1.9.5", UPDATE_LOG)
         self.assertIn("v1.9.4", UPDATE_LOG)
         self.assertIn("v1.9.3", UPDATE_LOG)
         self.assertIn("v1.9.2", UPDATE_LOG)

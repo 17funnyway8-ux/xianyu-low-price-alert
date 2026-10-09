@@ -187,5 +187,5 @@ jobs:
         run: |
           coverage report \
             --include="*/xianyu_alert/*,*/web/*" \
-            --omit="*/gui.py,*/gui_qt/*" \
+            --omit="*/gui/*,*/gui_qt/*" \
             --fail-under=77
