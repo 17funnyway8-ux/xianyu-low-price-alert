@@ -2,6 +2,14 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.2] - 2026-10-09
+
+### 修复
+- **保活探测的令牌落盘**：keepalive_probe 使用一次性 fetcher，服务端在响应里下发的
+  新 _m_h5_tk 只留在这个临时实例内存中，导致"会话其实已被续期、本地却一直显示令牌已过期"。
+  现复用与正常轮次相同的 **节流落盘**（_persist_refreshed_token），NAS 实测保活成功后
+  令牌剩余时间立即由负数变为数小时
+
 ## [1.9.1] - 2026-10-09
 
 ### 修复

@@ -676,6 +676,11 @@ class MonitorService:
         if callable(setter):
             setter(cookie)
         fetcher.fetch(keywords[0])
+        # v1.9.2：保活用的是一次性 fetcher，服务端刷新的 _m_h5_tk 只留在它的内存里；
+        # 必须复用与正常轮次相同的节流落盘，否则界面会一直显示"令牌已过期"
+        # （实际会话已被服务端续期，但本地存的是旧时间戳）。
+        with contextlib.suppress(Exception):
+            self._persist_refreshed_token(fetcher)
         self._last_auth_at = time.time()
         return True
 
