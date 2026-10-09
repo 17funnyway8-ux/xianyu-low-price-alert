@@ -30,6 +30,7 @@ from .filters import (
 )
 from .models import Product
 from .notifier import Notifier
+from .notify_policy import NotificationBuffer, NotificationPolicy
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,14 @@ class Monitor:
         self._round_metrics: deque[dict] = deque(maxlen=200)
         if config_path:
             self._config_mtime = self._read_config_mtime()
+        #: v1.10.2：通知策略（静默时段 / 聚合窗口 / 重试）与聚合缓冲
+        notify_cfg = config.notify
+        self.notify_policy = NotificationPolicy(
+            quiet_hours=str(getattr(notify_cfg, "quiet_hours", "") or ""),
+            aggregate_seconds=int(getattr(notify_cfg, "aggregate_seconds", 0) or 0),
+            retry_attempts=int(getattr(notify_cfg, "retry_attempts", 1) or 1),
+        )
+        self._notify_buffer = NotificationBuffer(self.notify_policy)
 
     # ------------------------------------------------------------------ #
     def _resolve_cookie(self, round_index: int = 0) -> str:
@@ -375,6 +384,11 @@ class Monitor:
                 continue
             self._process_keyword(rule, ts, result, log_item_details=log_item_details)
 
+        # 轮末刷新：静默时段结束或聚合窗口到期后，把攒下的命中发出去（v1.10.2）
+        flushed = self.flush_notifications(ts)
+        if flushed:
+            result.notified += len(flushed)
+            result.notified_products.extend(flushed)
         self.last_result = result
         result.round_no = self._round_no
         result.duration_ms = (time.monotonic() - started_at) * 1000.0
@@ -399,6 +413,35 @@ class Monitor:
         return result.notified
 
     # ------------------------------------------------------------------ #
+    def deliver_hits(self, hits: list[Product], ts: datetime) -> list[Product]:
+        """投递命中商品（v1.10.2：按策略静默 / 聚合 / 重试）。
+
+        策略未启用时与改造前完全一致：立刻逐渠道发送并标记已提醒。
+        启用后先入缓冲，由 flush_notifications 在「窗口到期且不在静默时段」时统一投递；
+        因此**通知条数**的归属轮次可能后移（缓冲跨轮），指标以实际投递轮次为准。
+        """
+        if not hits:
+            return []
+        if not self.notify_policy.enabled:
+            return self._send_and_mark(hits, ts)
+        self._notify_buffer.add(hits)
+        return self.flush_notifications(ts)
+
+    def flush_notifications(self, ts: datetime | None = None) -> list[Product]:
+        """把到期的聚合缓冲发出去（静默时段内不发）。"""
+        pending = self._notify_buffer.flush_if_due()
+        if not pending:
+            return []
+        return self._send_and_mark(pending, ts or datetime.now())
+
+    def _send_and_mark(self, products: list[Product], ts: datetime) -> list[Product]:
+        """逐渠道发送（带重试）并标记已提醒。"""
+        for notifier in self.notifiers:
+            notifier.safe_notify(products)
+        for product in products:
+            self.storage.mark_notified(product, ts)
+        return products
+
     def _process_keyword(
         self,
         rule: KeywordRule,
@@ -517,12 +560,9 @@ class Monitor:
 
         # 3) 发送通知（任一通道失败都不影响其它通道与后续流程）
         if hits:
-            for notifier in self.notifiers:
-                notifier.safe_notify(hits)
-            for product in hits:
-                self.storage.mark_notified(product, ts)
-            result.notified += len(hits)
-            result.notified_products.extend(hits)
+            delivered = self.deliver_hits(hits, ts)
+            result.notified += len(delivered)
+            result.notified_products.extend(delivered)
 
         # 4) 记录本轮全部商品 + 更新上一轮 ID 集合（只记录通过过滤的商品）
         for product in filtered_products:

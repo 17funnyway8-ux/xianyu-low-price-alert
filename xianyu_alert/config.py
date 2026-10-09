@@ -14,6 +14,7 @@ import yaml
 
 from . import paths, secure
 from .filters import extract_required_keywords
+from .notify_policy import parse_quiet_hours
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,12 @@ class NotifyConfig:
     """通知配置。"""
 
     channels: list[NotifyChannel] = field(default_factory=list)
+    #: 静默时段（v1.10.2）："HH:MM-HH:MM"，空表示不静默；跨午夜（23:00-07:00）支持
+    quiet_hours: str = ""
+    #: 命中聚合窗口（秒，v1.10.2）：>0 时把窗口内的命中合并成一条，避免密集刷屏
+    aggregate_seconds: int = 0
+    #: 单渠道失败重试次数（v1.10.2）：0/1 表示不重试
+    retry_attempts: int = 1
 
 
 @dataclass
@@ -591,7 +598,28 @@ def _parse_notify(raw: Any) -> NotifyConfig:
     if not channels:
         # 没配通道时至少保证有控制台输出，避免「监测到了但用户看不到」
         channels.append(NotifyChannel(type="console", options={}))
-    return NotifyConfig(channels=channels)
+    quiet_hours = str(data.get("quiet_hours") or "").strip()
+    if quiet_hours and parse_quiet_hours(quiet_hours) is None:
+        logger.warning("notify.quiet_hours 格式非法（应为 HH:MM-HH:MM）：%s，已忽略", quiet_hours)
+        quiet_hours = ""
+    try:
+        aggregate_seconds = int(data.get("aggregate_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        aggregate_seconds = 0
+    try:
+        retry_attempts = int(data.get("retry_attempts", 1) or 1)
+    except (TypeError, ValueError):
+        retry_attempts = 1
+    if aggregate_seconds < 0:
+        aggregate_seconds = 0
+    if retry_attempts < 1:
+        retry_attempts = 1
+    return NotifyConfig(
+        channels=channels,
+        quiet_hours=quiet_hours,
+        aggregate_seconds=aggregate_seconds,
+        retry_attempts=retry_attempts,
+    )
 
 
 def _parse_preset_exclude_keywords(data: dict[str, Any]) -> list[str]:
