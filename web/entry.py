@@ -33,7 +33,7 @@ from xianyu_alert import paths, secure, singleton
 from xianyu_alert.cli import setup_logging
 
 from . import api
-from .monitor_service import MonitorService
+from .monitor_service import get_service
 
 logger = logging.getLogger("xianyu_alert")
 
@@ -79,8 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(verbose=False)
 
     # 5. MonitorService（装载配置；缺失则生成默认配置）
-    service = MonitorService()
-    service.start_keepalive()   # v1.9：空闲保活，避免长时间空闲后令牌过期
+    # v1.9.1 修正：必须用**单例**（与 API 的 get_service 同一个实例），否则保活
+    # 跑在临时实例上，而 /api/cookie/status 读的是单例 → 状态误报"保活未运行"。
+    service = get_service()
+    service.start_keepalive()   # v1.9.1：空闲保活，避免长时间空闲后令牌过期
     logger.info("Web 服务启动：数据目录 %s，配置 %s", paths.data_dir(), service.config_path)
 
     # 6. 信号处理：SIGTERM / SIGINT → 优雅退出
