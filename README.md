@@ -45,7 +45,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.9.5` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.9.6` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -59,7 +59,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.9.5
+  17funnyway8/xianyu-alert:1.9.6
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -68,7 +68,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.9.5   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.9.6   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -319,3 +319,42 @@ PyInstaller 单文件打包的常见误报。可用仓库内 `build/*.spec` 自�
 本项目采用 [MIT License](LICENSE)。
 
 免责声明见上方「注意事项」：本工具仅供个人学习与自用监测，请遵守目标站点的服务条款，使用风险由使用者自行承担。
+
+## 抓取路径说明：mtop 为主，网页解析为兜底
+
+工具默认走 **mtop 签名接口**（见上表 `fetcher.type`）。当 mtop 不可用、或你需要一条不依赖签名接口的
+降级通道时，可用**网页解析**（WebFetcher）直接解析搜索结果页。
+
+| 路径 | 依赖 | 稳定性 | 何时用 |
+|---|---|---|---|
+| mtop（默认） | 签名接口 + 登录态 | 高（接口契约相对稳定） | 日常 |
+| 网页解析（兜底） | 页面结构 | **中**（平台改版可能失效） | mtop 异常时降级、结构调研 |
+
+### 网页解析怎么工作（三级策略，从稳到脆）
+
+1. **内联 JSON**：页面脚本里的初始数据（`window.__INIT_DATA__` 之类）——结构最稳；
+2. **JSON-LD**：`application/ld+json` 里的 schema.org 商品数据——跨站点通用约定；
+3. **DOM 卡片**：遍历「链接里带商品 ID」的卡片。**刻意不依赖具体 class**，
+   因此平台改 class 名时往往仍能命中；真正的脆弱点只在卡片内部的标题/价格/图片提取。
+
+### 平台改版了怎么办（改一处数据，不改逻辑）
+
+所有选择器集中在 `xianyu_alert/web_parse.py` 的 `WebSelectors`（图片属性、标题来源、价格 class 关键词）。
+平台改版时**只改这张表**，并用 `tests/test_webfetcher.py` 的 HTML 夹具做离线回归（不必联网）。
+
+### 解析不出来怎么排查（0 条时看日志）
+
+网页解析失败时日志会打出一行**诊断**，直接说明扫描了多少、各自为何被跳过：
+
+```
+[web] 网页解析 0 条（策略=dom，HTML 8231 字节）：扫描链接 42，无商品ID 38，缺标题 0，缺价格 4，重复 0，非法 0 | 多数卡片缺价格：平台可能改了价格节点，检查 WEB_SELECTORS.price_class_patterns
+```
+
+| 诊断 | 含义 | 处置 |
+|---|---|---|
+| 扫描链接 0 | 页面是空壳 | 多半未登录 / 被风控拦截，先查 Cookie 与请求频率 |
+| 多数「缺价格」 | 价格节点改名 | 查 `price_class_patterns` |
+| 多数「缺标题」 | 标题节点改名 | 查 `title_class_patterns` |
+| 无商品 ID | 链接形式变了 | 查 `xianyu_alert/parsing.py` 的 `_ID_PATTERNS` |
+
+---
