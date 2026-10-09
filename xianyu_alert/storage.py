@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS product (
     price         REAL    NOT NULL DEFAULT 0,
     url           TEXT    NOT NULL DEFAULT '',
     publish_time  TEXT    NOT NULL DEFAULT '',
+    image_url     TEXT    NOT NULL DEFAULT '',
     first_seen    TEXT    NOT NULL DEFAULT '',
     last_seen     TEXT    NOT NULL DEFAULT '',
     notified      INTEGER NOT NULL DEFAULT 0,
@@ -77,6 +78,11 @@ _SOLD_OUT_MIGRATIONS = (
     ("sold_out", "INTEGER NOT NULL DEFAULT 0"),
     ("sold_at", "TEXT NOT NULL DEFAULT ''"),
     ("sold_reason", "TEXT NOT NULL DEFAULT ''"),
+)
+
+#: v1.8.3 新增列：商品主图地址（旧库同样需要显式 ALTER 补齐）
+_IMAGE_MIGRATIONS = (
+    ("image_url", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -121,10 +127,10 @@ class Storage:
         """创建表结构（幂等），并补齐 v3.7 存量库迁移列。"""
         with self.conn:
             self.conn.executescript(_SCHEMA)
-        self._migrate_sold_out_columns()
+        self._migrate_product_columns(_SOLD_OUT_MIGRATIONS + _IMAGE_MIGRATIONS)
 
-    def _migrate_sold_out_columns(self) -> None:
-        """为旧版 `product` 表补齐 v3.7 的售出标记列（幂等）。
+    def _migrate_product_columns(self, migrations: tuple[tuple[str, str], ...]) -> None:
+        """为旧版 `product` 表补齐后加的列（含 v3.7 售出标记与 v1.8.3 主图地址，幂等）。
 
         旧库（v3.6 及以前）的 product 表没有 sold_out / sold_at / sold_reason，
         `CREATE TABLE IF NOT EXISTS` 不会给已存在的表加列，必须显式 ALTER；
@@ -135,7 +141,7 @@ class Storage:
             existing = {row["name"] for row in cur.fetchall()}
         except Exception:  # noqa: BLE001 - 表不存在等异常按无需迁移处理
             return
-        for column, definition in _SOLD_OUT_MIGRATIONS:
+        for column, definition in migrations:
             if column in existing:
                 continue
             try:
@@ -178,14 +184,16 @@ class Storage:
             self.conn.execute(
                 """
                 INSERT INTO product
-                    (keyword, product_id, title, price, url, publish_time,
+                    (keyword, product_id, title, price, url, publish_time, image_url,
                      first_seen, last_seen, notified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT (keyword, product_id) DO UPDATE SET
                     title        = excluded.title,
                     price        = excluded.price,
                     url          = excluded.url,
                     publish_time = excluded.publish_time,
+                    image_url    = CASE WHEN excluded.image_url != ''
+                                        THEN excluded.image_url ELSE product.image_url END,
                     last_seen    = excluded.last_seen
                 """,
                 (
@@ -195,6 +203,7 @@ class Storage:
                     float(product.price),
                     product.url,
                     product.publish_time,
+                    product.image_url,
                     ts,
                     ts,
                 ),
@@ -228,14 +237,16 @@ class Storage:
             self.conn.execute(
                 """
                 INSERT INTO product
-                    (keyword, product_id, title, price, url, publish_time,
+                    (keyword, product_id, title, price, url, publish_time, image_url,
                      first_seen, last_seen, notified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT (keyword, product_id) DO UPDATE SET
                     title        = excluded.title,
                     price        = excluded.price,
                     url          = excluded.url,
                     publish_time = excluded.publish_time,
+                    image_url    = CASE WHEN excluded.image_url != ''
+                                        THEN excluded.image_url ELSE product.image_url END,
                     last_seen    = excluded.last_seen,
                     notified     = 1
                 """,
@@ -246,6 +257,7 @@ class Storage:
                     float(product.price),
                     product.url,
                     product.publish_time,
+                    product.image_url,
                     ts,
                     ts,
                 ),
