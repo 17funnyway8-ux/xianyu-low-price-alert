@@ -15,6 +15,9 @@ PY="${PYTHON:-python3}"
 quality() { PYTHON="$PY" bash scripts/quality_audit.sh; }
 contract() { "$PY" scripts/check_web_contract.py; }
 e2e() {
+  # 让 node 脚本（e2e_web_dom.js）也能找到同一个解释器：把它所在目录前置进 PATH
+  export PATH="$(dirname "$PY"):$PATH"
+  export PYTHON="$PY"
   contract
   "$PY" scripts/e2e_web_smoke.py
   if [ -d node_modules/jsdom ]; then
