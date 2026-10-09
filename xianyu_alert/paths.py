@@ -73,20 +73,11 @@ def data_dir() -> str:
     Returns:
         数据目录绝对路径（可能尚不存在，调用方用 ensure_data_dir() 创建）。
     """
-    env = os.environ.get("XY_DATA_DIR")
-    if env:
-        # 环境变量优先；支持 `~` 展开与相对路径（相对当前工作目录）
-        return os.path.abspath(os.path.expanduser(env))
-    if is_frozen() and sys.platform == "darwin":
-        return os.path.join(
-            os.path.expanduser("~"),
-            "Library",
-            "Application Support",
-            APP_DIR_NAME,
-        )
-    if is_frozen():
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return project_root()
+    # v1.10.4：形态判定收敛到 deployment.FORMS 矩阵（单一真相）——
+    # 新增部署形态只需往矩阵加一条，这里与测试都会自动跟上，不会再出现"加了形态却漏改"。
+    from .deployment import detect_deployment
+
+    return detect_deployment().data_dir
 
 
 def ensure_data_dir() -> str:
