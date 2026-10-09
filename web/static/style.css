@@ -327,6 +327,15 @@ code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
 .hitcard.sold { border-left-color: var(--text-3); opacity: .62; }
 .hitcard.over { border-left-color: var(--warn); }
 
+/* 商品主图缩略图（v1.8.3） */
+.hit-thumb {
+  flex: 0 0 56px; width: 56px; height: 56px;
+  border-radius: 8px; object-fit: cover;
+  background: var(--surface-3); border: 1px solid var(--border);
+}
+.hit-thumb.empty { display: flex; align-items: center; justify-content: center; }
+.hit-thumb.empty::after { content: "无图"; font-size: 11px; color: var(--text-3); }
+
 .hit-main { flex: 1; min-width: 0; }
 .hit-title {
   font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -664,6 +673,7 @@ textarea { resize: vertical; line-height: 1.6; }
   .shell { padding: 14px; }
   .metrics { grid-template-columns: 1fr; }
   .hitcard { flex-wrap: wrap; }
+  .hit-thumb { flex-basis: 44px; width: 44px; height: 44px; }
   .toast-wrap { right: 12px; left: 12px; }
   .sticky-actions { padding: 10px 0 14px; }
 }

@@ -168,6 +168,12 @@ window.XY.UI = (function () {
         '<button class="btn sm danger-ghost" type="button" data-action="black-one">拉黑</button>' +
         "</div>";
 
+    // 商品主图（v1.8.3）：有图则缩略图，无图占位；CDN 拒绝/失效时隐藏，避免破图
+    const thumbHtml = r.image_url
+      ? '<img class="hit-thumb" src="' + esc(r.image_url) + '" alt="" loading="lazy"' +
+        ' referrerpolicy="no-referrer" onerror="this.style.visibility=&#39;hidden&#39;">'
+      : '<div class="hit-thumb empty" aria-hidden="true"></div>';
+
     return (
       '<div class="' + cls + '" data-id="' + esc(r.product_id) + '">' +
       (o.actions === false
@@ -175,6 +181,7 @@ window.XY.UI = (function () {
         : '<input type="checkbox" class="hit-check" data-select value="' + esc(r.product_id) + '"' +
           (st.selected[r.product_id] ? " checked" : "") +
           (r.sold ? " disabled" : "") + ">") +
+      thumbHtml +
       '<div class="hit-main">' +
       '<div class="hit-title">' + titleHtml + "</div>" +
       '<div class="hit-meta">' + metaBits.join("") + "</div>" +
