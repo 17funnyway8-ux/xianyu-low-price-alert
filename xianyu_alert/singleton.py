@@ -242,13 +242,23 @@ def lock_holder_pid(lock_path: str | None = None) -> str:
 
     Returns:
         PID 字符串；无法读取时返回空串。
+
+    v1.10.8：**Windows 上无法读取被 msvcrt 锁住的文件** —— 新开句柄会因共享冲突
+    抛 OSError，此前会静默返回空串（冲突提示里就只剩「PID 未知」）。
+    现在本进程持有该锁时回退到内存中的 PID，跨进程场景仍以文件内容为准（尽力而为）。
     """
     path = _resolve_lock_path(lock_path)
     try:
         with open(path, encoding="utf-8") as fp:
-            return fp.read().strip()
+            pid = fp.read().strip()
+        if pid:
+            return pid
     except OSError:
-        return ""
+        pass
+    held = _held_lock
+    if held is not None and held.lock_path == path:
+        return str(held.pid)
+    return ""
 
 
 def lock_diagnosis(lock_path: str | None = None) -> str:
