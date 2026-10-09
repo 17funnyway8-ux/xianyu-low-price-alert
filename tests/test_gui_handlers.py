@@ -243,5 +243,125 @@ class TestTick(unittest.TestCase):
         self.assertEqual(app.var_countdown.get(), "下次执行：--:--")
 
 
+class TestShelfAndRecordGuards(unittest.TestCase):
+    """「校验在架 / 标记售出 / 加黑名单」的守卫分支（v1.10.12，M15 补强）。
+
+    这些分支只需普通值 + tree 替身即可驱动，**不需要真实 Tk 窗口** ——
+    而它们决定了用户点下去会看到什么提示，属于必须钉住的交互契约。
+    """
+
+    def _app(self, **attrs) -> types.SimpleNamespace:
+        app = make_app()
+        app.tree_alerts = types.SimpleNamespace(
+            get_children=lambda: [],
+            selection=lambda: (),
+            item=lambda *a, **k: ("", "", ""),
+        )
+        app._worker_alive = lambda: False
+        app._alert_product_ids = {}
+        app._build_config_object = lambda: types.SimpleNamespace(
+            fetcher=types.SimpleNamespace(type="mtop"), storage=types.SimpleNamespace(path=":memory:")
+        )
+        for key, value in attrs.items():
+            setattr(app, key, value)
+        return app
+
+    @staticmethod
+    def _bind(app, name: str):
+        return getattr(XianyuAlertGUI, name).__get__(app)
+
+    def test_check_on_shelf_refuses_while_running(self) -> None:
+        app = self._app(_worker_alive=lambda: True)
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_check_on_shelf")()
+        box.showinfo.assert_called_once()
+        self.assertIn("正在运行", box.showinfo.call_args[0][0])
+
+    def test_check_on_shelf_without_records(self) -> None:
+        app = self._app()
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_check_on_shelf")()
+        box.showinfo.assert_called_once()
+        self.assertIn("没有可校验", box.showinfo.call_args[0][0])
+
+    def test_check_on_shelf_requires_mtop(self) -> None:
+        app = self._app(
+            tree_alerts=types.SimpleNamespace(
+                get_children=lambda: ("i1",),
+                selection=lambda: (),
+                item=lambda *a, **k: ("", "Switch", "标题"),
+            ),
+            _alert_product_ids={"i1": "810000000001"},
+        )
+        app._build_config_object = lambda: types.SimpleNamespace(
+            fetcher=types.SimpleNamespace(type="mock"), storage=types.SimpleNamespace(path=":memory:")
+        )
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_check_on_shelf")()
+        box.showinfo.assert_called_once()
+        text = " ".join(str(a) for a in box.showinfo.call_args[0])
+        self.assertIn("mtop", text)
+        self.assertIn("mock", text, "提示里应说明当前抓取方式")
+
+    def test_check_on_shelf_bad_config_warns(self) -> None:
+        from xianyu_alert.config import ConfigError
+
+        app = self._app(
+            tree_alerts=types.SimpleNamespace(
+                get_children=lambda: ("i1",),
+                selection=lambda: (),
+                item=lambda *a, **k: ("", "Switch", "标题"),
+            ),
+            _alert_product_ids={"i1": "810000000001"},
+        )
+
+        def boom():
+            raise ConfigError("配置坏了")
+
+        app._build_config_object = boom
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_check_on_shelf")()
+        box.showwarning.assert_called_once()
+        self.assertIn("配置有误", box.showwarning.call_args[0][0])
+
+    def test_mark_sold_without_selection(self) -> None:
+        app = self._app()
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_mark_sold_selected")()
+        box.showinfo.assert_called_once()
+
+    def test_mark_sold_without_product_id(self) -> None:
+        app = self._app(
+            tree_alerts=types.SimpleNamespace(
+                get_children=lambda: ("i1",),
+                selection=lambda: ("i1",),
+                item=lambda *a, **k: ("", "Switch", "标题"),
+            )
+        )
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_mark_sold_selected")()
+        box.showwarning.assert_called_once()
+        self.assertIn("缺少商品 ID", box.showwarning.call_args[0][0])
+
+    def test_blacklist_without_selection(self) -> None:
+        app = self._app()
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_blacklist_selected")()
+        box.showinfo.assert_called_once()
+
+    def test_blacklist_without_product_id(self) -> None:
+        app = self._app(
+            tree_alerts=types.SimpleNamespace(
+                get_children=lambda: ("i1",),
+                selection=lambda: ("i1",),
+                item=lambda *a, **k: ("", "Switch", "标题"),
+            )
+        )
+        with mock.patch("xianyu_alert.gui.app.messagebox") as box:
+            self._bind(app, "on_blacklist_selected")()
+        box.showwarning.assert_called_once()
+        self.assertIn("缺少商品 ID", box.showwarning.call_args[0][0])
+
+
 if __name__ == "__main__":
     unittest.main()
