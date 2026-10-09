@@ -1,6 +1,6 @@
 """QA 独立验证 v3.3 增量（6 项改进）补充用例。
 
-本文件由 QA（严过关）独立编写，与工程师自测（test_gui_v3_3.py）错开，
+本文件由 QA（严过关）独立编写，与工程师自测（test_gui_keyword_rules.py）错开，
 重点覆盖：
   1. 新关键词默认规则：必含留空 + 预置排除词（含「收」）
   2. 旧配置（无 filters 字段）加载兼容不崩
@@ -360,11 +360,12 @@ class TestVersion(unittest.TestCase):
 
         # v1.9.9 更新项：fetcher.py 拆为 fetcher/ 包
         # （由 1.9.8 升级到 1.9.9，故旧断言同步更新）
-        self.assertEqual(__version__, "1.10.6")
+        self.assertEqual(__version__, "1.10.7")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
 
+        self.assertIn("v1.10.7", UPDATE_LOG)
         self.assertIn("v1.10.6", UPDATE_LOG)
         self.assertIn("v1.10.5", UPDATE_LOG)
         self.assertIn("v1.10.4", UPDATE_LOG)
