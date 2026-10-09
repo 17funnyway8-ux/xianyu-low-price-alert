@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 import smtplib
+import time
 from abc import ABC, abstractmethod
 from email.header import Header
 from email.mime.text import MIMEText
@@ -121,6 +122,12 @@ class Notifier(ABC):
         """
         raise NotImplementedError
 
+    #: 单渠道失败重试次数（v1.10.2）：由 build_notifiers 按 config.notify.retry_attempts 注入；
+    #: 放在实例属性而不是调用参数，是为了不改变 safe_notify 的调用签名（自定义渠道零改动）。
+    retry_attempts: int = 1
+    #: 重试退避基数（秒）：第 n 次重试等待 backoff * n
+    retry_backoff: float = 0.5
+
     def safe_notify(self, products: list[Product]) -> bool:
         """带异常保护的发送，失败只记录 warning。
 
@@ -132,12 +139,21 @@ class Notifier(ABC):
         """
         if not products:
             return True
-        try:
-            self.notify(products)
-            return True
-        except Exception as exc:  # noqa: BLE001 - 通知失败不能中断主循环
-            logger.warning("[%s] 通知发送失败：%s", self.name, exc)
-            return False
+        attempts = max(1, int(self.retry_attempts or 1))
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self.notify(products)
+                if attempt > 1:
+                    logger.info("[%s] 第 %d 次尝试发送成功", self.name, attempt)
+                return True
+            except Exception as exc:  # noqa: BLE001 - 通知失败不能中断主循环
+                last_error = exc
+                if attempt < attempts:
+                    logger.warning("[%s] 通知发送失败（第 %d/%d 次）：%s", self.name, attempt, attempts, exc)
+                    time.sleep(max(0.0, float(self.retry_backoff)) * attempt)
+        logger.warning("[%s] 通知发送失败（已重试 %d 次）：%s", self.name, attempts, last_error)
+        return False
 
     @abstractmethod
     def notify_message(self, title: str, text: str) -> None:
@@ -580,4 +596,9 @@ def build_notifiers(config: Config) -> list[Notifier]:
     if not notifiers:
         logger.warning("没有任何可用的通知通道，已回退到控制台输出")
         notifiers.append(ConsoleNotifier())
+
+    # v1.10.2：把配置里的重试次数注入到各渠道实例（不改变 safe_notify 的调用签名）
+    retry = int(getattr(getattr(config, "notify", None), "retry_attempts", 1) or 1)
+    for notifier in notifiers:
+        notifier.retry_attempts = retry
     return notifiers
