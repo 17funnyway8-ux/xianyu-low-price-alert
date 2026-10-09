@@ -145,6 +145,7 @@ DEFAULT_CONFIG_DICT: dict[str, Any] = {
 #: 功能更新日志（v3.2：「关于」对话框展示版本历史）
 UPDATE_LOG = (
     "## 版本历史\n"
+    "- **v1.10.4** 部署形态声明式矩阵（4 种形态可枚举、可测试、/healthz 可见）；README 补 root→非 root 升级步骤与 digest 固定\n"
     "- **v1.10.3** 数据模型补字段（卖家/地区/原价，一路打穿到落库与老库迁移）；Qt 版补齐「黑名单管理」（查看+移除）与交互测试\n"
     "- **v1.10.2** 运维韧性三连：通知静默时段 + 命中聚合 + 渠道重试；单实例锁可操作诊断（陈旧锁/权限态）；密钥轮换 secure rotate（重加密并备份）\n"
     "- **v1.10.1** 存储层类型化记录（NotifiedRecord/SoldOutRecord/BlacklistEntry，保留字典式访问）；Web 层裸 SQL 收敛回存储层；配置带版本号并可迁移\n"

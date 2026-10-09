@@ -2,6 +2,26 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.4] - 2026-10-10
+
+### 新增
+- **部署形态声明式矩阵（M12）**：新增 `xianyu_alert/deployment.py`，把此前一串 if/else 的
+  形态判断改为**可枚举的矩阵**（custom / macos-app / portable / source）：
+  - 新增部署形态 = 往 `FORMS` 加一条，检测/日志/测试自动覆盖；
+  - `paths.data_dir()` 改为复用矩阵 —— **单一真相**，不会再出现"加了形态却漏改"；
+  - `detect_deployment()` / `describe_deployment()` 可打印当前形态与数据落点。
+- **`/healthz` 返回部署形态快照**：`{"kind": "custom", "label": "自定义数据目录", "data_dir": "/app/data", ...}`
+  —— NAS 上排查"数据到底落在哪"一条 curl 就够，不用再猜。
+
+### 文档
+- **README 新增「从旧版升级（root → 非 root 必读）」（M22）**：
+  三步升级（备份 → 修正属主 → 起容器确认）、三种典型现象的处置对照表、
+  `/healthz` 查看部署形态、以及**用 digest 固定镜像版本**做可复现部署。
+
+### 测试
+- 新增 `tests/test_deployment_matrix.py`（13 条）：矩阵不变量（唯一性/优先级/可达性）、
+  逐形态断言（含"自定义卷优先于一切"）、`paths` 与矩阵同源。
+
 ## [1.10.3] - 2026-10-10
 
 ### 新增
