@@ -358,13 +358,14 @@ class TestVersion(unittest.TestCase):
     def test_version_current(self) -> None:
         from xianyu_alert import __version__
 
-        # v1.9.8 更新项：新增 autostart 模块（三平台统一开机自启）
-        # （由 1.9.7 升级到 1.9.8，故旧断言同步更新）
-        self.assertEqual(__version__, "1.9.8")
+        # v1.9.9 更新项：fetcher.py 拆为 fetcher/ 包
+        # （由 1.9.8 升级到 1.9.9，故旧断言同步更新）
+        self.assertEqual(__version__, "1.9.9")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
 
+        self.assertIn("v1.9.9", UPDATE_LOG)
         self.assertIn("v1.9.8", UPDATE_LOG)
         self.assertIn("v1.9.7", UPDATE_LOG)
         self.assertIn("v1.9.6", UPDATE_LOG)
