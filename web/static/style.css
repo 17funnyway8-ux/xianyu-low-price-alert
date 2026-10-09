@@ -327,14 +327,84 @@ code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
 .hitcard.sold { border-left-color: var(--text-3); opacity: .62; }
 .hitcard.over { border-left-color: var(--warn); }
 
-/* 商品主图缩略图（v1.8.3） */
+/* 商品主图（v1.8.3 缩略图；v1.8.4 悬停预览 + 点击看大图） */
+.hit-thumb-btn {
+  flex: 0 0 64px; width: 64px; height: 64px;
+  padding: 0; border: 0; background: none; line-height: 0;
+  border-radius: 8px; overflow: hidden; cursor: zoom-in;
+}
+.hit-thumb-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .hit-thumb {
-  flex: 0 0 56px; width: 56px; height: 56px;
+  width: 100%; height: 100%;
   border-radius: 8px; object-fit: cover;
   background: var(--surface-3); border: 1px solid var(--border);
+  transition: transform .15s ease;
 }
-.hit-thumb.empty { display: flex; align-items: center; justify-content: center; }
+.hit-thumb-btn:hover .hit-thumb { transform: scale(1.05); }
+.hit-thumb.empty {
+  flex: 0 0 64px; width: 64px; height: 64px;
+  display: flex; align-items: center; justify-content: center;
+}
 .hit-thumb.empty::after { content: "无图"; font-size: 11px; color: var(--text-3); }
+
+/* 悬停预览（仅精细指针设备；由 lightbox.js 定位，pointer-events 关闭避免闪烁） */
+.img-preview {
+  position: fixed; z-index: 75; pointer-events: none;
+  padding: 6px; border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .2);
+}
+/* hidden 状态必须真正不占位：class 的 display 会覆盖 UA 的 [hidden]{display:none} */
+.img-preview[hidden] { display: none; }
+.img-preview img {
+  display: block; max-width: 380px; max-height: 58vh;
+  width: auto; height: auto; border-radius: 6px;
+}
+
+/* 全屏大图（自适应视口：宽 92vw / 高 84vh） */
+body.lb-open { overflow: hidden; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 12, 16, .9);
+}
+/* 同上：否则隐藏的大图遮罩会铺满屏幕、拦截全部点击（端到端测试抓到的真 bug） */
+.lightbox[hidden] { display: none; }
+.lb-stage {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+}
+.lb-img {
+  max-width: 92vw; max-height: 84vh;
+  width: auto; height: auto; object-fit: contain;
+  border-radius: 6px; opacity: 0; transition: opacity .15s ease;
+}
+.lb-img.ready { opacity: 1; }
+.lb-spinner { position: absolute; color: #fff; font-size: 13px; opacity: .8; }
+.lb-close {
+  position: absolute; top: 14px; right: 18px; z-index: 2;
+  width: 38px; height: 38px; border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .1);
+  color: #fff; font-size: 20px; line-height: 1; cursor: pointer;
+}
+.lb-close:hover { background: rgba(255, 255, 255, .2); }
+.lb-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 44px; height: 64px; border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, .24); background: rgba(255, 255, 255, .08);
+  color: #fff; font-size: 26px; line-height: 1; cursor: pointer;
+}
+.lb-nav:hover { background: rgba(255, 255, 255, .2); }
+.lb-prev { left: 16px; }
+.lb-next { right: 16px; }
+.lb-caption {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 40px 22px 18px; color: #fff;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .78));
+}
+.lb-title { font-size: 13px; line-height: 1.55; margin-bottom: 4px; }
+.lb-meta { font-size: 12px; opacity: .78; }
+.lb-link { display: inline-block; margin-top: 6px; font-size: 12px; color: #9ec1ff; }
 
 .hit-main { flex: 1; min-width: 0; }
 .hit-title {
@@ -673,7 +743,10 @@ textarea { resize: vertical; line-height: 1.6; }
   .shell { padding: 14px; }
   .metrics { grid-template-columns: 1fr; }
   .hitcard { flex-wrap: wrap; }
-  .hit-thumb { flex-basis: 44px; width: 44px; height: 44px; }
+  .hit-thumb-btn, .hit-thumb.empty { flex-basis: 48px; width: 48px; height: 48px; }
+  .img-preview { display: none; }            /* 触屏 / 窄屏不做悬停预览 */
+  .lb-img { max-width: 94vw; max-height: 72vh; }
+  .lb-caption { padding: 32px 14px 14px; }
   .toast-wrap { right: 12px; left: 12px; }
   .sticky-actions { padding: 10px 0 14px; }
 }
