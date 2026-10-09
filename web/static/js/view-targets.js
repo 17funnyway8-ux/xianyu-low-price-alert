@@ -94,6 +94,31 @@ window.XY.ViewTargets = (function () {
    * Cookie 区
    * ------------------------------------------------------------------ */
 
+  /** v1.9：渲染 Cookie 分层状态与保活（登录态 / 会话凭据 / 令牌 / 风控）。 */
+  async function renderCookieLayers() {
+    const box = U.$("#cookieLayers");
+    if (!box) return;
+    try {
+      const res = await D.cookieStatus();
+      const diag = res.diagnosis || {};
+      const ka = res.keepalive || {};
+      const rows = (diag.layers || []).map((l) => {
+        const extra = l.remaining_ms != null ? "（" + U.relFuture(l.remaining_ms) + "）" : "";
+        return '<div class="cl-row cl-' + esc(l.state) + '">' +
+          '<span class="cl-label">' + esc(l.label) + "</span>" +
+          '<span class="cl-text">' + esc(l.summary) + extra + "</span></div>";
+      }).join("");
+      const kaText = ka.enabled
+        ? "已开启（每 " + Math.round((ka.interval_seconds || 0) / 60) + " 分钟维持一次登录态）"
+        : "已关闭";
+      box.innerHTML = rows +
+        '<div class="cl-row cl-keepalive"><span class="cl-label">空闲保活</span>' +
+        '<span class="cl-text">' + kaText + "</span></div>";
+    } catch (e) {
+      box.innerHTML = "";
+    }
+  }
+
   function renderCookie() {
     const c = st.config;
     if (!c) return;
@@ -113,6 +138,8 @@ window.XY.ViewTargets = (function () {
       else if (c.cookies_was_encrypted) m += "（已加密）";
       masked.textContent = m;
     }
+
+    renderCookieLayers();
 
     const def = U.$("#cookieDefault");
     if (def && st.pool) {

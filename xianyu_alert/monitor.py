@@ -32,7 +32,11 @@ logger = logging.getLogger(__name__)
 
 #: v1.8：Cookie 过期提醒触发状态集（共享知识 4）。
 #: expiring 单独用「即将过期」文案，其余统一用「已过期/无效，请刷新」文案。
-_COOKIE_ALERT_STATES = {"expired", "expiring", "missing", "no_token", "invalid_encrypt"}
+_COOKIE_ALERT_STATES = {
+    "expired", "expiring", "missing", "no_token", "invalid_encrypt",
+    # v1.9 新增：登录态缺失 / 会话凭据过期 —— 这两类才真的可能需要重新登录
+    "session_missing", "havana_expired",
+}
 
 #: v1.8：过期/即将过期提醒的刷新指引（不含 Cookie 明文，C19）。
 _COOKIE_ALERT_GUIDE = (
@@ -104,6 +108,8 @@ class Monitor:
         self._round_no: int = 0
         #: v1.8：上次 Cookie 健康检测的 monotonic 时间戳（节流用，0=从未检测）
         self._last_cookie_check_at: float = 0.0
+        #: v1.9：最近一次已鉴权请求时间（保活与轮次都会刷新）
+        self._last_auth_at: float = 0.0
 
     # ------------------------------------------------------------------ #
     def _resolve_cookie(self, round_index: int = 0) -> str:
@@ -164,7 +170,11 @@ class Monitor:
                 return
             self._last_cookie_check_at = now
 
-            from .cookie import detect_cookie_health, pool_enabled_cookies, pool_usable_cookies
+            from .cookie import (
+                cookie_prefers_rotation,
+                detect_cookie_health,
+                pool_enabled_cookies,
+            )
             from .notifier import notify_plain_message
             from .storage import _META_COOKIE_ALERT_PREFIX, _META_COOKIE_POOL_ALERT_KEY
 
@@ -205,10 +215,12 @@ class Monitor:
             # 池汇总（C12）：池健康条目数 < 启用条目数 → degraded 跃迁提醒
             pool = self.config.monitor.cookie_pool or []
             enabled_cookies = pool_enabled_cookies(pool)
-            usable_cookies = pool_usable_cookies(pool)
+            # v1.9：降级只统计"真正需要注意"的条目 —— 令牌过期/缺失可自愈，
+            # 不算降级；登录态缺失 / 会话凭据过期 / 密文无法解密才算。
+            healthy_cookies = [c for c in enabled_cookies if cookie_prefers_rotation(c)]
             enabled_count = len(enabled_cookies)
-            degraded = enabled_count > 0 and len(usable_cookies) < enabled_count
-            degraded_count = enabled_count - len(usable_cookies)
+            degraded = enabled_count > 0 and len(healthy_cookies) < enabled_count
+            degraded_count = enabled_count - len(healthy_cookies)
 
             prev_pool_raw = self.storage.get_meta_value(_META_COOKIE_POOL_ALERT_KEY)
             prev_degraded = False
@@ -224,7 +236,7 @@ class Monitor:
                     notify_plain_message(
                         self.notifiers,
                         "闲鱼 Cookie 池部分失效",
-                        f"池中有 {degraded_count} 条 Cookie 已过期/无效。\n{_COOKIE_ALERT_GUIDE}",
+                        f"池中有 {degraded_count} 条 Cookie 需要重新登录或刷新。\n{_COOKIE_ALERT_GUIDE}",
                     )
                 self.storage.set_meta_value(
                     _META_COOKIE_POOL_ALERT_KEY,
@@ -305,6 +317,7 @@ class Monitor:
         # 轮换：本轮使用池中的第 self._round_no 条 Cookie（池为空则用单值）
         cookie = self._resolve_cookie(self._round_no)
         self._apply_cookie(cookie)
+        self._last_auth_at = time.time()
         self._round_no += 1
         # v1.8：resolve 后、关键词循环前，对「本轮将使用的 Cookie」做健康检测
         # 与过期提醒（fetcher!=mtop / 开关关 → no-op；去抖见方法内部）。
@@ -490,6 +503,42 @@ class Monitor:
     def stop(self) -> None:
         """请求停止 run_forever 循环。"""
         self._stop = True
+
+    def keepalive_once(self) -> bool:
+        """发一次轻量抓取以维持令牌滑动续期（不写库、不通知）。
+
+        v1.9 新增。_m_h5_tk 只在"有请求"时滑动续期，空闲超过有效期就会过期；
+        本方法由 CookieKeeper 线程按间隔调用，把滑动窗口接续下去。
+
+        Returns:
+            True 表示本次请求成功（令牌已续期）。
+        """
+        keywords = [str(getattr(r, "keyword", "")) for r in self.config.keywords]
+        keywords = [k for k in keywords if k]
+        if not keywords:
+            return False
+        cookie = self._resolve_cookie(0)
+        if not cookie:
+            logger.warning("Cookie 保活跳过：当前没有可用的 Cookie")
+            return False
+        self._apply_cookie(cookie)
+        try:
+            self.fetcher.fetch(keywords[0])
+        except Exception as exc:  # noqa: BLE001 - 保活失败不影响主流程
+            logger.warning("Cookie 保活请求失败：%s", exc)
+            return False
+        self._last_auth_at = time.time()
+        logger.info("Cookie 保活成功（%s），令牌已滑动续期", keywords[0])
+        return True
+
+    def auth_snapshot(self) -> dict[str, float | int | bool]:
+        """保活线程所需的配置快照（开关 / 间隔 / 最近鉴权时间）。"""
+        monitor_cfg = self.config.monitor
+        return {
+            "enabled": bool(getattr(monitor_cfg, "keepalive_enabled", True)),
+            "interval": int(getattr(monitor_cfg, "keepalive_interval_seconds", 1800) or 0),
+            "last_auth_at": self._last_auth_at,
+        }
 
     def run_forever(self, max_rounds: int | None = None) -> int:
         """按配置间隔持续运行监测循环。

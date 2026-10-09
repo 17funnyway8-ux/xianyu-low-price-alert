@@ -94,6 +94,11 @@ window.XY.Data = (function () {
 
   /* ---------------- Cookie ---------------- */
 
+  /** v1.9：Cookie 分层诊断 + 保活状态。 */
+  function cookieStatus() {
+    return Api.api("/api/cookie/status");
+  }
+
   function saveCookie(cookie) {
     return Api.api("/api/cookie/save", { method: "POST", body: { cookie: cookie } });
   }
@@ -214,6 +219,7 @@ window.XY.Data = (function () {
     setDetailOnly: setDetailOnly,
 
     saveCookie: saveCookie,
+    cookieStatus: cookieStatus,
     refreshCookie: refreshCookie,
     loadPool: loadPool,
     poolAction: poolAction,

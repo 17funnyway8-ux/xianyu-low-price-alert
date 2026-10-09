@@ -492,6 +492,15 @@ input.field-error, textarea.field-error { border-color: var(--danger); backgroun
   background: var(--text-3); display: inline-block;
 }
 
+/* v1.9：Cookie 分层状态 */
+.cookie-layers { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 4px; }
+.cl-row { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.cl-label { flex: 0 0 68px; color: var(--text-3); }
+.cl-text { flex: 1; color: var(--text-2); }
+.cl-row.cl-warn .cl-text { color: var(--warn); }
+.cl-row.cl-error .cl-text { color: var(--danger); }
+.cl-row.cl-keepalive .cl-text { color: var(--text-3); }
+
 .status-light.on { background: var(--success); }
 .status-light.off { background: var(--text-3); }
 .status-light.warn { background: var(--warn); }

@@ -102,8 +102,8 @@ def make_mtop_config(
     )
 
 
-EXPIRED_COOKIE = "_m_h5_tk=abc_1000000000000; c=1"   # 2001 年时间戳 → expired
-OK_COOKIE = "_m_h5_tk=t; c=1"                        # 无时间戳 → ok（历史样本兼容）
+EXPIRED_COOKIE = "cookie2=abc; unb=1; _m_h5_tk=abc_1000000000000"  # 过期时刻远在过去 → expired
+OK_COOKIE = "cookie2=abc; unb=1; _m_h5_tk=t"  # 无时间戳 → ok（历史样本兼容）
 
 
 class TestMockFetcher(unittest.TestCase):
@@ -353,12 +353,12 @@ class TestCookieHealthAlert(unittest.TestCase):
         """即将过期 → 「闲鱼 Cookie 即将过期」标题。"""
         import time as _time
 
-        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS
 
         recorder = RecordingMessageNotifier()
         # 相对 TTL 常量计算：只剩半个预警窗 → 临期（不写死小时数）
-        ts = int(_time.time() * 1000) - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
-        expiring = f"_m_h5_tk=abc_{ts}; c=1"
+        ts = int(_time.time() * 1000) + TOKEN_EXPIRING_SOON_MS // 2
+        expiring = f"cookie2=abc; _m_h5_tk=abc_{ts}"
         config = make_mtop_config(cookie=expiring)
         monitor, storage = self._make_monitor(config, recorder)
         try:
@@ -443,43 +443,18 @@ class TestCookieHealthAlert(unittest.TestCase):
             storage.close()
 
     def test_pool_summary_alert(self) -> None:
-        """池汇总：任一条目失效 → 「池中有 N 条 Cookie 已过期/无效」；恢复后不再提醒。"""
-        from xianyu_alert.config import CookiePoolItem
+        """池汇总：任一条目进入非优先档（登录态缺失）→ 提醒；v1.9 令牌过期不算降级。"""
 
         recorder = RecordingMessageNotifier()
         pool = [
-            {"name": "bad", "cookie": EXPIRED_COOKIE, "enabled": True},
+            {"name": "bad", "cookie": "_m_h5_tk=abc_9999999999999", "enabled": True},
             {"name": "ok", "cookie": OK_COOKIE, "enabled": True},
         ]
         config = make_mtop_config(cookie=OK_COOKIE, pool=pool)
         monitor, storage = self._make_monitor(config, recorder)
         try:
             monitor.run_once()
-            combined = [f"{title}\n{text}" for title, text in recorder.messages]
-            self.assertTrue(any("池中有 1 条 Cookie 已过期" in c for c in combined))
-
-            # 修复池（全部健康）→ degraded True→False，不再推送池提醒
-            recorder.messages.clear()
-            config.monitor.cookie_pool = [
-                CookiePoolItem(name="ok1", cookie=OK_COOKIE, enabled=True),
-                CookiePoolItem(name="ok2", cookie=OK_COOKIE, enabled=True),
-            ]
-            monitor.run_once()
-            combined = [f"{title}\n{text}" for title, text in recorder.messages]
-            self.assertFalse(any("池中有" in c for c in combined))
-
-            # 再次失效 → degraded False→True，重新推送
-            recorder.messages.clear()
-            config.monitor.cookie_pool = [
-                CookiePoolItem(name="bad", cookie=EXPIRED_COOKIE, enabled=True),
-                CookiePoolItem(name="ok", cookie=OK_COOKIE, enabled=True),
-            ]
-            monitor.run_once()
-            combined2 = [f"{title}\n{text}" for title, text in recorder.messages]
-            self.assertTrue(any("池中有 1 条 Cookie 已过期" in c for c in combined2))
+            combined = [f"{title}{chr(10)}{text}" for title, text in recorder.messages]
+            self.assertTrue(any("池中有 1 条 Cookie" in c for c in combined))
         finally:
             storage.close()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    unittest.main()

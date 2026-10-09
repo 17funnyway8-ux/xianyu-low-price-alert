@@ -66,11 +66,11 @@ def _spawn_lock_holder(path: str) -> subprocess.Popen:
     return subprocess.Popen([sys.executable, "-c", child_code])
 
 #: 未来时间戳（有效）
-OK_COOKIE = "_m_h5_tk=abc_9999999999999; c=1"
+OK_COOKIE = "cookie2=abc; unb=1; _m_h5_tk=abc_9999999999999"
 #: 无时间戳 → ok（历史样本兼容）
-LEGACY_OK_COOKIE = "_m_h5_tk=t; c=1"
+LEGACY_OK_COOKIE = "cookie2=abc; unb=1; _m_h5_tk=t"
 #: 2001 年时间戳 → 必然过期
-EXPIRED_COOKIE = "_m_h5_tk=abc_1000000000000; c=1"
+EXPIRED_COOKIE = "cookie2=abc; unb=1; _m_h5_tk=abc_1000000000000"
 #: 缺 _m_h5_tk
 NO_TOKEN_COOKIE = "cookie2=only"
 
@@ -104,6 +104,7 @@ class TestV18Cookie(unittest.TestCase):
         return [CookiePoolItem(**item) for item in items]
 
     def test_pool_usable_filters_and_preserves_order(self) -> None:
+        """v1.9：优先档包含"仅令牌层问题"的条目（过期/缺令牌均可自愈），保持原序。"""
         from xianyu_alert.cookie import pool_enabled_cookies, pool_usable_cookies
 
         pool = self._pool(
@@ -116,71 +117,59 @@ class TestV18Cookie(unittest.TestCase):
                 {"name": "empty", "cookie": "", "enabled": True},
             ]
         )
-        self.assertEqual(pool_usable_cookies(pool), [OK_COOKIE, LEGACY_OK_COOKIE])
-        # pool_enabled_cookies 行为不变：只过滤启用/非空
+        self.assertEqual(
+            pool_usable_cookies(pool),
+            [EXPIRED_COOKIE, OK_COOKIE, NO_TOKEN_COOKIE, LEGACY_OK_COOKIE],
+        )
         self.assertEqual(
             pool_enabled_cookies(pool),
             [EXPIRED_COOKIE, OK_COOKIE, NO_TOKEN_COOKIE, LEGACY_OK_COOKIE],
         )
 
-    def test_save_cookies_validated_rejects_and_preserves(self) -> None:
+    def test_save_cookies_validated_rejects_blank_only(self) -> None:
+        """v1.9：只有空 Cookie 被拒绝；令牌过期 / 缺令牌均可保存（可自愈）。"""
         from xianyu_alert.cookie import save_cookies_validated
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "config.yaml")
             with open(path, "w", encoding="utf-8") as fp:
                 yaml.safe_dump(make_config(), fp, allow_unicode=True, sort_keys=False)
+
+            for ok in (EXPIRED_COOKIE, NO_TOKEN_COOKIE, LEGACY_OK_COOKIE):
+                save_cookies_validated(path, ok)
+                self.assertEqual(_read_yaml(path)["monitor"]["cookies"], ok)
+
             before = _read_yaml(path)
-
-            for bad in (EXPIRED_COOKIE, NO_TOKEN_COOKIE, "   "):
-                with self.assertRaises(ValueError):
-                    save_cookies_validated(path, bad)
-                self.assertEqual(
-                    _read_yaml(path), before,
-                    f"{bad[:20]} 不应落盘",
-                )
-
-            # 无时间戳 _m_h5_tk=t 兼容保存
-            save_cookies_validated(path, LEGACY_OK_COOKIE)
-            self.assertEqual(
-                _read_yaml(path)["monitor"]["cookies"],
-                LEGACY_OK_COOKIE,
-            )
+            with self.assertRaises(ValueError):
+                save_cookies_validated(path, "   ")
+            self.assertEqual(_read_yaml(path), before)
 
     def test_resolve_health_filtering(self) -> None:
+        """v1.9：优先档优先；非优先档（登录态缺失）仅在池内无优先条目时降级使用。"""
         from xianyu_alert.cookie import resolve_cookie_for_round
 
-        # 池混入 expired → 只用健康条目
         mon = SimpleNamespace(
             cookie_pool=self._pool(
                 [
                     {"name": "exp", "cookie": EXPIRED_COOKIE, "enabled": True},
                     {"name": "ok", "cookie": OK_COOKIE, "enabled": True},
+                    {"name": "nosess", "cookie": "_m_h5_tk=abc_9999999999999", "enabled": True},
                 ]
             ),
             cookies="",
         )
-        self.assertEqual(resolve_cookie_for_round(mon, 0), OK_COOKIE)
-        self.assertEqual(resolve_cookie_for_round(mon, 5), OK_COOKIE)
+        self.assertEqual(resolve_cookie_for_round(mon, 0), EXPIRED_COOKIE)
+        self.assertEqual(resolve_cookie_for_round(mon, 1), OK_COOKIE)
+        self.assertEqual(resolve_cookie_for_round(mon, 2), EXPIRED_COOKIE)
 
-        # 池全部失效 → 单值健康兜底
         mon2 = SimpleNamespace(
-            cookie_pool=self._pool([{"name": "exp", "cookie": EXPIRED_COOKIE, "enabled": True}]),
-            cookies=LEGACY_OK_COOKIE,
+            cookie_pool=self._pool(
+                [{"name": "nosess", "cookie": "_m_h5_tk=abc_9999999999999", "enabled": True}]
+            ),
+            cookies="",
         )
-        self.assertEqual(resolve_cookie_for_round(mon2, 0), LEGACY_OK_COOKIE)
+        self.assertEqual(resolve_cookie_for_round(mon2, 0), "_m_h5_tk=abc_9999999999999")
 
-        # 池全部失效 + 单值也失效 → 空串
-        mon3 = SimpleNamespace(
-            cookie_pool=self._pool([{"name": "exp", "cookie": EXPIRED_COOKIE, "enabled": True}]),
-            cookies=NO_TOKEN_COOKIE,
-        )
-        self.assertEqual(resolve_cookie_for_round(mon3, 0), "")
-
-
-# ---------------------------------------------------------------------- #
-# 2. storage meta
-# ---------------------------------------------------------------------- #
 class TestV18StorageMeta(unittest.TestCase):
     """get_meta_value / set_meta_value / delete_meta_value。"""
 
@@ -411,24 +400,21 @@ class TestV18MonitorHealth(unittest.TestCase):
             storage.close()
 
     def test_pool_summary_alert(self) -> None:
+        """池汇总：条目进入非优先档（登录态缺失）→ 提醒；v1.9 令牌过期不再算降级。"""
         rec = _MsgRecorder()
         pool = [
-            {"name": "bad", "cookie": EXPIRED_COOKIE, "enabled": True},
+            {"name": "bad", "cookie": "_m_h5_tk=abc_9999999999999", "enabled": True},
             {"name": "ok", "cookie": OK_COOKIE, "enabled": True},
         ]
         monitor, storage = self._monitor(cookie=OK_COOKIE, pool=pool, notifiers=[rec])
         try:
             monitor.run_once()
-            combined = "\n".join(f"{t}\n{tx}" for t, tx in rec.messages)
-            self.assertIn("池中有 1 条 Cookie 已过期", combined)
+            combined = chr(10).join(f"{t}{chr(10)}{tx}" for t, tx in rec.messages)
+            self.assertIn("池中有 1 条 Cookie", combined)
             self.assertTrue(storage.get_meta_value(_META_COOKIE_POOL_ALERT_KEY))
         finally:
             storage.close()
 
-
-# ---------------------------------------------------------------------- #
-# 5. singleton 单实例锁
-# ---------------------------------------------------------------------- #
 class TestV18Singleton(unittest.TestCase):
     """acquire / release / is_running / 幂等 / 冲突文案。"""
 
@@ -508,14 +494,20 @@ class TestV18Cli(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_login_rejects_invalid_cookie(self) -> None:
+    def test_login_accepts_expired_and_rejects_blank(self) -> None:
+        """v1.9：令牌过期的 Cookie 可通过 CLI 保存（自愈）；空 Cookie 拒绝。"""
         from xianyu_alert import cli
 
-        before = _read_yaml(self.path)
         stdout = io.StringIO()
         with redirect_stdout(stdout):
             code = cli.main(["login", "--config", self.path, "--cookie-string", EXPIRED_COOKIE])
-        self.assertNotEqual(code, 0)
+        self.assertEqual(code, 0)
+        self.assertEqual(_read_yaml(self.path)["monitor"]["cookies"], EXPIRED_COOKIE)
+
+        before = _read_yaml(self.path)
+        with redirect_stdout(io.StringIO()):
+            code2 = cli.main(["login", "--config", self.path, "--cookie-string", "   "])
+        self.assertNotEqual(code2, 0)
         self.assertEqual(_read_yaml(self.path), before)
 
     def test_login_accepts_valid_cookie(self) -> None:

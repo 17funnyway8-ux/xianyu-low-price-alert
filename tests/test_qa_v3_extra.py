@@ -152,11 +152,11 @@ class TestQaCookieHealthBoundary(unittest.TestCase):
         self.assertIn("过期", reason)
 
     def test_expiring(self) -> None:
-        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS
 
         now = int(time.time() * 1000)
         # 相对 TTL 常量计算（不写死小时数）：只剩半个预警窗 → 临期
-        ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
+        ts = now + TOKEN_EXPIRING_SOON_MS // 2   # v1.9：时间戳=过期时刻，直接加剩余
         fetcher = MtopFetcher(cookies=self._cookie(ts))
         ok, reason = fetcher.check_cookie_health()
         self.assertFalse(ok)
@@ -166,7 +166,7 @@ class TestQaCookieHealthBoundary(unittest.TestCase):
         from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS
 
         now = int(time.time() * 1000)
-        fetcher = MtopFetcher(cookies=self._cookie(now - TOKEN_EXPIRING_SOON_MS * 2))
+        fetcher = MtopFetcher(cookies=self._cookie(now + TOKEN_EXPIRING_SOON_MS * 4))
         ok, _reason = fetcher.check_cookie_health()
         self.assertTrue(ok)
 
@@ -366,11 +366,11 @@ class TestQaGuiCookieSixStates(unittest.TestCase):
         self.assertEqual(state, COOKIE_STATE_EXPIRED)
 
     def test_expiring(self) -> None:
-        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS
 
         now = int(time.time() * 1000)
         # 相对 TTL 常量计算（不写死小时数）：只剩半个预警窗 → 临期
-        ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2
+        ts = now + TOKEN_EXPIRING_SOON_MS // 2   # v1.9：时间戳=过期时刻，直接加剩余
         state, _text = cookie_status(f"_m_h5_tk=abc_{ts}")
         self.assertEqual(state, COOKIE_STATE_EXPIRING)
 

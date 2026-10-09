@@ -222,6 +222,18 @@ window.XY.Util = (function () {
       .filter((v, i, arr) => arr.indexOf(v) === i);
   }
 
+  /** v1.9：把"还剩多久"的毫秒数渲染成中文（如 2 小时 28 分）。 */
+  function relFuture(ms) {
+    const n = Number(ms);
+    if (!isFinite(n)) return "";
+    if (n <= 0) return "已过期";
+    const min = Math.floor(n / 60000);
+    if (min < 60) return min + " 分钟";
+    const h = Math.floor(min / 60);
+    if (h < 48) return h + " 小时" + (min % 60 ? " " + (min % 60) + " 分" : "");
+    return Math.floor(h / 24) + " 天" + (h % 24 ? " " + (h % 24) + " 小时" : "");
+  }
+
   /** 列表 → 多行文本。 */
   function listToLines(list) {
     return (list || []).join("\n");
@@ -269,6 +281,7 @@ window.XY.Util = (function () {
     setBtnLoading: setBtnLoading,
     fieldError: fieldError,
     linesToList: linesToList,
+    relFuture: relFuture,
     listToLines: listToLines,
     imageVariant: imageVariant,
     imageSmall: imageSmall,

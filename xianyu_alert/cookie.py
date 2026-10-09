@@ -21,7 +21,7 @@ from typing import Any
 
 import yaml
 
-from . import secure
+from . import credential, secure
 
 logger = logging.getLogger(__name__)
 
@@ -42,36 +42,58 @@ PROFILE_DIR_NAME = "browser_profile"
 #: 比人工登录的 120 秒短得多 —— 静默模式不需要等人，超时即代表登录态已失效。
 DEFAULT_SILENT_TIMEOUT = 30.0
 
-#: `_m_h5_tk` 的有效期（毫秒）。
+#: 令牌有效期的**兜底估值**（毫秒）。
 #:
-#: 2026-09-24 实测校准：向 mtop 详情接口发一次请求，服务端在「令牌过期」响应中
-#: 下发的 Set-Cookie 为 `_m_h5_tk=...; Max-Age=5400` —— 即 **90 分钟**。
-#: 此前代码假定 24 小时（相差 16 倍），差值区间内会把已失效的令牌误报为「正常」。
-#:
-#: 注意：令牌**每次请求都会滑动续期**（服务端主动下发新值），因此只要监控在跑
-#: 就不会过期；本阈值只在「停跑超过 90 分钟后重启」时才具有实际意义。
-TOKEN_TTL_MS = 90 * 60 * 1000
-#: 临期预警阈值：剩余不足 TTL 的 1/6（= 15 分钟）视为「即将过期」。
-#: 按 TTL 比例定义而非固定值，避免调整 TTL 后预警窗口覆盖过大比例的时间。
-TOKEN_EXPIRING_SOON_MS = TOKEN_TTL_MS // 6
+#: 2026-10-09 复核修正两件事：
+#:   1. _m_h5_tk 内嵌时间戳的语义是「过期时刻」，不是「签发时刻」——
+#:      旧实现按「签发时刻 + 固定 TTL」计算，会在真实过期后继续判有效；
+#:   2. 平台已把令牌有效期从 90 分钟调整为约 4 小时。
+#: 本常量只在「尚无实测值」时用于文案与续期窗口；运行时以 monitor 观测到的
+#: 实际 TTL 为准（每次续期都会把实测值写入 meta 并用于诊断）。
+TOKEN_TTL_FALLBACK_MS = 4 * 60 * 60 * 1000
+#: 兼容旧名（历史调用方与测试引用 TOKEN_TTL_MS）
+TOKEN_TTL_MS = TOKEN_TTL_FALLBACK_MS
+#: 临期预警窗口下限（与 credential.renewal_window_ms 保持一致）
+TOKEN_EXPIRING_SOON_MS = credential.TOKEN_RENEWAL_WINDOW_MIN_MS
 #: 匹配 `_m_h5_tk=...` 的值（形如 `xxx_1785488087003`）
 _M_H5_TK_PATTERN = re.compile(r"(?:^|;\s*)_m_h5_tk=([^;]+)")
 
 
-def token_ttl_text() -> str:
-    """把 `TOKEN_TTL_MS` 渲染为中文时长文案。
+def token_ttl_text(observed_token_ttl_ms: int | None = None) -> str:
+    """把令牌有效期渲染为中文时长文案（避免把数字写死在多处文案里）。
 
-    各处提示文案统一调用本函数，避免把「24 小时」这类数字写死 —— 否则
-    每次校准 TTL 都要去改散落多处的字符串（且极易漏改）。
+    Args:
+        observed_token_ttl_ms: 实测有效期（毫秒）；None 或非法值时用兜底估值。
+
+    Returns:
+        形如「4 小时」「90 分钟」的中文文案。
     """
-    minutes = TOKEN_TTL_MS // 60000
-    if minutes % 60 == 0:
+    ms = TOKEN_TTL_FALLBACK_MS
+    if observed_token_ttl_ms and observed_token_ttl_ms > 0:
+        ms = int(observed_token_ttl_ms)
+    minutes = ms // 60000
+    if minutes >= 60 and minutes % 60 == 0:
         return f"{minutes // 60} 小时"
     return f"{minutes} 分钟"
 
 
+def token_renewal_window_ms(observed_token_ttl_ms: int | None = None) -> int:
+    """当前生效的续期窗口（毫秒）：令牌剩余不足该值即视为「即将过期」。
+
+    v1.9：窗口不再是写死的固定值 —— 有实测 TTL 时取 TTL/6（不少于 15 分钟），
+    未知时用 30 分钟兜底。供界面文案、预检与测试复用。
+
+    Args:
+        observed_token_ttl_ms: 实测令牌有效期（毫秒），可选。
+
+    Returns:
+        续期窗口（毫秒）。
+    """
+    return credential.renewal_window_ms(observed_token_ttl_ms)
+
+
 def token_expiring_text() -> str:
-    """把 `TOKEN_EXPIRING_SOON_MS` 渲染为中文时长文案（同上，避免写死）。"""
+    """把临期预警窗口渲染为中文时长文案（同上，避免写死数字）。"""
     minutes = TOKEN_EXPIRING_SOON_MS // 60000
     if minutes >= 60 and minutes % 60 == 0:
         return f"{minutes // 60} 小时"
@@ -115,28 +137,19 @@ def build_cookie_header(cookies: list[dict[str, Any]]) -> str:
 # Cookie 过期检测（_m_h5_tk 内嵌时间戳）
 # ---------------------------------------------------------------------- #
 def cookie_token_timestamp(cookie_str: str) -> int | None:
-    """解析 `_m_h5_tk` 内嵌的 13 位毫秒时间戳。
+    """解析 _m_h5_tk 内嵌的 13 位毫秒时间戳 —— **语义是过期时刻**。
 
-    闲鱼的 `_m_h5_tk` 值形如 `xxx_1785488087003`：下划线后半段是
-    签发时间戳（毫秒）。本函数只认 13 位纯数字后缀。
+    2026-10-09 实测校准：该时间戳比当前时间晚 2.5 小时，因此只可能是
+    「过期时刻」。旧实现按「签发时刻 + 固定 TTL」解读（见 git 历史），
+    会让真实过期后的令牌继续被判为有效，属于静默失效的根因之一。
 
     Args:
         cookie_str: Cookie 请求头字符串。
 
     Returns:
-        毫秒时间戳整数；无法解析返回 None。
+        毫秒时间戳；无法解析返回 None。
     """
-    raw = str(cookie_str or "")
-    match = _M_H5_TK_PATTERN.search(raw)
-    if not match:
-        return None
-    value = match.group(1).strip()
-    if "_" not in value:
-        return None
-    suffix = value.rsplit("_", 1)[1]
-    if len(suffix) == 13 and suffix.isdigit():
-        return int(suffix)
-    return None
+    return credential.token_expires_at_ms(cookie_str)
 
 
 def cookie_has_token(cookie_str: str) -> bool:
@@ -155,20 +168,27 @@ def cookie_has_token(cookie_str: str) -> bool:
     return _M_H5_TK_PATTERN.search(str(cookie_str or "")) is not None
 
 
-def cookie_expiry_status(cookie_str: str, now_ms: int | None = None) -> str:
-    """判定 Cookie 过期状态（纯函数，便于单测）。
+def cookie_expiry_status(
+    cookie_str: str,
+    now_ms: int | None = None,
+    observed_token_ttl_ms: int | None = None,
+) -> str:
+    """判定 Cookie 的**令牌层**过期状态（纯函数，便于单测）。
+
+    v1.9 语义修正：内嵌时间戳按「过期时刻」直接比较，**不再叠加 TTL**。
 
     返回状态：
         missing   : 未配置
-        no_token  : 有 Cookie 但缺 `_m_h5_tk`
-        expired   : 已过期（签发时间 + TOKEN_TTL_MS < 当前）
-        expiring  : 即将过期（剩余不足 TOKEN_EXPIRING_SOON_MS）
-        ok        : 正常（剩余超过 TOKEN_EXPIRING_SOON_MS）
-        unknown   : 含 `_m_h5_tk` 但无 13 位时间戳，无法判断
+        no_token  : 有 Cookie 但缺 _m_h5_tk
+        expired   : 令牌已过期（注意：**仍可用于抓取**，服务端会下发新令牌）
+        expiring  : 即将过期（剩余不足续期窗口）
+        ok        : 正常
+        unknown   : 含 _m_h5_tk 但无 13 位时间戳，无法判断
 
     Args:
         cookie_str: Cookie 请求头字符串。
         now_ms: 当前时间（毫秒）；None 取系统时间。
+        observed_token_ttl_ms: 实测令牌有效期，用于自适应续期窗口。
 
     Returns:
         上述状态之一。
@@ -182,10 +202,10 @@ def cookie_expiry_status(cookie_str: str, now_ms: int | None = None) -> str:
     if ts is None:
         return "unknown"
     now = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    remain = ts + TOKEN_TTL_MS - now
+    remain = ts - now
     if remain <= 0:
         return "expired"
-    if remain <= TOKEN_EXPIRING_SOON_MS:
+    if remain <= credential.renewal_window_ms(observed_token_ttl_ms):
         return "expiring"
     return "ok"
 
@@ -200,6 +220,10 @@ HEALTH_EXPIRING = "expiring"
 HEALTH_NO_TOKEN = "no_token"
 HEALTH_MISSING = "missing"
 HEALTH_INVALID_ENCRYPT = "invalid_encrypt"
+#: v1.9 新增：登录态缺失（必须重新登录）
+HEALTH_SESSION_MISSING = "session_missing"
+#: v1.9 新增：会话凭据（havana）已过期（先试免扫码刷新）
+HEALTH_HAVANA_EXPIRED = "havana_expired"
 HEALTH_STATES: tuple[str, ...] = (
     HEALTH_OK,
     HEALTH_EXPIRED,
@@ -207,25 +231,58 @@ HEALTH_STATES: tuple[str, ...] = (
     HEALTH_NO_TOKEN,
     HEALTH_MISSING,
     HEALTH_INVALID_ENCRYPT,
+    HEALTH_SESSION_MISSING,
+    HEALTH_HAVANA_EXPIRED,
 )
 
+#: 拒绝**保存**的状态：只有"未配置"与"密文无法解密"才拒绝。
+#: v1.9 原则：本地预检不做硬阻断 —— 令牌过期可自愈，登录态是否真失效只能由
+#: 一次真实请求回答；保存时过度拦截比放过更糟（用户会以为工具坏了）。
+REJECT_SAVE_HEALTH_STATES: tuple[str, ...] = (
+    HEALTH_MISSING, HEALTH_INVALID_ENCRYPT,
+)
 
-def detect_cookie_health(cookie_str: str) -> tuple[str, str]:
-    """检测单个 Cookie 的有效性（纯函数，供 Cookie 管理对话框 / 监控预检复用）。
+#: 轮换**优先**状态：只有令牌层问题（可自愈）或完全正常
+ROTATION_PREFERRED_HEALTH_STATES: tuple[str, ...] = (
+    HEALTH_OK, HEALTH_EXPIRING, HEALTH_EXPIRED, HEALTH_NO_TOKEN,
+)
 
-    状态码（state）：
-        ok               : 有效（含 `_m_h5_tk` 且未过期；无时间戳按有效处理）
-        expired          : 令牌已过期（距上次成功续期超过 TOKEN_TTL_MS；下次请求会自动申请新令牌）
-        expiring         : 令牌即将过期（同样会在下次请求自动续期）
-        no_token         : 有内容但缺 `_m_h5_tk`
-        missing          : 未配置（空串）
-        invalid_encrypt  : `dpapi1:` 密文无法解密（换机/换用户）
+#: 分层诊断状态 -> 兼容旧 UI 的健康状态码
+_DIAG_TO_HEALTH: dict[str, str] = {
+    credential.STATE_OK: HEALTH_OK,
+    credential.STATE_TOKEN_EXPIRING: HEALTH_EXPIRING,
+    credential.STATE_TOKEN_EXPIRED: HEALTH_EXPIRED,
+    credential.STATE_NO_TOKEN: HEALTH_NO_TOKEN,
+    credential.STATE_SESSION_MISSING: HEALTH_SESSION_MISSING,
+    credential.STATE_HAVANA_EXPIRED: HEALTH_HAVANA_EXPIRED,
+    credential.STATE_MISSING: HEALTH_MISSING,
+    credential.STATE_INVALID_ENCRYPT: HEALTH_INVALID_ENCRYPT,
+}
+
+
+def detect_cookie_health(
+    cookie_str: str,
+    observed_token_ttl_ms: int | None = None,
+) -> tuple[str, str]:
+    """检测单个 Cookie 的健康状态（纯函数，供界面 / 预检 / 保存校验复用）。
+
+    v1.9 起结论来自分层诊断 credential.diagnose_cookie，状态码：
+
+        ok               : 登录态与令牌均正常
+        expiring         : 令牌即将过期（下次请求自动续期）
+        expired          : 令牌已过期 —— **仍可用于抓取**（服务端会下发新令牌）
+        no_token         : 缺 _m_h5_tk（首轮自动申领）
+        session_missing  : 缺登录态字段（cookie2），必须重新登录
+        havana_expired   : 会话凭据已过期（先试免扫码刷新）
+        missing          : 未配置
+        invalid_encrypt  : 密文无法解密（换机 / 换用户）
 
     Args:
-        cookie_str: Cookie 请求头字符串（可为 `dpapi1:` 密文）。
+        cookie_str: Cookie 请求头字符串（可为密文）。
+        observed_token_ttl_ms: 实测令牌有效期（毫秒），用于自适应续期窗口。
 
     Returns:
-        (state, 中文原因文案)。
+        (state, 中文结论文案)。
     """
     raw = str(cookie_str or "").strip()
     if not raw:
@@ -235,27 +292,44 @@ def detect_cookie_health(cookie_str: str) -> tuple[str, str]:
         if not decrypted:
             return HEALTH_INVALID_ENCRYPT, "密文无法解密（可能换机/换用户），请重新登录"
         raw = decrypted
-    if not cookie_has_token(raw):
-        return HEALTH_NO_TOKEN, f"缺少 {REQUIRED_COOKIE_NAME}，无法用于 mtop 签名"
-    status = cookie_expiry_status(raw)
-    if status == "expired":
-        # 令牌过期 ≠ 登录态失效：mtop 令牌在每次请求时由服务端滑动续期，
-        # 所以「过期」只意味着「距上次成功请求已超过有效期（默认 90 分钟）」。
-        # 下一次请求通常就会带回新令牌；只有**持续**失败才说明登录态真的失效。
-        # 文案必须把这个区别讲清楚，否则用户会去做一次根本没必要的重新登录。
-        return (
-            HEALTH_EXPIRED,
-            f"登录令牌已过期（{token_ttl_text()}内未续期）—— 下次抓取会自动申请新令牌；"
-            "若持续失败则说明登录态已失效，需重新登录",
-        )
-    if status == "expiring":
-        return (
-            HEALTH_EXPIRING,
-            f"令牌即将过期（剩余不足 {token_expiring_text()}），下次抓取会自动续期",
-        )
-    if status == "unknown":
-        return HEALTH_OK, "含 _m_h5_tk 但无时间戳，按有效处理（历史样本兼容）"
-    return HEALTH_OK, "有效（含 _m_h5_tk 且未过期）"
+    try:
+        diag = credential.diagnose_cookie(raw, observed_token_ttl_ms=observed_token_ttl_ms)
+    except Exception as exc:  # noqa: BLE001 - 诊断异常不应让调用方崩溃
+        logger.warning("Cookie 诊断异常，按可用处理：%s", exc)
+        return HEALTH_OK, "诊断异常，按可用处理"
+    state = _DIAG_TO_HEALTH.get(diag.state, HEALTH_OK)
+    return state, (diag.reason or diag.summary)
+
+
+def cookie_is_usable(cookie_str: str, observed_token_ttl_ms: int | None = None) -> bool:
+    """判断一份 Cookie 是否**值得发起请求**（令牌过期依然算可用）。
+
+    v1.9 可用性规则：只看能不能通过服务端鉴权 ——
+        - 登录态字段（cookie2）在场；
+        - 会话凭据（havana_lgc_exp）未过期；
+        - 密文可解密。
+    令牌层（_m_h5_tk）过期或缺失都**不影响**可用性：首轮请求会由服务端下发
+    新令牌，fetcher 会自动重算签名重试一次。旧实现把「令牌过期」当作不可用，
+    会让本可自愈的一轮直接判失败（真实故障复盘见 v1.9 设计说明）。
+
+    Args:
+        cookie_str: Cookie 请求头字符串（可为密文）。
+        observed_token_ttl_ms: 实测令牌有效期（毫秒），可选。
+
+    Returns:
+        True 表示值得发起请求。
+    """
+    raw = str(cookie_str or "").strip()
+    if not raw:
+        return False
+    if secure.is_encrypted(raw):
+        raw = secure.decrypt_text(raw)
+        if not raw:
+            return False
+    try:
+        return credential.diagnose_cookie(raw, observed_token_ttl_ms=observed_token_ttl_ms).usable
+    except Exception:  # noqa: BLE001 - 诊断异常按不可用处理
+        return False
 
 
 def pool_enabled_cookies(pool: Any) -> list[str]:
@@ -283,65 +357,82 @@ def pool_enabled_cookies(pool: Any) -> list[str]:
     return result
 
 
-def pool_usable_cookies(pool: Any) -> list[str]:
-    """返回 Cookie 池中**「启用 + 非空 + 健康」**条目的明文 Cookie 列表（保序）。
+def cookie_prefers_rotation(cookie_str: str, observed_token_ttl_ms: int | None = None) -> bool:
+    """该 Cookie 是否**优先参与轮换**（令牌层问题不影响优先级）。
 
-    健康定义（v1.8，C11）：`detect_cookie_health` 状态 ∈ {ok, expiring}。
-    与 `pool_enabled_cookies` 互补：后者只过滤启用/非空，前者再过滤过期 /
-    缺 token / 无法解密等失效条目——**失效条目不参与轮换**，避免向 fetcher
-    注入已过期 Cookie。
+    v1.9：令牌过期 / 缺失都算优先（可自愈）；只有登录态缺失、会话凭据过期、
+    密文无法解密等"服务端大概率会拒"的条目降为备选。
 
     Args:
-        pool: Cookie 池（列表）。
+        cookie_str: Cookie 字符串（可为密文）。
+        observed_token_ttl_ms: 实测令牌有效期（毫秒），可选。
 
     Returns:
-        健康条目的 Cookie 字符串列表（保序）；池为空 / 无健康条目时返回空列表。
+        True 表示优先参与轮换。
     """
-    usable: list[str] = []
-    for cookie in pool_enabled_cookies(pool):
-        try:
-            state, _reason = detect_cookie_health(cookie)
-        except Exception:  # noqa: BLE001 - 检测异常按不可用处理
-            continue
-        if state in (HEALTH_OK, HEALTH_EXPIRING):
-            usable.append(cookie)
-    return usable
+    state, _reason = detect_cookie_health(cookie_str, observed_token_ttl_ms)
+    return state in ROTATION_PREFERRED_HEALTH_STATES
 
 
-def resolve_cookie_for_round(monitor: Any, round_index: int = 0) -> str:
-    """多 Cookie 轮换策略：**池优先、单值兜底**（v3.2 + v1.8 健康过滤）。
+def pool_usable_cookies(pool: Any, observed_token_ttl_ms: int | None = None) -> list[str]:
+    """返回 Cookie 池中可以参与轮换的条目（**优先健康，全不健康也不放弃**）。
 
-    v1.8（C11/C14）：
-        - 池中仅用「健康」条目（ok / expiring）轮换，过期 / 缺 token / 无法解密
-          的条目自动跳过，避免向 fetcher 注入已过期 Cookie；
-        - 池内健康条目为空但存在启用条目时：回退单值 `monitor.cookies`
-          （单值健康才用）；单值也不健康 → 返回空串并打 warning
-          （「全部 Cookie 失效，本轮抓取将失败」，C14）；
-        - 池为空 / 无启用条目 → 回退单值（与旧行为一致）。
+    v1.9 两级策略：
+        1. 优先条目 = 状态属于 ROTATION_PREFERRED_HEALTH_STATES（正常，或仅令牌层
+           问题且可自愈）；
+        2. 若一条优先条目都没有，则**降级为全部可解密条目** —— 因为令牌过期并不
+           代表这轮一定失败，服务端会下发新令牌并自动重试；旧实现直接返回空列表，
+           让本可成功的一轮在配置层就失败；
+        3. 密文无法解密的条目始终排除（本地拿不到内容）。
+
+    Args:
+        pool: Cookie 池（列表；元素可为 dataclass 或 dict）。
+        observed_token_ttl_ms: 实测令牌有效期（毫秒），可选。
+
+    Returns:
+        参与轮换的 Cookie 列表（保序）；确实无可解密条目时返回空列表。
+    """
+    enabled = pool_enabled_cookies(pool)
+    if not enabled:
+        return []
+    preferred = [c for c in enabled if cookie_prefers_rotation(c, observed_token_ttl_ms)]
+    if preferred:
+        return preferred
+    return [c for c in enabled if detect_cookie_health(c, observed_token_ttl_ms)[0] != HEALTH_INVALID_ENCRYPT]
+
+
+def resolve_cookie_for_round(
+    monitor: Any,
+    round_index: int = 0,
+    observed_token_ttl_ms: int | None = None,
+) -> str:
+    """多 Cookie 轮换策略：**池优先、单值兜底**（v3.2 + v1.9 可用性过滤）。
+
+    v1.9 语义修正：过滤条件从「令牌未过期」放宽为「可用」——
+    令牌过期可自愈（服务端下发新令牌 + fetcher 自动重试），不应剔除；
+    只有登录态缺失 / 会话凭据过期 / 密文无法解密才真正不可用。
 
     Args:
         monitor: MonitorConfig 或结构兼容对象（含 cookie_pool / cookies 属性）。
         round_index: 从 0 开始的轮次序号。
+        observed_token_ttl_ms: 实测令牌有效期（毫秒），可选。
 
     Returns:
         本轮应使用的 Cookie 字符串（可能为空串）。
     """
-    pool = pool_usable_cookies(getattr(monitor, "cookie_pool", None))
+    pool = pool_usable_cookies(getattr(monitor, "cookie_pool", None), observed_token_ttl_ms)
     if pool:
         return pool[int(round_index) % len(pool)]
 
     single = str(getattr(monitor, "cookies", "") or "")
-    if single:
-        try:
-            state, _reason = detect_cookie_health(single)
-        except Exception:  # noqa: BLE001 - 检测异常按不可用处理
-            state = HEALTH_MISSING
-        if state in (HEALTH_OK, HEALTH_EXPIRING):
-            return single
+    if single and cookie_is_usable(single, observed_token_ttl_ms):
+        return single
 
-    # 池存在启用条目但无健康条目，且单值也不可用 → C14 兜底日志
-    if pool_enabled_cookies(getattr(monitor, "cookie_pool", None)) and not pool:
-        logger.warning("池中所有 Cookie 已过期/无效，且单值 Cookie 亦不可用，本轮抓取将失败（C14）")
+    if pool_enabled_cookies(getattr(monitor, "cookie_pool", None)):
+        logger.warning(
+            "池中与单值 Cookie 均不可用（登录态缺失或会话凭据过期），本轮抓取将失败；"
+            "请先试「免扫码刷新」，必要时重新扫码登录",
+        )
     return ""
 
 
@@ -407,7 +498,7 @@ def save_cookies_validated(config_path: str, cookie_str: str) -> None:
     """
     cookie_str = str(cookie_str or "").strip()
     state, reason = detect_cookie_health(cookie_str)
-    if state != HEALTH_OK:
+    if state in REJECT_SAVE_HEALTH_STATES:
         raise ValueError(f"Cookie 无效（{state}）：{reason}，未保存任何改动。")
     save_cookies_to_config(config_path, cookie_str)
 
@@ -440,7 +531,7 @@ def save_cookies_validated_encrypted(config_path: str, cookie_str: str) -> None:
     """
     cookie_str = str(cookie_str or "").strip()
     state, reason = detect_cookie_health(cookie_str)
-    if state != HEALTH_OK:
+    if state in REJECT_SAVE_HEALTH_STATES:
         raise ValueError(f"Cookie 无效（{state}）：{reason}，未保存任何改动。")
     # 内存加密（绝不先写明文）：加密降级返回明文时视为不可用，拒绝保存
     cipher = secure.encrypt_text(cookie_str)

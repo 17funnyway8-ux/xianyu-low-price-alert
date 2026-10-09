@@ -111,6 +111,10 @@ class MonitorConfig:
     cookie_alert_enabled: bool = True
     #: v1.8：Cookie 健康检测节流秒数；0 = 每轮检测（默认，纯本地零开销）
     cookie_check_interval_seconds: int = 0
+    #: v1.9 空闲保活：长时间无抓取时定期发一次轻量请求，维持令牌滑动续期
+    keepalive_enabled: bool = True
+    #: 保活间隔（秒）；低于 keepalive.MIN_KEEPALIVE_INTERVAL 视为关闭
+    keepalive_interval_seconds: int = 1800
 
 
 @dataclass
@@ -455,6 +459,18 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
             f"`monitor.cookie_check_interval_seconds` 不能为负数，当前 {cookie_check_interval}"
         )
 
+    keepalive_enabled = data.get("keepalive_enabled", True)
+    if isinstance(keepalive_enabled, str):
+        keepalive_enabled = keepalive_enabled.strip().lower() not in ("0", "false", "no", "off", "")
+    else:
+        keepalive_enabled = bool(keepalive_enabled)
+    try:
+        keepalive_interval_seconds = int(data.get("keepalive_interval_seconds", 1800))
+    except (TypeError, ValueError):
+        keepalive_interval_seconds = 1800
+    if keepalive_interval_seconds < 0:
+        keepalive_interval_seconds = 0
+
     return MonitorConfig(
         interval_seconds=interval,
         user_agent=user_agent,
@@ -463,6 +479,8 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
         cookie_pool=_parse_cookie_pool(data.get("cookie_pool")),
         cookie_alert_enabled=cookie_alert_enabled,
         cookie_check_interval_seconds=cookie_check_interval,
+        keepalive_enabled=keepalive_enabled,
+        keepalive_interval_seconds=keepalive_interval_seconds,
     )
 
 
