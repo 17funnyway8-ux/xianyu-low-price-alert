@@ -76,10 +76,20 @@ jobs:
           sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3
           pip install "PySide6>=6.6"
 
-      - name: Qt 用例（24 个，offscreen 平台，无需显示器）
+      - name: Qt 用例（offscreen 平台，无需显示器）
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -p "test_gui_qt*.py" -v
+
+      # v1.10.9：gui_qt 此前**只有用例数、没有覆盖率门禁**（主门禁的环境没有 PySide6，
+      # 该包被 --omit 排除）。这里在装了 PySide6 的作业里单独量一遍，
+      # 让 Qt 版的质量也从"有测试"升级为"有可核对的数字"。
+      - name: Qt 覆盖率门禁（gui_qt ≥ 60%）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m coverage run --source=xianyu_alert.gui_qt -m unittest discover -s tests -p "test_gui_qt*.py"
+          python -m coverage report --fail-under=60
 
   web-e2e:
     name: Web UI contract + e2e
