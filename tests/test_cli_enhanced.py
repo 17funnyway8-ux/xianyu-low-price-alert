@@ -111,6 +111,19 @@ class TestCookieStatusJson(CliTestCase):
         self.assertIn("keepalive", data)
         self.assertEqual(data["pool_count"], 0)
 
+    def test_stdout_is_pure_json(self) -> None:
+        """stdout 必须**只有** JSON：日志/提示一律走 stderr。
+        （真实故障：容器里 `cookie status --json | python -m json.tool` 因日志行解析失败。）"""
+        for argv in (
+            ["cookie", "status", "-c", self.path, "--json"],
+            ["cookie", "keepalive", "-c", self.path, "--json"],
+            ["config", "validate", "-c", self.path, "--json"],
+            ["list", "-c", self.path, "--json"],
+        ):
+            code, out, _err = self.run_cli(argv)
+            self.assertEqual(code, 0, argv)
+            json.loads(out)  # 整段解析：有杂音就会抛异常
+
     def test_pool_entries_are_masked_in_json(self) -> None:
         """有 Cookie 池时也要走通（曾被 ruff 抓到"局部导入晚于使用"的运行时陷阱）。"""
         path = make_config(self.tmp, cookie_pool=[

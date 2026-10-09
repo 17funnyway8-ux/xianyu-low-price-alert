@@ -91,7 +91,9 @@ def setup_logging(verbose: bool = False) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
         format=LOG_FORMAT,
         datefmt=DATE_FORMAT,
-        stream=sys.stdout,
+        # 诊断信息一律走 stderr：stdout 要留给 --json 这类机器可读输出，
+        # 否则 `xianyu-alert cookie status --json | jq` 会因为日志行解析失败。
+        stream=sys.stderr,
     )
     install_file_logging()
 

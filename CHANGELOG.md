@@ -2,6 +2,14 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.9.4] - 2026-10-09
+
+### 修复
+- **CLI 的 stdout 不再被日志污染**：logging 此前输出到 stdout，导致
+  `xianyu-alert cookie status --json | jq` 这类管道消费方解析失败（容器实测发现）。
+  现按 Unix 惯例：诊断信息走 stderr，stdout 只留数据。
+  并新增严格回归测试：断言行内命令的**整段 stdout** 必须可被 json.loads 解析。
+
 ## [1.9.3] - 2026-10-09
 
 ### 新增

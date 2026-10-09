@@ -344,13 +344,14 @@ class TestVersion(unittest.TestCase):
     def test_version_current(self) -> None:
         from xianyu_alert import __version__
 
-        # v1.9.3 更新项：CLI 增强（--json / config validate / cookie keepalive）
-        # （由 1.9.2 升级到 1.9.3，故旧断言同步更新）
-        self.assertEqual(__version__, "1.9.3")
+        # v1.9.4 更新项：CLI 日志改走 stderr，保证 stdout 是纯 JSON
+        # （由 1.9.3 升级到 1.9.4，故旧断言同步更新）
+        self.assertEqual(__version__, "1.9.4")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG
 
+        self.assertIn("v1.9.4", UPDATE_LOG)
         self.assertIn("v1.9.3", UPDATE_LOG)
         self.assertIn("v1.9.2", UPDATE_LOG)
         self.assertIn("v1.9.1", UPDATE_LOG)
