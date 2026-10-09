@@ -1,0 +1,80 @@
+# ===========================================================
+# 发布多架构镜像到 Docker Hub（amd64 + arm64）
+# ===========================================================
+# 两种触发方式：
+#   1) 打 tag（v*）→ 自动发布 latest + 版本号
+#   2) 手动触发（workflow_dispatch）→ 可指定版本号，留空只更新 latest
+#
+# 依赖仓库密钥：DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
+# 镜像名：<DOCKERHUB_USERNAME>/xianyu-alert
+#
+# 与 release.yml 的分工：
+#   - release.yml：构建 Windows exe / macOS .app 并发布 GitHub Release，同时推 GHCR
+#   - 本工作流：只负责 Docker Hub 的镜像发布，可独立手动重跑，不影响 Release
+# ===========================================================
+name: Publish Docker image (Docker Hub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "附加版本标签（如 1.8.2）；留空则只推送 latest"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  dockerhub:
+    name: Build & push (linux/amd64 + linux/arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU（arm64 模拟）
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata（标签策略）
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/xianyu-alert
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push（多架构）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 汇总（打印最终镜像与标签）
+        run: |
+          echo "### 已推送镜像" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "平台：linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
