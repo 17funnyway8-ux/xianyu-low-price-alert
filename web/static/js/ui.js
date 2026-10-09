@@ -37,7 +37,14 @@ window.XY.UI = (function () {
     if (dot) dot.className = "dot " + (running ? "on live" : "off");
     if (txt) txt.textContent = running ? "运行中" : "未运行";
     const pulse = U.$("#pulseBtn");
-    if (pulse) pulse.title = running ? "点击停止监控" : "点击开始监控";
+    if (pulse) pulse.title = running ? "状态：运行中（点击可停止）" : "状态：未运行（点击可开始）";
+    // 明确的启停按钮：状态胶囊只做指示，不再让用户猜"能不能点"
+    const toggle = U.$("#monitorToggleBtn");
+    if (toggle) {
+      toggle.textContent = running ? "停止监控" : "开始监控";
+      toggle.classList.toggle("danger-ghost", running);
+      toggle.title = running ? "停止后台监控线程" : "启动后台监控线程（按设定间隔轮询）";
+    }
 
     // Cookie 健康灯
     const cfg = st.config;
