@@ -101,6 +101,7 @@ class TestOnceAndList(CliCase):
 class TestShortcut(CliCase):
     """shortcut 子命令（非 Windows 平台应给出明确说明而不是崩）。"""
 
+    @unittest.skipIf(sys.platform == "win32", "Windows 上会真的去创建快捷方式，走另一条契约")
     def test_shortcut_on_non_windows_reports_clearly(self) -> None:
         """非 Windows：退出码 1 + 明确说明（而不是静默"成功"）。
 
@@ -109,6 +110,19 @@ class TestShortcut(CliCase):
         code, out, err = self.run_cli(["shortcut", "-c", self.path])
         self.assertEqual(code, 1)
         self.assertIn("仅 Windows", out + err)
+
+    @unittest.skipUnless(sys.platform == "win32", "仅 Windows 才会真的创建")
+    def test_shortcut_on_windows_attempts_creation(self) -> None:
+        """Windows：真的会去创建快捷方式。
+
+        CI 的 Windows runner 没有交互桌面会话，创建可能失败；无论成败都要求
+        **有明确输出**，失败时为非 0 —— 不允许静默通过。
+        """
+        code, out, err = self.run_cli(["shortcut", "-c", self.path])
+        self.assertIn(code, (0, 1))
+        self.assertTrue((out + err).strip(), "无论成败都要有输出")
+        if code != 0:
+            self.assertIn("失败", out + err)
 
 
 class TestSecureCommand(CliCase):
