@@ -2,6 +2,23 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.3] - 2026-10-10
+
+### 新增
+- **数据模型补字段（M03）**：`Product` 新增 `seller`（卖家）/ `location`（地区）/
+  `original_price`（原价）与派生属性 `discount_text`；
+  **一律追加在字段末尾**，既有按位置传参的调用点不受影响。
+- **一路打穿**：mtop 解析从 `exContent` 取出这三个字段；存储层用既有的幂等迁移机制
+  补出 `seller` / `location` / `original_price` 三列（老库打开即自动补齐，老数据仍可读）；
+  `NotifiedRecord` 同步扩展（含 `original_price_text`）。
+- **Qt 版「黑名单管理」（M16）**：补齐此前只有「加入黑名单」、**没有查看/移除入口**的缺口；
+  菜单「记录 → 黑名单管理」，可查看条目并移除选中项。移除动作通过注入回调完成，便于单测。
+
+### 测试
+- 新增 `tests/test_product_profile.py`（11 条）：字段默认值 / 位置参数兼容 / 归一化 /
+  派生属性 / mtop 解析 / 落库取出 / **老库迁移补列**。
+- `tests/test_gui_qt.py` 新增 5 条黑名单管理对话框用例（CI 的 Qt offscreen 任务执行）。
+
 ## [1.10.2] - 2026-10-10
 
 ### 新增

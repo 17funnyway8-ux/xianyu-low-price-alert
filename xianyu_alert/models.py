@@ -53,6 +53,9 @@ class Product:
         publish_time: 发布时间（原样保留站点文案，解析不到时为空串）。
         keyword: 命中的搜索关键词（用于区分不同关键词下的同一商品）。
         image_url: 商品主图地址（已归一化为 https；缺失时为空串）。
+        seller: 卖家昵称（v1.10.3；mtop 未返回时为空串）。
+        location: 卖家所在地区（v1.10.3；如「广东 深圳」）。
+        original_price: 原价（v1.10.3；没有划线价时为 None）。
     """
 
     product_id: str
@@ -62,6 +65,10 @@ class Product:
     publish_time: str = ""
     keyword: str = ""
     image_url: str = ""
+    #: v1.10.3 新增字段一律**追加在末尾**：既有按位置传参的调用点不受影响
+    seller: str = ""
+    location: str = ""
+    original_price: float | None = None
 
     def __post_init__(self) -> None:
         """轻量校验 + 类型归一化。"""
@@ -84,6 +91,21 @@ class Product:
         self.publish_time = str(self.publish_time or "").strip()
         self.keyword = str(self.keyword or "").strip()
         self.image_url = normalize_image_url(self.image_url)
+        self.seller = str(self.seller or "").strip()
+        self.location = str(self.location or "").strip()
+        if self.original_price is not None:
+            try:
+                value = float(self.original_price)
+                self.original_price = value if value > 0 else None
+            except (TypeError, ValueError):
+                self.original_price = None
+
+    @property
+    def discount_text(self) -> str:
+        """折扣展示（如「原价 ¥199 → 现价 ¥129」）；无原价时返回空串。"""
+        if self.original_price is None or self.original_price <= self.price:
+            return ""
+        return f"原价 ¥{float(self.original_price):.2f} → 现价 ¥{float(self.price):.2f}"
 
     # ------------------------------------------------------------------ #
     # 构造 / 序列化辅助
@@ -117,6 +139,9 @@ class Product:
             publish_time=data.get("publish_time", ""),
             keyword=data.get("keyword") or keyword,
             image_url=data.get("image_url", ""),
+            seller=data.get("seller", ""),
+            location=data.get("location", ""),
+            original_price=data.get("original_price"),
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -19,6 +19,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -30,6 +31,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -532,3 +535,86 @@ class RefreshCookieDialog(QDialog):
     def cookie(self) -> str:
         """返回校验通过的 Cookie（确认后读取）。"""
         return self._cookie
+
+
+class BlacklistManageDialog(QDialog):
+    """黑名单管理：查看已拉黑商品并移除（对齐 Tk 版 on_manage_blacklist）。
+
+    v1.10.3 补齐：Qt 版此前只有「加入黑名单」，**没有查看/移除入口** ——
+    用户拉黑错了只能去翻数据库。这里把列表与移除都做进界面，并与 Tk 版行为对齐。
+
+    可测性设计：移除动作通过注入的 on_remove(product_id) -> int 回调完成，
+    因此单测不需要真的数据库。
+    """
+
+    def __init__(
+        self,
+        entries: list[Any],
+        on_remove: Any,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("黑名单管理")
+        self.setMinimumSize(620, 380)
+        self._on_remove = on_remove
+        self._entries = list(entries)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("已拉黑的商品不会再触发提醒；移除后将重新参与判定。"))
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["商品 ID", "关键词", "原因", "拉黑时间"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table)
+
+        row = QHBoxLayout()
+        self.btn_remove = QPushButton("🗑 移除选中")
+        self.btn_remove.clicked.connect(self.remove_selected)
+        row.addWidget(self.btn_remove)
+        row.addStretch(1)
+        self.btn_close = QPushButton("关闭")
+        self.btn_close.clicked.connect(self.accept)
+        row.addWidget(self.btn_close)
+        layout.addLayout(row)
+
+        self.lbl_summary = QLabel("")
+        layout.addWidget(self.lbl_summary)
+        self.reload()
+
+    def reload(self) -> None:
+        """按当前条目重建表格（移除后调用）。"""
+        self.table.setRowCount(0)
+        for entry in self._entries:
+            index = self.table.rowCount()
+            self.table.insertRow(index)
+            self.table.setItem(index, 0, QTableWidgetItem(str(entry.get("product_id", ""))))
+            self.table.setItem(index, 1, QTableWidgetItem(str(entry.get("keyword", ""))))
+            self.table.setItem(index, 2, QTableWidgetItem(str(entry.get("reason", ""))))
+            self.table.setItem(index, 3, QTableWidgetItem(str(entry.get("created_at", ""))))
+        self.lbl_summary.setText("黑名单为空。" if not self._entries else "共 " + str(len(self._entries)) + " 条")
+
+    def selected_product_ids(self) -> list[str]:
+        """返回选中行的商品 ID（供移除使用，也便于测试）。"""
+        ids: list[str] = []
+        for index in {i.row() for i in self.table.selectedIndexes()}:
+            item = self.table.item(index, 0)
+            if item is not None and item.text():
+                ids.append(item.text())
+        return ids
+
+    def remove_selected(self) -> int:
+        """移除选中条目；返回实际移除数量。"""
+        ids = self.selected_product_ids()
+        if not ids:
+            return 0
+        removed = 0
+        for product_id in ids:
+            try:
+                removed += int(self._on_remove(product_id) or 0)
+            except Exception:  # noqa: BLE001 - 移除失败不应崩窗
+                logger.warning("移除黑名单条目失败：%s", product_id, exc_info=True)
+            self._entries = [e for e in self._entries if str(e.get("product_id", "")) != product_id]
+        self.reload()
+        return removed
