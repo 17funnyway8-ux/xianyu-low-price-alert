@@ -52,7 +52,6 @@ from xianyu_alert.cookie import (  # noqa: E402
     HEALTH_INVALID_ENCRYPT,
     HEALTH_NO_TOKEN,
     TOKEN_EXPIRING_SOON_MS,
-    TOKEN_TTL_MS,
     cookie_expiry_status,
     detect_cookie_health,
     resolve_cookie_for_round,
@@ -181,27 +180,31 @@ class TestDetectHealthExtra(unittest.TestCase):
         self.assertEqual(state, HEALTH_INVALID_ENCRYPT)
         self.assertIn("解密", reason)
 
-    def test_expiring_exact_one_hour_boundary(self) -> None:
-        """剩余恰 1 小时（remain == 3600000）→ expiring（<= 边界，纯函数固定 now）。"""
-        now_ms = 10 ** 13
-        ts = now_ms - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS
-        cookie = f"_m_h5_tk=abc_{ts}"
+    def test_expiring_exact_window_boundary(self) -> None:
+        """剩余恰等于续期窗口 → expiring（<= 边界，纯函数固定 now）。"""
+        from xianyu_alert.cookie import token_renewal_window_ms
+
+        now_ms = 1785488087003
+        ts = now_ms + token_renewal_window_ms()
+        cookie = f"cookie2=abc; _m_h5_tk=abc_{ts}"
         status = cookie_expiry_status(cookie, now_ms=now_ms)
         self.assertEqual(status, "expiring")
 
-    def test_expiring_just_over_one_hour_is_ok(self) -> None:
-        """剩余 1 小时 +1ms（remain == 3600001）→ ok（严格大于才 ok，纯函数固定 now）。"""
-        now_ms = 10 ** 13
-        ts = now_ms - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS + 1
-        cookie = f"_m_h5_tk=abc_{ts}"
+    def test_expiring_just_over_window_is_ok(self) -> None:
+        """剩余 = 窗口 +1ms → ok（严格大于才 ok，纯函数固定 now）。"""
+        from xianyu_alert.cookie import token_renewal_window_ms
+
+        now_ms = 1785488087003
+        ts = now_ms + token_renewal_window_ms() + 1
+        cookie = f"cookie2=abc; _m_h5_tk=abc_{ts}"
         status = cookie_expiry_status(cookie, now_ms=now_ms)
         self.assertEqual(status, "ok")
 
     def test_detect_health_expiring_real_now(self) -> None:
         """detect_cookie_health 用系统当前时间：真实临期 Cookie → HEALTH_EXPIRING。"""
         now_ms = int(time.time() * 1000)
-        ts = now_ms - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2  # 剩半小时
-        cookie = f"_m_h5_tk=abc_{ts}"
+        ts = now_ms + TOKEN_EXPIRING_SOON_MS // 2  # v1.9：过期时刻在未来 → 剩余 7.5 分钟
+        cookie = f"cookie2=abc; _m_h5_tk=abc_{ts}"
         state, reason = detect_cookie_health(cookie)
         self.assertEqual(state, HEALTH_EXPIRING)
         self.assertIn("即将过期", reason)

@@ -45,11 +45,11 @@ from xianyu_alert.config import (
     serialize_cookie_pool,
 )
 from xianyu_alert.cookie import (
-    HEALTH_EXPIRING,
     HEALTH_INVALID_ENCRYPT,
-    HEALTH_OK,
+    HEALTH_MISSING,
     TOKEN_TTL_MS,
     cookie_has_token,
+    cookie_is_usable,
     cookie_token_timestamp,
     detect_cookie_health,
 )
@@ -409,6 +409,9 @@ class MonitorService:
         # ---- P2 新增状态：校验在架批处理（与 monitor 线程互斥，R7） ----
         self._check_shelf_lock = threading.Lock()
         self._check_shelf_thread: threading.Thread | None = None
+        #: v1.9：Cookie 空闲保活线程与最近鉴权时间
+        self._keeper: Any = None
+        self._last_auth_at: float = 0.0
         self._check_shelf_cancel: threading.Event | None = None
         self._check_shelf_state: dict[str, Any] = {
             "running": False,
@@ -648,9 +651,82 @@ class MonitorService:
                 "detail_only": bool(self._detail_only),
             }
 
+    def keepalive_probe(self) -> bool:
+        """发一次轻量抓取以维持令牌滑动续期（不写库、不通知）。
+
+        v1.9：与是否在跑监控无关 —— 只要服务在运行就保活，避免"抓一次就停、
+        几小时后再用要重新拿 Cookie"。
+
+        Returns:
+            True 表示请求成功（令牌已续期）。
+        """
+        from xianyu_alert.cookie import resolve_cookie_for_round
+        from xianyu_alert.fetcher import build_fetcher
+
+        config = self.config
+        cookie = resolve_cookie_for_round(config.monitor, 0)
+        if not cookie:
+            return False
+        keywords = [str(getattr(r, "keyword", "")) for r in config.keywords]
+        keywords = [k for k in keywords if k]
+        if not keywords:
+            return False
+        fetcher = build_fetcher(config)
+        setter = getattr(fetcher, "set_cookies", None)
+        if callable(setter):
+            setter(cookie)
+        fetcher.fetch(keywords[0])
+        self._last_auth_at = time.time()
+        return True
+
+    def keepalive_settings(self) -> dict[str, Any]:
+        """保活线程读取的配置快照。"""
+        monitor_cfg = self.config.monitor
+        return {
+            "enabled": bool(getattr(monitor_cfg, "keepalive_enabled", True)),
+            "interval": int(getattr(monitor_cfg, "keepalive_interval_seconds", 1800) or 0),
+            "last_auth_at": self._last_auth_at,
+        }
+
+    def start_keepalive(self) -> None:
+        """启动 Cookie 空闲保活线程（幂等）。"""
+        from xianyu_alert.keepalive import CookieKeeper
+
+        if self._keeper is None:
+            self._keeper = CookieKeeper(
+                probe=self.keepalive_probe, settings=self.keepalive_settings
+            )
+        self._keeper.start()
+
+    def stop_keepalive(self) -> None:
+        """停止 Cookie 空闲保活线程（幂等）。"""
+        if self._keeper is not None:
+            self._keeper.stop()
+
+    def cookie_status(self) -> dict[str, Any]:
+        """v1.9：当前 Cookie 的**分层诊断** + 保活状态（API / 界面共用）。"""
+        from xianyu_alert.credential import diagnose_cookie
+
+        config = self.config
+        monitor_cfg = config.monitor
+        diagnosis = diagnose_cookie(str(getattr(monitor_cfg, "cookies", "") or "")).to_dict()
+        keeper = self._keeper.snapshot() if self._keeper is not None else {"running": False}
+        return {
+            "diagnosis": diagnosis,
+            "keepalive": {
+                "enabled": bool(getattr(monitor_cfg, "keepalive_enabled", True)),
+                "interval_seconds": int(
+                    getattr(monitor_cfg, "keepalive_interval_seconds", 1800) or 0
+                ),
+                "last_auth_at": self._last_auth_at,
+                "thread": keeper,
+            },
+        }
+
     def shutdown(self) -> None:
-        """优雅关闭：停 monitor → 中止校验在架 → 关 storage → 摘除日志接收。"""
+        """优雅关闭：停 monitor → 停保活 → 中止校验在架 → 关 storage → 摘除日志接收。"""
         self.stop()
+        self.stop_keepalive()
         with self._check_shelf_lock:
             cancel_event = self._check_shelf_cancel
             shelf_thread = self._check_shelf_thread
@@ -1006,7 +1082,7 @@ class MonitorService:
                 state, _reason = detect_cookie_health(ck)
             except Exception:  # noqa: BLE001 - 检测异常按不可用处理
                 continue
-            if state in (HEALTH_OK, HEALTH_EXPIRING):
+            if cookie_is_usable(ck):
                 usable.append(ck)
         pool_used = bool(usable)
         result: dict[str, Any] = {
@@ -1094,7 +1170,8 @@ class MonitorService:
                 if not ck:
                     return {"ok": False, "message": "Cookie 内容不能为空", "code": 400}
                 state, reason = detect_cookie_health(ck)
-                if state != HEALTH_OK:
+                # v1.9：只有"未配置/密文无法解密"才拒绝；令牌过期可自愈，不再拦截
+                if state in (HEALTH_MISSING, HEALTH_INVALID_ENCRYPT):
                     return {
                         "ok": False,
                         "message": f"Cookie 无效（{state}）：{reason}，未保存任何改动",
@@ -1130,7 +1207,8 @@ class MonitorService:
                 return {"ok": False, "message": f"条目「{nm}」不存在", "code": 400}
             ck = str(items[idx].get("cookie") or "")
             state, reason = detect_cookie_health(ck)
-            if state not in (HEALTH_OK, HEALTH_EXPIRING):
+            # v1.9：设为默认不再要求"令牌未过期"——服务端会下发新令牌自愈
+            if state in (HEALTH_MISSING, HEALTH_INVALID_ENCRYPT):
                 return {
                     "ok": False,
                     "message": f"条目「{nm}」当前不可用（{state}）：{reason}",
@@ -1149,7 +1227,7 @@ class MonitorService:
             if not ck:
                 return {"ok": False, "message": "请粘贴新的 Cookie 内容", "code": 400}
             state, reason = detect_cookie_health(ck)
-            if state != HEALTH_OK:
+            if state in (HEALTH_MISSING, HEALTH_INVALID_ENCRYPT):
                 return {
                     "ok": False,
                     "message": f"Cookie 无效（{state}）：{reason}，未保存任何改动",

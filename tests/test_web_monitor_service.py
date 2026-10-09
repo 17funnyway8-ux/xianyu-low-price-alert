@@ -466,7 +466,7 @@ class MonitorServiceTestCase(unittest.TestCase):
         """add 落盘 fernet1: 密文 + reload；运行中 monitor 下一轮换用新池（R1）。"""
         from xianyu_alert import cookie
 
-        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000) + 3 * 3600 * 1000}; cookie2=xyz"
         result = self.service.cookie_pool_action(
             action="add", name="主账号", cookie=cookie_str
         )
@@ -482,7 +482,7 @@ class MonitorServiceTestCase(unittest.TestCase):
 
     def test_cookie_pool_action_delete_toggle_set_default(self) -> None:
         """delete / toggle / set_default 语义正确且写盘。"""
-        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000) + 3 * 3600 * 1000}; cookie2=xyz"
         self.service.cookie_pool_action(action="add", name="A", cookie=cookie_str)
         self.service.cookie_pool_action(action="add", name="B", cookie=cookie_str)
         # toggle A → 停用
@@ -514,18 +514,18 @@ class MonitorServiceTestCase(unittest.TestCase):
 
     def test_cookie_pool_refresh_rejects_invalid(self) -> None:
         """refresh_selected 非 ok → 400 且不落盘。"""
-        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000) + 3 * 3600 * 1000}; cookie2=xyz"
         self.service.cookie_pool_action(action="add", name="A", cookie=cookie_str)
         result = self.service.cookie_pool_action(
-            action="refresh_selected", name="A", cookie="cookie2=bad"
+            action="refresh_selected", name="A", cookie="   "
         )
         self.assertFalse(result["ok"])
         items = self.service._read_pool_plaintext()  # noqa: SLF001
-        self.assertNotIn("bad", items[0]["cookie"])
+        self.assertNotEqual(items[0]["cookie"], "   ")
 
     def test_cookie_pool_list_default_name(self) -> None:
         """P3：cookie_pool_list 返回当前默认账号名（set_default 条目 / 单值脱敏 / 未配置）。"""
-        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000)}; cookie2=xyz"
+        cookie_str = f"_m_h5_tk=abc_{int(time.time() * 1000) + 3 * 3600 * 1000}; cookie2=xyz"
         # 1) 未配置任何 Cookie → default_name 为空串（未配置）
         data = self.service.cookie_pool_list()
         self.assertEqual(data["default_name"], "")

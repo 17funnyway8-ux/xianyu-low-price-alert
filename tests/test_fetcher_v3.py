@@ -26,7 +26,8 @@ from xianyu_alert.fetcher import (  # noqa: E402
 
 VALID_COOKIE = "cookie2=abc; _m_h5_tk=deadbeefcafe_1700000000000; _m_h5_tk_enc=xyz"
 #: 2023-11-14 签发 → 早已过期
-EXPIRED_COOKIE = "a=1; _m_h5_tk=abc_1700000000000"
+#: v1.9：令牌内嵌时间戳语义是【过期时刻】；带 cookie2 才是真实登录态样本
+EXPIRED_COOKIE = "cookie2=abc; unb=1; _m_h5_tk=abc_1700000000000"
 
 
 # ---------------------------------------------------------------------- #
@@ -266,12 +267,13 @@ class TestCookieExpiry(unittest.TestCase):
         # 样本一律**相对 TTL 常量**计算，不写死小时数：
         # 2026-09-24 把 TTL 由假定的 24h 校准为实测的 90 分钟后，
         # 原来写死的 25h/23.5h/10h 样本会集体失准。
-        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS, TOKEN_TTL_MS
+        from xianyu_alert.cookie import TOKEN_EXPIRING_SOON_MS
 
         now = 1785488087003
-        expired_ts = now - TOKEN_TTL_MS - 60 * 1000                     # 超期 1 分钟
-        expiring_ts = now - TOKEN_TTL_MS + TOKEN_EXPIRING_SOON_MS // 2  # 只剩半个预警窗
-        ok_ts = now - TOKEN_EXPIRING_SOON_MS * 2                        # 还剩两个预警窗
+        # v1.9：内嵌时间戳语义是【过期时刻】，直接与 now 比较（不再叠加 TTL）
+        expired_ts = now - 60 * 1000                     # 刚过期 1 分钟
+        expiring_ts = now + TOKEN_EXPIRING_SOON_MS // 2  # 只剩半个预警窗
+        ok_ts = now + TOKEN_EXPIRING_SOON_MS * 4         # 还剩 4 个预警窗
         self.assertEqual(cookie_expiry_status(f"_m_h5_tk=x_{expired_ts}", now_ms=now), "expired")
         self.assertEqual(cookie_expiry_status(f"_m_h5_tk=x_{expiring_ts}", now_ms=now), "expiring")
         self.assertEqual(cookie_expiry_status(f"_m_h5_tk=x_{ok_ts}", now_ms=now), "ok")

@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 5. MonitorService（装载配置；缺失则生成默认配置）
     service = MonitorService()
+    service.start_keepalive()   # v1.9：空闲保活，避免长时间空闲后令牌过期
     logger.info("Web 服务启动：数据目录 %s，配置 %s", paths.data_dir(), service.config_path)
 
     # 6. 信号处理：SIGTERM / SIGINT → 优雅退出
