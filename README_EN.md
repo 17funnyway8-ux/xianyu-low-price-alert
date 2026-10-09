@@ -41,7 +41,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.9.2
+  17funnyway8/xianyu-alert:1.9.3
 ```
 
 **Option B — docker compose (adds healthcheck & resource limits):**
