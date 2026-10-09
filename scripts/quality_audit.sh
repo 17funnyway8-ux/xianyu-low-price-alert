@@ -19,7 +19,7 @@ set -o pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-PY="$XY_PY"
+PY="${PYTHON:-${XY_PY:-}}"
 if [ -z "$PY" ]; then
   if [ -x .venv/bin/python ]; then
     PY=".venv/bin/python"
@@ -37,6 +37,17 @@ MAX_MYPY=0
 RUN_TESTS=1
 [ "$1" = "--no-tests" ] && RUN_TESTS=0
 
+# ---- 0) 环境预检：质量门禁**绝不因为缺依赖而静默通过** ----
+# 之前解释器不对时会把 ruff/mypy/测试全标成"跳过"，只给一个孤零零的 ❌，
+# 使用者分不清是环境问题还是真的不达标。
+if ! "$PY" -c "import yaml, requests" >/dev/null 2>&1; then
+  echo "❌ 解释器缺少项目依赖：$PY"
+  echo "   请指定带依赖的解释器后重试，例如："
+  echo "     PYTHON=/path/to/venv/bin/python scripts/quality_audit.sh"
+  echo "     XY_PY=/path/to/venv/bin/python  scripts/quality_audit.sh"
+  exit 2
+fi
+
 echo "=============================================================="
 echo " 质量复评 · 闲鱼低价提醒工具"
 echo " python : $PY"
@@ -52,7 +63,7 @@ if "$PY" -m ruff --version >/dev/null 2>&1; then
   echo "[1/4] ruff        : $RUFF_N 条问题（门槛 <= ${MAX_RUFF}）"
   if [ "$RUFF_N" -gt "$MAX_RUFF" ]; then FAIL=1; fi
 else
-  echo "[1/4] ruff        : 未安装，跳过"
+  echo "[1/4] ruff        : ❌ 未安装（门禁不跳过；pip install ruff）"; FAIL=1
 fi
 
 # ---- 2) mypy ----
@@ -63,7 +74,7 @@ if "$PY" -m mypy --version >/dev/null 2>&1; then
   echo "[2/4] mypy        : $MYPY_N 个错误（门槛 <= ${MAX_MYPY}）"
   if [ "$MYPY_N" -gt "$MAX_MYPY" ]; then FAIL=1; fi
 else
-  echo "[2/4] mypy        : 未安装，跳过"
+  echo "[2/4] mypy        : ❌ 未安装（门禁不跳过；pip install mypy）"; FAIL=1
 fi
 
 # ---- 3) 测试 + 4) 覆盖率 ----
