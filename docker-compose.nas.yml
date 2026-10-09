@@ -3,7 +3,7 @@
 # ===========================================================
 # 部署目标：飞牛 fnOS（x86_64，10.0.0.26，Docker 28.5.2 / Compose v2.40.3）
 #
-#   - 镜像：17funnyway8/xianyu-alert:1.10.10（Docker Hub 已发布 amd64 + arm64 多架构）
+#   - 镜像：17funnyway8/xianyu-alert:1.10.11（Docker Hub 已发布 amd64 + arm64 多架构）
 #     NAS 为 x86_64，直接 `docker compose -p xianyu-alert pull` 即可，无需再交叉构建
 #     后 save/load 导入。
 #   - ⚠️ 镜像以非 root(uid 1000) 运行：首次部署或升级后需

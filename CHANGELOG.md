@@ -2,6 +2,29 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.11] - 2026-10-10
+
+### 测试（M18 前端契约 + M24 脚本）
+- **e2e 冒烟断言 68 → 86 项**：补上 v1.9~v1.10 新增能力的契约 ——
+  `/healthz` 的**部署形态快照**（字段齐全、kind=custom、env_override、
+  与 data_dir 一致）、`/api/config` 的 **cookies_masked 脱敏**与
+  `cookies_undecryptable`、`/api/cookie/status` 的**分层诊断**
+  （diagnosis / keepalive 结构）、`/api/cookie/pool` 键齐全、
+  以及**非法 JSON body 必须返回 JSON 信封而不是 HTML 堆栈**。
+- 新增 `tests/test_scripts.py`（9 条，M24）：文档检查器 subprocess 级 smoke、
+  **「scripts/ 下每个脚本都必须在 scripts/README.md 登记」** 的治理检查、
+  `run.sh` 可执行性与未知子命令契约、e2e `Report` 的计数逻辑单测。
+
+### 修复
+- 治理检查**当场咬出一个真实缺口**：`scripts/check_docs.py`（CI 文档门禁实际调用的脚本）
+  **既没登记也没进统一入口**。已在 `scripts/README.md` 补登记，并同步更新 e2e 断言数说明。
+
+### 说明
+- v1.10.10 的 **Docker 镜像未能推送**：`Build Docker image` 作业连续多次因
+  **Docker Hub 429（限流）** 失败 —— 该 workflow **已先登录再构建**，属于共享出口的
+  整体限额，非仓库配置问题。GitHub Release 与 Windows/macOS 资产不受影响。
+  处置：稍后重跑该作业；或参考 README 在自有机器上 `docker buildx build --push`。
+
 ## [1.10.10] - 2026-10-10
 
 ### 变更
