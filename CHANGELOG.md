@@ -2,6 +2,31 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.10] - 2026-10-10
+
+### 变更
+- **Cookie 池操作抽成纯函数（M15 / M16 共用）**：新增 `pool_toggle_entry` /
+  `pool_expired_indexes` / `pool_disable_indexes` / `pool_delete_entry` /
+  `pool_upsert_entry` / `pool_summary`。此前 Tk 的「Cookie 管理」对话框（`on_manage_cookies`，
+  367 行）与 Qt 的 `CookieDialog` **各写了一遍**「切换启用 / 停用过期 / 删除 / 增改」，
+  既难测（要 Tk / Qt 环境）又容易两边跑偏。纯函数不碰控件、**不改入参**、返回新列表，
+  两个 GUI 现在共用同一套语义。
+
+### 修复
+- **统一两版「⏹ 自动停用过期项」的判定标准**：Tk 用
+  `detect_cookie_health(...) not in ("ok", "expiring")`，Qt 用 `cookie_prefers_rotation` ——
+  **同一个按钮在两版界面里行为不同**。按 v1.9 四层凭据模型，令牌层问题（缺 `_m_h5_tk`、
+  令牌过期）**可自愈，不应被自动停用**；只有登录态缺失 / 无法解密这类服务端大概率会拒的
+  才需要停用。现已统一为后者（Tk 侧之前会把"仅缺令牌"的条目也停掉）。
+
+### 测试
+- 新增 `tests/test_cookie_pool_ops.py`（22 条）：切换 / 过期判定 / 批量停用 / 删除 / 新增与替换 /
+  概况统计，逐条断言**不可变性与越界安全**，并把「什么算需要停用」的口径写进文档字符串。
+- 全量 1252 → **1274**。
+
+### 说明
+- 抽纯函数后，两个 GUI 的对话框回调各减少 4~6 行重复逻辑；Tk 侧改动由 CI（xvfb）验证。
+
 ## [1.10.9] - 2026-10-10
 
 ### 修复

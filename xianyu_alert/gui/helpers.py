@@ -35,6 +35,7 @@ from ..config import (
 )
 from ..cookie import (
     cookie_has_token,
+    cookie_prefers_rotation,
 )
 from ..fetcher import MTOP_TOKEN_COOKIE
 from ..filters import extract_required_keywords, normalize_keywords
@@ -1064,3 +1065,90 @@ __all__ = [
     "keyword_status_text",
     "parse_enabled_flag",
 ]
+
+
+# ---------------------------------------------------------------------- #
+# Cookie 池操作（v1.10.10）：纯函数，Tk / Qt 共用
+# ---------------------------------------------------------------------- #
+# 背景：Tk 的「Cookie 管理」对话框（on_manage_cookies，367 行）与 Qt 的
+# CookieDialog 各自实现了一遍「切换启用 / 停用过期 / 删除 / 增改」，
+# 逻辑重复且都埋在控件回调里 —— 既难测（要 Tk/Qt 环境）又容易两边跑偏。
+# 这里抽成**纯函数**：不碰控件、不改入参、返回新列表。
+
+
+def pool_toggle_entry(pool: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
+    """切换第 index 条的启用态。
+
+    Args:
+        pool: Cookie 池（每项含 name / cookie / enabled）。
+        index: 目标下标；越界时原样返回副本。
+
+    Returns:
+        新列表（不改原列表）。
+    """
+    items = [dict(entry) for entry in pool]
+    if 0 <= index < len(items):
+        items[index]["enabled"] = not bool(items[index].get("enabled", True))
+    return items
+
+
+def pool_expired_indexes(pool: list[dict[str, Any]]) -> list[int]:
+    """过期 / 无效条目下标。
+
+    复用 cookie_prefers_rotation，避免 Tk 与 Qt 各写一套「过期」判定。
+    """
+    return [
+        i
+        for i, entry in enumerate(pool)
+        if not cookie_prefers_rotation(str(entry.get("cookie") or ""))
+    ]
+
+
+def pool_disable_indexes(pool: list[dict[str, Any]], indexes: list[int]) -> list[dict[str, Any]]:
+    """批量停用（**保留条目**，只把 enabled 置 False，可随时恢复）。"""
+    items = [dict(entry) for entry in pool]
+    for i in indexes:
+        if 0 <= i < len(items):
+            items[i]["enabled"] = False
+    return items
+
+
+def pool_delete_entry(pool: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
+    """删除第 index 条；越界时原样返回副本。"""
+    items = [dict(entry) for entry in pool]
+    if 0 <= index < len(items):
+        items.pop(index)
+    return items
+
+
+def pool_upsert_entry(
+    pool: list[dict[str, Any]], entry: dict[str, Any], index: int | None = None
+) -> list[dict[str, Any]]:
+    """新增（index=None）或原地替换第 index 条。
+
+    Args:
+        pool: Cookie 池。
+        entry: 新条目（会被复制，避免外部后续修改穿透进来）。
+        index: 替换位置；None 或越界表示追加到末尾。
+
+    Returns:
+        新列表。
+    """
+    items = [dict(item) for item in pool]
+    new_entry = dict(entry)
+    if index is None or not (0 <= index < len(items)):
+        items.append(new_entry)
+    else:
+        items[index] = new_entry
+    return items
+
+
+def pool_summary(pool: list[dict[str, Any]]) -> dict[str, int]:
+    """池概况：总数 / 启用数 / 停用数 / 过期数（供界面与日志展示）。"""
+    enabled = sum(1 for entry in pool if bool(entry.get("enabled", True)))
+    return {
+        "total": len(pool),
+        "enabled": enabled,
+        "disabled": len(pool) - enabled,
+        "expired": len(pool_expired_indexes(pool)),
+    }

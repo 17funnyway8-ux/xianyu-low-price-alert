@@ -42,6 +42,11 @@ from ..gui import (
     COOKIE_MANUAL_HELP,
     cookie_status,
     parse_keyword_lines,
+    pool_delete_entry,
+    pool_disable_indexes,
+    pool_expired_indexes,
+    pool_toggle_entry,
+    pool_upsert_entry,
     validate_keyword_entry,
 )
 
@@ -366,7 +371,9 @@ class CookieDialog(QDialog):
         if error:
             QMessageBox.warning(self, "输入有误", error)
             return
-        self._pool.append({"name": name.strip(), "cookie": cookie.strip(), "enabled": True})
+        self._pool = pool_upsert_entry(
+            self._pool, {"name": name.strip(), "cookie": cookie.strip(), "enabled": True}
+        )
         self._refresh_pool()
         self.list_pool.setCurrentRow(len(self._pool) - 1)
         self._refresh_detail()
@@ -382,8 +389,9 @@ class CookieDialog(QDialog):
         if error:
             QMessageBox.warning(self, "输入有误", error)
             return
-        self._pool[idx]["name"] = name.strip()
-        self._pool[idx]["cookie"] = cookie.strip()
+        self._pool = pool_upsert_entry(
+            self._pool, {"name": name.strip(), "cookie": cookie.strip()}, idx
+        )
         self._refresh_pool()
         self.list_pool.setCurrentRow(idx)
         self._refresh_detail()
@@ -393,7 +401,7 @@ class CookieDialog(QDialog):
         if idx < 0:
             QMessageBox.information(self, "提示", "请先在列表中选择一条 Cookie。")
             return
-        del self._pool[idx]
+        self._pool = pool_delete_entry(self._pool, idx)
         self._refresh_pool()
         self._refresh_detail()
 
@@ -402,7 +410,8 @@ class CookieDialog(QDialog):
         if idx < 0:
             QMessageBox.information(self, "提示", "请先在列表中选择一条 Cookie。")
             return
-        self._pool[idx]["enabled"] = not bool(self._pool[idx].get("enabled", True))
+        # v1.10.10：改用 gui 里的纯函数（Tk/Qt 共用同一套池操作）
+        self._pool = pool_toggle_entry(self._pool, idx)
         self._refresh_pool()
         self.list_pool.setCurrentRow(idx)
         self._refresh_detail()
@@ -430,13 +439,8 @@ class CookieDialog(QDialog):
 
     def _on_auto_disable(self) -> None:
         """v1.8（C13）：自动停用过期项 —— 确认后写 `enabled=false` 保留条目。"""
-        from ..cookie import cookie_prefers_rotation
 
-        invalid_indexes = [
-            i
-            for i, e in enumerate(self._pool)
-            if not cookie_prefers_rotation(str(e.get("cookie") or ""))
-        ]
+        invalid_indexes = pool_expired_indexes(self._pool)
         if not invalid_indexes:
             QMessageBox.information(self, "无需处理", "池中没有需要停用的过期条目。")
             return
@@ -449,8 +453,7 @@ class CookieDialog(QDialog):
         )
         if proceed != QMessageBox.Yes:
             return
-        for i in invalid_indexes:
-            self._pool[i]["enabled"] = False
+        self._pool = pool_disable_indexes(self._pool, invalid_indexes)
         self._refresh_pool()
         self._refresh_detail()
 
