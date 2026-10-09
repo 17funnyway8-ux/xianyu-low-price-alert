@@ -38,11 +38,14 @@ class TestCheckDocs(unittest.TestCase):
     """文档检查器必须可运行且当前仓库是干净的。"""
 
     def test_runs_clean(self) -> None:
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
         proc = subprocess.run(
             [PY, os.path.join(SCRIPTS, "check_docs.py")],
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            env=env,
             timeout=120,
         )
         self.assertEqual(proc.returncode, 0, f"文档检查器应通过：\n{proc.stdout[-400:]}{proc.stderr[-400:]}")
