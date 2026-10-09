@@ -404,10 +404,10 @@ class CookieDialog(QDialog):
         if not cookie:
             QMessageBox.warning(self, "Cookie 为空", "请粘贴新的 Cookie 内容。")
             return
-        from ..cookie import detect_cookie_health
+        from ..cookie import cookie_accept_state, detect_cookie_health
 
         state, reason = detect_cookie_health(cookie)
-        if state != "ok":
+        if not cookie_accept_state(state):
             QMessageBox.critical(self, "校验失败", f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。")
             return
         self._pool[idx]["cookie"] = cookie
@@ -417,12 +417,12 @@ class CookieDialog(QDialog):
 
     def _on_auto_disable(self) -> None:
         """v1.8（C13）：自动停用过期项 —— 确认后写 `enabled=false` 保留条目。"""
-        from ..cookie import detect_cookie_health
+        from ..cookie import cookie_prefers_rotation
 
         invalid_indexes = [
             i
             for i, e in enumerate(self._pool)
-            if detect_cookie_health(str(e.get("cookie") or ""))[0] not in ("ok", "expiring")
+            if not cookie_prefers_rotation(str(e.get("cookie") or ""))
         ]
         if not invalid_indexes:
             QMessageBox.information(self, "无需处理", "池中没有需要停用的过期条目。")
@@ -518,11 +518,11 @@ class RefreshCookieDialog(QDialog):
     def _on_save(self) -> None:
         """校验并保存（不通过不落盘）。"""
         from .. import secure
-        from ..cookie import detect_cookie_health
+        from ..cookie import cookie_accept_state, detect_cookie_health
 
         cookie = self.edit_cookie.toPlainText().strip()
         state, reason = detect_cookie_health(cookie)
-        if state != "ok":
+        if not cookie_accept_state(state):
             QMessageBox.critical(self, "校验失败", f"Cookie 无效（{state}）：{reason}\n\n未保存任何改动。")
             return
         self._cookie = cookie

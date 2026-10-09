@@ -301,6 +301,22 @@ def detect_cookie_health(
     return state, (diag.reason or diag.summary)
 
 
+def cookie_accept_state(state: str) -> bool:
+    """该健康状态是否可接受（保存 / 刷新 / 设为默认）。
+
+    v1.9：只有"未配置"与"密文无法解密"不可接受。令牌过期/缺失都可自愈，
+    登录态与会话凭据的问题应由"抓取失败后的分层分类 + 提醒"处理，
+    界面不应提前把用户拦死（这正是旧版误报"必须重新登录"的来源）。
+
+    Args:
+        state: detect_cookie_health 返回的状态码。
+
+    Returns:
+        True 表示可接受。
+    """
+    return state not in REJECT_SAVE_HEALTH_STATES
+
+
 def cookie_is_usable(cookie_str: str, observed_token_ttl_ms: int | None = None) -> bool:
     """判断一份 Cookie 是否**值得发起请求**（令牌过期依然算可用）。
 

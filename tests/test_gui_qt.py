@@ -481,30 +481,36 @@ class TestV18GuiControls(unittest.TestCase):
     def test_refresh_cookie_dialog_validates(self) -> None:
         from xianyu_alert.gui_qt.dialogs import RefreshCookieDialog
 
-        dlg = RefreshCookieDialog()
-        dlg.edit_cookie.setPlainText("cookie2=only")  # 缺 _m_h5_tk
-        with mock.patch("xianyu_alert.gui_qt.dialogs.QMessageBox.critical") as crit:
+        # v1.9：校验规则与核心保存路径一致 —— 只有"空 / 密文无法解密"拒绝；
+        # 缺 _m_h5_tk（首轮自动申领）与令牌过期（可自愈）都允许保存。
+        # 注意：必须整体 patch QMessageBox，否则未 patch 的模态框会阻塞用例。
+        with mock.patch("xianyu_alert.gui_qt.dialogs.QMessageBox") as box:
+            dlg = RefreshCookieDialog()
+            dlg.edit_cookie.setPlainText("cookie2=only")
             dlg._on_save()
-        self.assertTrue(crit.called)
-        self.assertEqual(dlg.cookie(), "")  # 未保存
+            self.assertEqual(dlg.cookie(), "cookie2=only")
 
-        dlg.edit_cookie.setPlainText("_m_h5_tk=t; c=1")  # 无时间戳 → ok（历史样本兼容）
-        dlg._on_save()
-        self.assertEqual(dlg.cookie(), "_m_h5_tk=t; c=1")
+            dlg2 = RefreshCookieDialog()
+            dlg2.edit_cookie.setPlainText("   ")
+            dlg2._on_save()
+            self.assertEqual(dlg2.cookie(), "")
+            self.assertTrue(box.critical.called)
 
     def test_cookie_dialog_has_refresh_and_auto_disable(self) -> None:
         from xianyu_alert.gui_qt.dialogs import CookieDialog
 
         dlg = CookieDialog(
             cookie_pool=[
-                {"name": "a", "cookie": "_m_h5_tk=t; c=1", "enabled": True},
+                # v1.9：真实形态必须带登录态字段，否则会被判为"非优先档"
+                {"name": "a", "cookie": "cookie2=abc; _m_h5_tk=t", "enabled": True},
             ]
         )
         self.assertEqual(dlg.btn_refresh.text(), "🔄 刷新选中")
         self.assertEqual(dlg.btn_disable_expired.text(), "⏹ 自动停用过期项")
         # 自动停用：过期条目被停用（确认 mock）
-        expired = "_m_h5_tk=abc_1000000000000; c=1"
-        dlg._pool.append({"name": "bad", "cookie": expired, "enabled": True})
+        # 真正的"需要停用"= 登录态缺失/无法解密；令牌过期可自愈，不再自动停用
+        unusable = "_m_h5_tk=abc_1000000000000"
+        dlg._pool.append({"name": "bad", "cookie": unusable, "enabled": True})
         with mock.patch("xianyu_alert.gui_qt.dialogs.QMessageBox.question", return_value=QMessageBox.Yes):
             dlg._on_auto_disable()
         bad = next(e for e in dlg._pool if e["name"] == "bad")
