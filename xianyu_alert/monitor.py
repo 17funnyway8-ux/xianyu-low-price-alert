@@ -79,6 +79,10 @@ _FETCH_FAILURE_HINTS = {
 }
 
 
+#: 风控冷却期"保活跳过"日志的最小间隔（秒，v1.11.6）。
+#: 保活判断挂在 1 秒分片睡眠上，冷却期内会每秒调用一次；不降频就会刷屏。
+RISK_SKIP_LOG_INTERVAL = 300.0
+
 #: 过滤原因的中文标签（v1.10：让日志与指标可读）
 FILTER_REASON_LABELS = {
     "missing_required": "缺必含词",
@@ -688,7 +692,10 @@ class Monitor:
         if RISK_GUARD.active():
             # v1.11.3：风控冷却期内保活也静默（保活本质也是一次真实抓取，
             # 在被限流时继续打点只会延长处罚）。
-            logger.info("Cookie 保活跳过：风控冷却中（剩余 %d 秒）", int(RISK_GUARD.remaining()))
+            # v1.11.6：这条日志必须**降频**。保活判断挂在 1 秒分片睡眠上
+            # （_interruptible_sleep 每片都调 _maybe_keepalive），冷却期内会每秒
+            # 调到这里 —— 线上实测直接刷屏（86400 行/天），把真正的信号淹没。
+            self._log_risk_skip()
             return False
         cookie = self._resolve_cookie(0)
         if not cookie:
@@ -778,6 +785,15 @@ class Monitor:
         ):
             return False
         return self.keepalive_once()
+
+    def _log_risk_skip(self) -> None:
+        """风控冷却期的保活跳过日志降频（v1.11.6，每 5 分钟最多一条）。"""
+        now = time.time()
+        last = float(getattr(self, "_risk_skip_log_at", 0.0) or 0.0)
+        if now - last < RISK_SKIP_LOG_INTERVAL:
+            return
+        self._risk_skip_log_at = now
+        logger.warning("Cookie 保活跳过：风控冷却中（剩余 %d 秒）", int(RISK_GUARD.remaining()))
 
     def _sleep_between_keywords(self) -> None:
         """关键词之间的限速（v1.11.3）。
