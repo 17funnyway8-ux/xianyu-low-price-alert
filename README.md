@@ -33,11 +33,13 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 - **双形态覆盖全部场景**：Docker Web（随时随地的手机 / 远程管理）+ Windows exe / macOS .app（本机 7×24 挂机），同一套配置与数据。
 - **抓取路径主流且克制**：走闲鱼 mtop 签名接口（行业共识路线），纯 `requests` 轻量实现——镜像仅约 130MB，零外部 API 成本（对比 Playwright 重方案 1GB+）。
-- **精确过滤，少打扰**：关键词 + 独立价格阈值，支持**排除词**（回收 / 置换等）与**必含词**（16G / DDR4 等），双重去重保证同一商品**永不重复提醒**。
-- **多账号 Cookie 池**：按轮次轮换取用，过期自动停用并推送提醒；Cookie **Fernet 加密落盘**（`fernet1:`），磁盘无明文，全接口脱敏。
+- **精确过滤，少打扰**：关键词 + 独立价格阈值，支持**排除词**（回收 / 置换等）与**必含词**（16G / DDR4 等），双重去重保证同一商品**永不重复提醒**；命中记录带**卖家 / 地区 / 原价**，便于判断成色。
+- **通知可控**：支持**静默时段**（如 `23:00-07:00`，可跨午夜）、**命中聚合**（窗口内合并成一条，避免刷屏）与**渠道重试次数** —— 密集命中时不再连环打扰。
+- **多账号 Cookie 池 + 自动续期**：按轮次轮换取用，过期自动停用并推送提醒；支持**免扫码静默刷新**（持久化浏览器 profile，登录一次后自动续），并按 **v1.9 四层凭据模型**（会话 / 令牌 / 登录态 / 密文）给出分层诊断；**空闲保活**按配置间隔定期续期，长时间挂机不易掉线。
+- **凭据可轮换**：`fernet` 密钥支持一键轮换（`xianyu-alert secure rotate`）—— 生成新密钥并把配置里的密文**全部重加密**，旧密钥与配置自动备份；磁盘无明文，全接口脱敏。
 - **Web 全功能**：关键词 / 过滤词 / Cookie 池 / 6 种通知通道 / 运行监控（校验在架、售出撤销、黑名单、清空记录）/ SSE 实时日志；远程访问可开 `Bearer` token 认证。
 - **开箱即用**：镜像已发布 **Docker Hub（amd64 + arm64 多架构）**，`docker run` 两条命令起服务，无需克隆仓库；也可从源码构建。
-- **工程可靠**：**930+ 个全 mock 测试**（无外网依赖，20 秒跑完）+ CI 三平台矩阵（Linux/Windows/macOS）+ 覆盖率门槛 + 双平台自动构建发布 + 进程单实例锁（崩溃自动释放）+ SQLite 热备指引。
+- **工程可靠**：**1299 个全 mock 测试**（无外网依赖，20 秒跑完）+ CI **7 项必过检查**（Lint/类型 · 三平台单测矩阵 · Qt 界面 offscreen · Web 契约 + 前后端 e2e · 覆盖率门槛）+ 双平台自动构建发布 + 进程单实例锁（崩溃自动释放，冲突时给出可操作诊断）+ SQLite 热备指引。
 
 ---
 
@@ -236,6 +238,29 @@ Cookie 是真实抓取的**必需前提**（保存前会自动校验：过期 / 
 
 > 巡检小工具：`python -m xianyu_alert.cli cookie status --config config.yaml` 只检测单值 + Cookie 池各条健康状态（脱敏回显、不写入配置），适合脚本 / SSH 远程巡检。
 
+### 免扫码自动续期（v1.9+）
+
+登录态失效是长期挂机最常见的故障。本工具用**持久化浏览器 profile** 把「扫码」变成一次性动作：
+
+1. 在有浏览器的机器上执行一次 `python -m xianyu_alert.cli login`（会打开浏览器完成登录）；
+2. 把生成的 `browser_profile/` 目录复制到目标机的数据目录（Docker 即 `/app/data`）；
+3. 此后接口会在需要时**静默刷新** `_m_h5_tk`，无需任何人工操作；容器内无显示器也能续期。
+
+凭据状态按 **v1.9 四层模型**分层诊断（会话凭据 / 令牌层 / 登录态 / 密文可解密性），
+因此「令牌过期」这类**可自愈**的问题不会被误报成「要重新登录」。
+健康状态可直接看 `GET /healthz` 与 Web 界面的状态灯；空闲保活（`monitor.keepalive_*`）会定期触发续期。
+
+### 密钥轮换
+
+`secret.key` 泄漏或需要换机时，用一条命令换钥并重加密全部密文：
+
+```bash
+python -m xianyu_alert.cli secure status --config config.yaml   # 看密钥位置与恢复指引
+python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥并重加密（自动备份旧密钥与配置）
+```
+
+轮换会先用**旧密钥解密、失败即整体中止**，不会留下「一半新一半旧」的配置；旧密钥与配置都带时间戳备份。
+
 ---
 
 ## ⚙️ 配置要点（config.yaml）
@@ -249,14 +274,20 @@ Cookie 是真实抓取的**必需前提**（保存前会自动校验：过期 / 
 | `monitor.interval_seconds` | 600 | 监测间隔秒数，生产建议 **600~900**（过短易触发风控） |
 | `monitor.cookies` | `""` | 闲鱼 Cookie，保存时自动 Fernet 加密（`fernet1:`） |
 | `monitor.cookie_pool` | `[]` | 多账号池：`[{name, cookie, enabled}]` 按轮次轮换（池优先、单值兜底） |
+| `monitor.keepalive_enabled` | `true` | 空闲保活：长时间没有鉴权请求时定期续期，避免挂机掉线 |
+| `monitor.keepalive_interval_seconds` | 1800 | 保活间隔（秒）；低于 300 视为关闭 |
 | `fetcher.type` | `mtop` | `mtop` 真实抓取（默认）/ `mock` 离线演示 |
 | `fetcher.pages` | 1 | 多页抓取页数（翻页增加请求频率与风控风险） |
 | `storage.path` | `state/xianyu_alert.db` | SQLite 路径，目录自动创建；`:memory:` 为内存库 |
 | `notify.channels` | `[{type: console}]` | 通知通道列表，见下 |
+| `notify.quiet_hours` | `""` | 静默时段，如 `23:00-07:00`（**可跨午夜**）；期间命中先攒着，出静默期再发 |
+| `notify.aggregate_seconds` | 0 | 聚合窗口：窗口内的命中**合并成一条**通知，0 = 不聚合 |
+| `notify.retry_attempts` | 1 | 单个渠道发送失败的重试次数（1 = 不重试） |
 
 通知通道：`console`（无参数）· `serverchan`（`sendkey`）· `email`（`smtp_host/smtp_port/username/password/to`）· `telegram`（`bot_token/chat_id`）· `bark`（`url`）· `webhook`（`url`，POST JSON，适配企业微信机器人）。
 
-参数不完整的通道自动跳过并打 warning；所有通道都不可用时兜底为 `console`，保证提醒不静默丢失。完整模板见 `config.example.yaml`。
+参数不完整的通道自动跳过并打 warning；所有通道都不可用时兜底为 `console`，保证提醒不静默丢失。
+静默时段与聚合默认关闭，升级后行为与之前完全一致。完整模板见 `config.example.yaml`。
 
 ---
 
@@ -268,7 +299,19 @@ Cookie 是真实抓取的**必需前提**（保存前会自动校验：过期 / 
 python -m unittest discover -s tests
 ```
 
-934 个测试覆盖模型校验、SQLite 去重持久化、通知构造、监控主链路、Cookie 加密 / 健康检测、多页抓取、路径与 GUI 逻辑。CI（`.github/workflows/release.yml`）在打 `v*` tag 时自动构建 Windows exe + macOS .app 并发布 GitHub Release（含 Docker 镜像构建）。
+**1299 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
+
+CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
+
+| 检查 | 内容 |
+| --- | --- |
+| Lint & Type check | ruff + mypy |
+| Test (ubuntu / windows / macos) | 三平台单测矩阵，全 mock、无外网依赖 |
+| Qt GUI tests (offscreen) | Qt 界面用例 + **gui_qt 覆盖率门禁（≥60%）** |
+| Web UI contract + e2e | 前后端**机械契约**校验 + 真实 HTTP 冒烟（86 项）+ jsdom DOM 交互 e2e（62 项） |
+| Coverage gate | 整体与核心模块覆盖率门槛 |
+
+打 `v*` tag 时另有 `.github/workflows/release.yml` 自动构建 Windows exe + macOS .app 并发布 GitHub Release，`docker-publish.yml` 推送多架构镜像。
 
 ---
 
