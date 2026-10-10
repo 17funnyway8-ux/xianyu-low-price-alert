@@ -2838,6 +2838,13 @@ def main(config_path: str = "config.yaml") -> int:
 
         install_file_logging()
 
+    # v1.11.5：风控冷却跨重启恢复（否则重启会把刚被限流的账号又捅一下）
+    with contextlib.suppress(Exception):
+        from ..paths import data_dir
+        from ..risk import RISK_GUARD
+
+        RISK_GUARD.enable_persistence(data_dir() / "state" / "risk_cooldown.json")
+
     # v1.8 单实例锁（L5）：检测到已有实例 → 弹中文提示 + 返回非 0，不抢锁。
     # 同进程重复获取幂等（cli.main 已持有时会返回同一对象，不会自锁）。
     lock = acquire_instance_lock()

@@ -26,11 +26,13 @@ import signal
 import sys
 import threading
 import time
+from pathlib import Path
 
 import uvicorn
 
 from xianyu_alert import paths, secure, singleton
 from xianyu_alert.cli import setup_logging
+from xianyu_alert.risk import RISK_GUARD
 
 from . import api
 from .monitor_service import get_service
@@ -64,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # 1. 数据目录
     paths.ensure_data_dir()
+
+    # 1.5 v1.11.5：风控冷却**跨重启恢复**（否则重启会把刚被限流的账号又捅一下）
+    RISK_GUARD.enable_persistence(Path(paths.data_dir()) / "state" / "risk_cooldown.json")
 
     # 2. 密钥（无则生成；卷挂载后随卷持久化，必须与 config/db 一起备份）
     key = secure._load_or_create_key()  # noqa: SLF001 - 内部函数，入口处一次性调用
