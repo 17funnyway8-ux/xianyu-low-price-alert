@@ -352,7 +352,7 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 python -m unittest discover -s tests
 ```
 
-**1329 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
+**1333 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
 
 CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
 
