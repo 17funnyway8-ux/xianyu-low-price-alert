@@ -205,6 +205,28 @@ class TestMonitorKeepaliveProbe(unittest.TestCase):
         self.assertEqual(fetcher.calls, [("Switch", 1)])
         self.assertEqual(fetcher.pages, 3, "调用结束后必须还原 pages")
 
+    def test_risk_skip_log_is_throttled(self) -> None:
+        """v1.11.6：冷却期跳过日志每 5 分钟最多一条。
+
+        保活判断挂在 1 秒分片睡眠上 —— 不降频就会每秒打一行（线上实测刷屏）。
+        """
+        from xianyu_alert.monitor import RISK_SKIP_LOG_INTERVAL
+        from xianyu_alert.risk import RISK_GUARD
+
+        fetcher = self._Fetcher()
+        monitor = self._monitor(fetcher)
+        RISK_GUARD.reset()
+        RISK_GUARD.note_risk(600)
+        self.addCleanup(RISK_GUARD.reset)
+
+        with self.assertLogs("xianyu_alert.monitor", level="WARNING") as captured:
+            for _ in range(50):          # 模拟 50 次 1 秒分片回调
+                self.assertFalse(monitor.keepalive_once())
+        skipped = [line for line in captured.output if "风控冷却中" in line]
+        self.assertEqual(len(skipped), 1, "同一冷却窗口内只应打一条跳过日志")
+        self.assertEqual(fetcher.calls, [], "冷却期内不得发起保活请求")
+        self.assertGreaterEqual(RISK_SKIP_LOG_INTERVAL, 60)
+
 
 class TestAutostart(unittest.TestCase):
     """monitor.autostart：配置为 true 时服务启动即接上监控。"""

@@ -2,6 +2,20 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.11.6] - 2026-10-10
+
+### 修复
+- **风控冷却期的"保活跳过"日志刷屏**：保活判断挂在 1 秒分片睡眠上
+  （`_interruptible_sleep` 每片都调 `_maybe_keepalive`），冷却期内会**每秒**走到
+  `keepalive_once` 的跳过分支 —— v1.11.5 上线后线上实测每秒一行（约 8.6 万行/天），
+  既灌满日志文件、也把真正的信号淹没（SSE 实时日志基本没法看）。
+  现在降频为**每 5 分钟最多一条**（`RISK_SKIP_LOG_INTERVAL`），并提升到 WARNING。
+
+### 测试
+- `tests/test_account_safety.py` 17 → 18 例：模拟 50 次 1 秒分片回调，断言只打 1 条跳过日志
+  且冷却期内零请求。
+- 测试总数 1389 → **1390**。
+
 ## [1.11.5] - 2026-10-10
 
 ### 修复（部署 v1.11.4 时从线上日志抓到的两处）
