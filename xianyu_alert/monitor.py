@@ -166,6 +166,10 @@ class Monitor:
         self._last_cookie_check_at: float = 0.0
         #: v1.9：最近一次已鉴权请求时间（保活与轮次都会刷新）
         self._last_auth_at: float = 0.0
+        #: v1.11.7：最近一次**保活尝试**时间（无论成败都刷新）。
+        #: 为什么必须单独记：失败时 _last_auth_at 不更新，而保活判断挂在 1 秒分片睡眠上
+        #: —— 于是 keepalive_due 恒为真，变成**每秒一次请求**（线上实测：80 秒 83 次）。
+        self._last_keepalive_attempt_at: float = 0.0
         #: v1.10：配置文件路径（用于轮次边界热更；None 表示关闭热更）
         self.config_path: str | None = config_path
         #: v1.10：上次加载配置时的 mtime（热更检测）
@@ -702,6 +706,8 @@ class Monitor:
             logger.warning("Cookie 保活跳过：当前没有可用的 Cookie")
             return False
         self._apply_cookie(cookie)
+        # v1.11.7：先记"尝试时间"（成败都算），把重试间隔钉死在 keepalive_interval 上
+        self._last_keepalive_attempt_at = time.time()
         # v1.11.5：保活只为续期令牌，**只抓 1 页**（此前沿用 fetcher.pages，默认 3 页，
         # 等于每次保活都多发 2 个请求）。单线程调用，临时覆盖后 finally 还原。
         pages_backup = getattr(self.fetcher, "pages", None)
@@ -712,6 +718,14 @@ class Monitor:
             self.fetcher.fetch(keyword)
         except Exception as exc:  # noqa: BLE001 - 保活失败不影响主流程
             logger.warning("Cookie 保活请求失败：%s", exc)
+            if getattr(exc, "kind", "") == "risk":
+                # v1.11.7：保活命中风控也要**开启熔断**。此前只有监控轮次会 arm 熔断，
+                # 保活失败就裸奔重试 —— 线上于是出现每秒一次请求的风暴。
+                RISK_GUARD.note_risk(self.config.monitor.interval_seconds, str(exc))
+                logger.warning(
+                    "⛔ 保活命中风控：熔断已开启，冷却 %d 秒（保活与轮次一律静默）",
+                    int(RISK_GUARD.remaining()),
+                )
             return False
         finally:
             if pages_backup is not None:
@@ -721,12 +735,16 @@ class Monitor:
         return True
 
     def auth_snapshot(self) -> dict[str, float | int | bool]:
-        """保活线程所需的配置快照（开关 / 间隔 / 最近鉴权时间）。"""
+        """保活线程所需的配置快照（开关 / 间隔 / 最近鉴权时间）。
+
+        v1.11.7：last_auth_at 取「最近一次成功鉴权」与「最近一次保活**尝试**」中较晚者 ——
+        失败也必须算"刚试过"，否则 1 秒分片睡眠会把它变成每秒一次请求。
+        """
         monitor_cfg = self.config.monitor
         return {
             "enabled": bool(getattr(monitor_cfg, "keepalive_enabled", True)),
             "interval": int(getattr(monitor_cfg, "keepalive_interval_seconds", 1800) or 0),
-            "last_auth_at": self._last_auth_at,
+            "last_auth_at": max(self._last_auth_at, self._last_keepalive_attempt_at),
         }
 
     def _read_config_mtime(self) -> float:
