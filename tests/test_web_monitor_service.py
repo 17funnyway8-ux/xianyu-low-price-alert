@@ -597,5 +597,34 @@ def _config_from_form(form: dict, base: dict) -> dict:
     return config_from_web_form(form, base)
 
 
+class TestSpecFilterRoundTrip(unittest.TestCase):
+    """v1.11：规格语义过滤开关必须经 Web 表单保真往返。"""
+
+    def test_disabled_survives_round_trip(self) -> None:
+        data = {
+            "keywords": [
+                {
+                    "keyword": "光威 3200 64G",
+                    "max_price": 2100,
+                    "exclude_keywords": ["回收"],
+                    "required_keywords": ["光威"],
+                    "spec_filter": False,
+                }
+            ]
+        }
+        form = web_form_from_config(data)
+        self.assertIs(form["keywords"][0]["spec_filter"], False)
+        rebuilt = _config_from_form(form, data)
+        self.assertIs(rebuilt["keywords"][0]["spec_filter"], False)
+
+    def test_default_true_does_not_leak_into_config(self) -> None:
+        """缺省（true）不落盘，保存后配置里不该多出 spec_filter 字段。"""
+        data = {"keywords": [{"keyword": "Switch", "max_price": 1000}]}
+        form = web_form_from_config(data)
+        self.assertTrue(form["keywords"][0]["spec_filter"])
+        rebuilt = _config_from_form(form, data)
+        self.assertNotIn("spec_filter", rebuilt["keywords"][0])
+
+
 if __name__ == "__main__":
     unittest.main()

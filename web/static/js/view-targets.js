@@ -170,6 +170,8 @@ window.XY.ViewTargets = (function () {
         enabled: k.enabled !== false,
         exclude_keywords: (k.exclude_keywords || []).slice(),
         required_keywords: (k.required_keywords || []).slice(),
+        // v1.11：规格语义过滤开关（缺省 true；只有显式关闭才写回）
+        spec_filter: k.spec_filter !== false,
       })),
       interval_seconds: num("#intervalInput", 600),
       fetcher_type: (U.$("#fetcherSelect") || {}).value || "mtop",
