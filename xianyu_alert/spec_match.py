@@ -18,6 +18,9 @@
     3. **标题关键词堆砌**：真正的竞品在标题尾部堆一串「关联 光威 芝奇 英睿达…」
        来蹭搜索 → 用**品牌锚定**：目标品牌必须是标题中*最先出现*的品牌，
        堆砌尾巴里的品牌不算数。
+    4. **「64G」常常不是"一条 64G"**：用户写 64G 往往是想买「两根 32G」，而闲鱼会把
+       「16G×2 共 32G」「16G×4 共 64G」这类 16G 条子也搜出来（标题里确实写着 32G/64G）。
+       → 关键词里写清楚组合（`32G×2`）时，解析成「**单条 ≥32G 且 ≥2 条**」再判定。
 
 本模块是纯函数（只吃字符串、只吐判定），不依赖网络 / 存储 / GUI，便于单元测试。
 """
@@ -97,6 +100,16 @@ _PLAUSIBLE_CAPACITY_GB = frozenset({2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 1
 #: 容量 token（"64G" / "32gb"）—— 这类要求必须走容量算式，不能字面匹配：
 #: 真 64G 的标题常写「32G×2」「4根16G」而根本不出现 "64G"。
 _CAPACITY_TOKEN_RE = re.compile(r"\d+\s*(?:gb|g)", re.IGNORECASE)
+#: 标题里的中文条数写法（"两条 / 单根 / 四根"…）。闲鱼标题常只写"两根一起出"，
+#: 不写 ×2，靠这张表才能判断卖家到底出几条。
+_SPOKEN_COUNTS: dict[str, int] = {
+    "单条": 1, "单根": 1, "一条": 1, "一根": 1, "一个": 1, "单个": 1,
+    "两条": 2, "两根": 2, "俩条": 2, "俩根": 2, "一对": 2, "一双": 2,
+    "三条": 3, "三根": 3,
+    "四条": 4, "四根": 4,
+    "六条": 6, "六根": 6,
+    "八条": 8, "八根": 8,
+}
 #: 关键词里的频率 / 型号数字（3200 / 5600 / 4080…）
 _NUMERIC_TOKEN_RE = re.compile(r"\d{3,4}")
 #: 代际
@@ -119,6 +132,10 @@ class KeywordSpec:
         capacity_gb: 容量下限（GB）；0 表示关键词未指定容量。
         frequency_mhz: 频率 / 型号数字（如 3200、4080）；0 表示未指定。
         generation: 代际（DDR4 / DDR5 / DDR3）；空串表示未指定。
+        module_gb: **单条**容量下限（GB）；0 表示不约束单条容量。来自关键词里的
+            显式组合写法（32G×2 / 2×32G / 4根16G）。真实用途：用户搜「64G」其实是
+            想买**两根 32G**，而闲鱼会把「16G×2 共32G」这类 16G 条子也搜出来。
+        module_count: 条数下限；0 表示不约束（标题没写条数时视为不确定、放过）。
 
     说明：**普通中文 / 英文词不在这里强制**（如「笔记本」「国行」）—— 那种
     "必须出现某个词"的需求交给既有的 `required_keywords`，避免把所有搜索词
@@ -130,11 +147,20 @@ class KeywordSpec:
     capacity_gb: int = 0
     frequency_mhz: int = 0
     generation: str = ""
+    module_gb: int = 0
+    module_count: int = 0
 
     @property
     def empty(self) -> bool:
         """是否没有任何规格约束（此时匹配恒真）。"""
-        return not (self.brand or self.capacity_gb or self.frequency_mhz or self.generation)
+        return not (
+            self.brand
+            or self.capacity_gb
+            or self.frequency_mhz
+            or self.generation
+            or self.module_gb
+            or self.module_count
+        )
 
     def summary(self) -> str:
         """人类可读摘要，用于日志 / GUI / 文档示例。"""
@@ -147,6 +173,9 @@ class KeywordSpec:
             parts.append(f"{self.frequency_mhz}MHz")
         if self.capacity_gb:
             parts.append(f"容量 ≥{self.capacity_gb}G")
+        if self.module_gb:
+            suffix = f"×{self.module_count}" if self.module_count > 1 else ""
+            parts.append(f"单条 ≥{self.module_gb}G{suffix}")
         return " · ".join(parts) if parts else "（无规格约束）"
 
 
@@ -267,6 +296,72 @@ def parse_title_capacity(title: str) -> tuple[int, list[str]]:
     return max(value for value, _ in values), [evidence for _, evidence in values]
 
 
+@dataclass(frozen=True)
+class ModuleInfo:
+    """标题里读出来的「内存条模块」信息。
+
+    Attributes:
+        max_module_gb: 单条容量（GB）；0 表示标题没说清单条容量。
+        stated_count: 标题写明的条数；None 表示**没写**（不确定，判定时放过）。
+        evidence: 用于解释判定的原始片段。
+    """
+
+    max_module_gb: int = 0
+    stated_count: int | None = None
+    evidence: tuple[str, ...] = ()
+
+
+def parse_title_modules(title: str) -> ModuleInfo:
+    """从标题解析「单条容量」与「条数」。
+
+    规则（真实数据打磨出来的）：
+        - 出现显式组合写法（32G×2 / 2×32G / 4根16G）时，**以组合里的单条容量为准**，
+          标题里另外出现的裸容量多半是**总容量**（"光威天策 DDR4 3200 32G（16G×2）"
+          的单条是 16G，不是 32G）；
+        - 没有组合写法时，取裸容量里最大的那个当单条容量（"单根16G…四根共64G" → 16G）；
+        - 「共64G」这类**总容量**恒不计入单条容量；
+        - 条数优先取组合里的倍数，其次认中文写法（两条 / 单根 / 四根…），都没有则 None。
+
+    Args:
+        title: 商品标题。
+
+    Returns:
+        ModuleInfo。
+    """
+    repaired = repair_spaced_numbers(title)
+    total_spans = [match.span() for match in _CAPACITY_TOTAL_RE.finditer(repaired)]
+
+    pairs: list[tuple[int, int, str]] = []
+    for match in _CAPACITY_MUL_AFTER_RE.finditer(repaired):
+        pairs.append((int(match.group(1)), int(match.group(2)), match.group(0).strip()))
+    for match in _CAPACITY_MUL_BEFORE_RE.finditer(repaired):
+        pairs.append((int(match.group(2)), int(match.group(1)), match.group(0).strip()))
+    for match in _CAPACITY_MUL_CN_RE.finditer(repaired):
+        pairs.append((int(match.group(2)), int(match.group(1)), match.group(0).strip()))
+
+    sizes = [size for size, _, _ in pairs]
+    evidence = [text for _, _, text in pairs]
+    if not pairs:
+        # 没有组合写法 → 裸容量里取最大（排除「共XG」这类总量）
+        for match in _CAPACITY_RE.finditer(repaired):
+            if any(start <= match.start() < end for start, end in total_spans):
+                continue
+            sizes.append(int(match.group(1)))
+            evidence.append(match.group(0).strip())
+
+    counts = [count for _, count, _ in pairs]
+    if not counts:
+        # 中文条数词也要容忍被插入的空格（真实数据："四 根共64G"）
+        compact = re.sub(r"\s+", "", repaired)
+        counts = [value for word, value in _SPOKEN_COUNTS.items() if word in compact]
+
+    return ModuleInfo(
+        max_module_gb=max(sizes, default=0),
+        stated_count=max(counts) if counts else None,
+        evidence=tuple(evidence[:4]),
+    )
+
+
 def _detect_brand(text: str) -> str:
     """返回文本中**最先出现**的品牌规范名（未识别到返回空串）。"""
     lowered = str(text or "").lower()
@@ -301,14 +396,24 @@ def build_spec(keyword: str) -> KeywordSpec:
     brand = _detect_brand(repaired)
 
     capacity = 0
+    module_gb = 0
+    module_count = 0
+
+    def _note_module(size: int, count: int) -> None:
+        """记录「单条容量 × 条数」写法（32G×2 / 2×32G / 4根16G）。"""
+        nonlocal capacity, module_gb, module_count
+        if not (1 < count <= _MAX_MODULE_COUNT and size <= _MAX_MODULE_GB):
+            return
+        capacity = max(capacity, size * count)
+        if size > module_gb:
+            module_gb, module_count = size, count
+
     for match in _CAPACITY_MUL_AFTER_RE.finditer(repaired):
-        size, count = int(match.group(1)), int(match.group(2))
-        if 1 < count <= _MAX_MODULE_COUNT and size <= _MAX_MODULE_GB:
-            capacity = max(capacity, size * count)
+        _note_module(int(match.group(1)), int(match.group(2)))
+    for match in _CAPACITY_MUL_BEFORE_RE.finditer(repaired):
+        _note_module(int(match.group(2)), int(match.group(1)))
     for match in _CAPACITY_MUL_CN_RE.finditer(repaired):
-        size, count = int(match.group(2)), int(match.group(1))
-        if 1 < count <= _MAX_MODULE_COUNT and size <= _MAX_MODULE_GB:
-            capacity = max(capacity, size * count)
+        _note_module(int(match.group(2)), int(match.group(1)))
     for match in _CAPACITY_RE.finditer(repaired):
         size = int(match.group(1))
         if size <= _MAX_MODULE_GB:
@@ -327,6 +432,8 @@ def build_spec(keyword: str) -> KeywordSpec:
         capacity_gb=capacity,
         frequency_mhz=frequency,
         generation=generation,
+        module_gb=module_gb,
+        module_count=module_count,
     )
 
 
@@ -376,6 +483,22 @@ def match_spec(title: str, spec: KeywordSpec) -> SpecDecision:
             shown = "、".join(evidence[:3]) if evidence else "无容量描述"
             return SpecDecision(
                 False, "spec_capacity", f"总容量 {total}G < 要求的 {spec.capacity_gb}G（证据：{shown}）"
+            )
+
+    if spec.module_gb:
+        info = parse_title_modules(text)
+        if info.max_module_gb < spec.module_gb:
+            shown = "、".join(info.evidence) if info.evidence else "无单条容量描述"
+            return SpecDecision(
+                False,
+                "spec_module",
+                f"单条容量 {info.max_module_gb}G < 要求的 {spec.module_gb}G（证据：{shown}）",
+            )
+        if spec.module_count and info.stated_count is not None and info.stated_count < spec.module_count:
+            return SpecDecision(
+                False,
+                "spec_module_count",
+                f"标题写明 {info.stated_count} 条 < 要求的 {spec.module_count} 条",
             )
 
     return SpecDecision(True, "ok")

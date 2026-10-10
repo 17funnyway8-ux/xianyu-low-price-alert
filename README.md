@@ -47,7 +47,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.0` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.1` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -61,7 +61,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.11.0
+  17funnyway8/xianyu-alert:1.11.1
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -70,7 +70,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.11.0   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.11.1   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -333,9 +333,22 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 | 代际 | 关键词写了 `DDR4` 就必须出现 | —— |
 | 频率 / 型号 | 关键词里的 3~4 位数字（`3200`、`4080`）必须出现，且**容忍标题里被插入的空格** | 闲鱼反爬会把 `3200` 写成 `32 00`，字面 `in` 会漏判 |
 | 容量 | 算**总容量**后比下限：`8G×2`=16G、`32G×2`=64G、`4根16G`=64G、`共64G`=64G | 真 64G 的标题常常**根本不写 `64G`**，字面必含会误杀 |
+| **单条容量 / 条数** | 关键词里写组合（`32G×2`）时，要求标题体现**单条 ≥32G 且 ≥2 条**；`共64G` 这类总量不算单条，「64G 单条 / 出一根」也不算 | 很多人写 `64G` 其实是想买**两根 32G**，而闲鱼会把「16G×2 共32G」「16G×4 共64G」一起搜出来 —— 标题里确实写着 32G/64G |
 
 效果（线上真实快照）：关键词 `光威 3200 64G` 的 71 条命中里，旧版 71 条全提醒；
 新版只提醒真正满足规格的 **5 条** —— 其中包括「光威 ... 32GB×2」这种**不写 64G** 的真 64G。
+
+**「64G」= 两根 32G 怎么写**：把组合写进关键词即可，闲鱼的模糊检索对多出来的
+`32G×2` 不敏感（实测召回不降）：
+
+```yaml
+- keyword: "光威 3200 64G 32G×2"   # 搜索用整串；规格解析出「单条 ≥32G、≥2 条、总量 ≥64G」
+  max_price: 2100
+```
+
+实测三个搜索串各抓满 3 页，能召回的**真·两根 32G 光威 DDR4-3200** 商品：
+`光威 3200 64G` = 11 条、`光威 3200 32G×2` = 8 条、`光威 3200 32G` = 7 条 ——
+所以推荐保留 `64G` 作为搜索词，再用 `32G×2` 补上规格。
 
 - 规格直接来自关键词，**无需额外配置**；只想按「必含词 / 排除词」字面过滤，就在该关键词下写
   `spec_filter: false`（或顶层 `spec_filter: false` 全局关闭）。
@@ -352,7 +365,7 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 python -m unittest discover -s tests
 ```
 
-**1333 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
+**1345 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
 
 CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
 

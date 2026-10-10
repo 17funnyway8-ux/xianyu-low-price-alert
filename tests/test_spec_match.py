@@ -28,6 +28,7 @@ from xianyu_alert.spec_match import (  # noqa: E402
     is_capacity_token,
     match_spec,
     parse_title_capacity,
+    parse_title_modules,
     repair_spaced_numbers,
     token_present,
 )
@@ -141,6 +142,104 @@ class TestSpecParsing(unittest.TestCase):
         self.assertTrue(is_capacity_token("32gb"))
         self.assertFalse(is_capacity_token("DDR4"))
         self.assertFalse(is_capacity_token("3200"))
+
+
+class TestModuleParsing(unittest.TestCase):
+    """单条容量 / 条数解析：真实用途是「64G 其实想买两根 32G」。"""
+
+    def test_explicit_pairs(self) -> None:
+        cases = {
+            "光威天策 DDR4 3200 32G×2 套条": (32, 2),
+            "光威GLOWY DDR4 3200 32Gx2内存条": (32, 2),
+            "光威 DDR4 3200 16G*2 套装": (16, 2),
+            "光威 DDR4 3200 8Gx4 四根都是套条": (8, 4),
+            "光威 GLOWAY 2×32G 套条": (32, 2),
+        }
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                info = parse_title_modules(title)
+                self.assertEqual((info.max_module_gb, info.stated_count), expected)
+
+    def test_pairs_beat_bare_total(self) -> None:
+        """「32G（16G×2）」的单条是 16G —— 裸容量 32G 是**总容量**，不能当单条。"""
+        info = parse_title_modules("光威天策 DDR4 3200 32G（16G×2）星空黑内存条")
+        self.assertEqual(info.max_module_gb, 16)
+        self.assertEqual(info.stated_count, 2)
+
+    def test_total_marker_is_not_a_module(self) -> None:
+        """「单根16G，四根共64G」：64G 是总量，单条是 16G、条数是 4。"""
+        info = parse_title_modules("自用光威天策DDR4 16G 3200mhz，单根16G，四 根共64G")
+        self.assertEqual(info.max_module_gb, 16)
+        self.assertEqual(info.stated_count, 4)
+
+    def test_spoken_counts(self) -> None:
+        self.assertEqual(parse_title_modules("光威 DDR4 3200 32G 内存条 两条一起出").stated_count, 2)
+        self.assertEqual(parse_title_modules("光威 DDR4 3200 32G 内存条 单条出").stated_count, 1)
+        self.assertIsNone(parse_title_modules("光威 DDR4 3200 32G 内存条").stated_count)
+
+    def test_no_capacity_at_all(self) -> None:
+        info = parse_title_modules("一些光威内存，需要的联系")
+        self.assertEqual(info.max_module_gb, 0)
+        self.assertIsNone(info.stated_count)
+
+
+class TestTwoBy32Intent(unittest.TestCase):
+    """用户真实意图：「我写 64G 是想买两根 32G」。
+
+    语料是线上真实标题（含被误报的 16G×2 / 16G×4 与竞品堆砌）。
+    """
+
+    def setUp(self) -> None:
+        self.spec = build_spec("光威 3200 32G×2")
+
+    def test_spec_parses_module_structure(self) -> None:
+        self.assertEqual(self.spec.module_gb, 32)
+        self.assertEqual(self.spec.module_count, 2)
+        self.assertEqual(self.spec.capacity_gb, 64)
+        self.assertIn("单条 ≥32G×2", self.spec.summary())
+
+    def test_true_two_by_32_passes(self) -> None:
+        titles = [
+            "光威天策 GLOWY DDR4 3200 32GB 64GB 内存条 镁光颗粒 单条32G 两根32Gx2 64G 2100打包",
+            "刚买的就卖，俩条价出光威GLOWAY DDR4 3200 3 2GB×2笔记本内存条",
+            "出自用光威战将笔记本内存条64G（32G*2）32G+DDR 4+3200MT/s",
+            "光威GLOWY DDR4 3200 。32Gx2内存条，共两条，可组双通道64G。",
+            "99新光威64G ddr4-3200 32G*2内存，顺丰包邮",
+            "光威DDR4 64G（32Gx2）套装，型号DDR4 320 0 U-DIMM，白色马甲",
+            "光威天策DDR4 3200 32G×2（64g）内存条，白色马甲台式机条",
+        ]
+        for title in titles:
+            with self.subTest(title=title[:24]):
+                self.assertTrue(match_spec(title, self.spec).passed)
+
+    def test_sixteen_gig_kits_rejected(self) -> None:
+        """这正是用户抱怨的那类：搜 32G/64G 时冒出来的「2 根 16G」。"""
+        cases = {
+            "光威天策 DDR4 3200 32G（16G×2）星空黑内存条": "spec_capacity",
+            "光威 GLOWY DDR4 3200 16G×2 白色马甲内存套装32G": "spec_capacity",
+            "自用光威天策DDR4 16G 3200mhz，单根16G，四 根共64G": "spec_module",
+        }
+        for title, reason in cases.items():
+            with self.subTest(title=title[:24]):
+                decision = match_spec(title, self.spec)
+                self.assertFalse(decision.passed)
+                self.assertEqual(decision.reason, reason)
+
+    def test_single_stick_rejected_by_count(self) -> None:
+        """标题广告 64G、正文「出一根」→ 条数不足。"""
+        decision = match_spec("光威64G DDR4 3200 32G内存条套装 白色马甲 出一根出一根", self.spec)
+        self.assertFalse(decision.passed)
+        self.assertEqual(decision.reason, "spec_module_count")
+
+    def test_competitor_still_rejected(self) -> None:
+        decision = match_spec(
+            "金士顿2666内存8gx2 金士顿2666内存16g 关联光威 芝奇 英睿达 海盗船", self.spec
+        )
+        self.assertEqual(decision.reason, "spec_brand")
+
+    def test_plain_capacity_keyword_has_no_module_constraint(self) -> None:
+        """关键词没写组合（只有 64G）时不额外约束单条 —— 行为与 v1.11.0 一致。"""
+        self.assertEqual(build_spec("光威 3200 64G").module_gb, 0)
 
 
 class TestSpecMatching(unittest.TestCase):
@@ -318,6 +417,12 @@ class TestRealCorpusRegression(unittest.TestCase):
         positives = [title for title, expected in CORPUS if expected]
         self.assertGreaterEqual(len(positives), 3)
         self.assertEqual(len(CORPUS), 71)
+
+    def test_corpus_under_module_spec_keeps_only_true_two_by_32(self) -> None:
+        """同一批线上语料加上「两根 32G」规格：16G×4 与「出一根」都被挡掉。"""
+        spec = build_spec("光威 3200 32G×2")
+        passed = [title for title, expected in CORPUS if expected and match_spec(title, spec).passed]
+        self.assertEqual(len(passed), 3, "只应留下真正是 2×32G 的那 3 条")
 
     def test_naive_literal_matching_would_miss_the_true_64g(self) -> None:
         """反证：字面必含 "64G" 会漏掉「32G×2」这种真 64G（本模块存在的理由）。"""
