@@ -42,7 +42,7 @@ def make_mock_config_dict(storage_path: str = "state/xianyu_alert.db") -> dict:
     """构造 mock 离线抓取配置字典（与 config.poc.yaml 对齐）。"""
     return {
         "keywords": [{"keyword": "Switch", "max_price": 1000}],
-        "monitor": {"interval_seconds": 60, "user_agent": "", "cookies": ""},
+        "monitor": {"interval_seconds": 600, "user_agent": "", "cookies": ""},
         "fetcher": {"type": "mock", "mock_products_per_round": 5, "mock_fail_rounds": [], "pages": 1},
         "storage": {"path": storage_path},
         "notify": {"channels": [{"type": "console"}]},
@@ -62,7 +62,7 @@ def make_form(**overrides) -> dict:
                 "required_keywords": [],
             }
         ],
-        "interval_seconds": 60,
+        "interval_seconds": 600,
         "fetcher_type": "mock",
         "pages": 1,
         "user_agent": "",
@@ -222,10 +222,10 @@ class MonitorServiceTestCase(unittest.TestCase):
 
     def test_apply_config_when_not_running(self) -> None:
         """未运行时保存配置：restarted=False，配置生效。"""
-        result = self.service.apply_config(make_form(interval_seconds=90))
+        result = self.service.apply_config(make_form(interval_seconds=300))
         self.assertTrue(result["ok"])
         self.assertFalse(result["restarted"])
-        self.assertEqual(self.service.config.monitor.interval_seconds, 90)
+        self.assertEqual(self.service.config.monitor.interval_seconds, 300)
 
     def test_apply_config_preserves_cookie_from_base(self) -> None:
         """表单保存路径不得清空/明文写 Cookie（保留 base 中的字段）。"""

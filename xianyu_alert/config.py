@@ -45,6 +45,12 @@ DEFAULT_PRESET_EXCLUDE_KEYWORDS: list[str] = ["回收", "置换", "收购", "高
 #: 配置结构版本（v1.10.1）。字段语义变化时递增，并在 migrate_config 里补迁移。
 CONFIG_VERSION = 1
 
+#: 监测间隔安全下限（秒，v1.11.3）。
+#: 低于该值时**不会报错**（避免旧配置起不来），而是收敛到该值并打警告 ——
+#: 秒级轮询会让请求量放大到十万量级，是账号被风控的首要人为原因。
+#: 前端（Web / Tk / Qt）也按同一常量做输入校验，禁止保存更小的值。
+MIN_INTERVAL_SECONDS = 120
+
 
 class ConfigError(ValueError):
     """配置文件缺失、格式错误或校验不通过时抛出。"""
@@ -501,6 +507,18 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
         raise ConfigError(f"`monitor.interval_seconds` 必须是整数：{interval_raw!r}") from exc
     if interval <= 0:
         raise ConfigError(f"`monitor.interval_seconds` 必须大于 0，当前 {interval}")
+    if interval < MIN_INTERVAL_SECONDS:
+        # v1.11.3：间隔下限。此前只要求 >0，界面上把 600 改成 1 也是"合法"的
+        # —— 每秒钟 3 个请求 = 26 万次/天，足以把账号打死。
+        # 这里**不报错**（避免旧配置无法启动），而是收敛到安全下限并显式告警。
+        logger.warning(
+            "`monitor.interval_seconds`=%d 过短（每 %.1f 秒一轮会显著提高风控概率），"
+            "已按安全下限 %d 秒执行；请到界面/配置里改回来",
+            interval,
+            interval,
+            MIN_INTERVAL_SECONDS,
+        )
+        interval = MIN_INTERVAL_SECONDS
 
     user_agent = str(data.get("user_agent") or DEFAULT_USER_AGENT).strip()
     cookies_raw = str(data.get("cookies") or "").strip()
