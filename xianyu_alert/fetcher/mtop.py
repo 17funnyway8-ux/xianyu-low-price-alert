@@ -19,6 +19,7 @@ from ..parsing import (  # noqa: F401 - 再导出：既有调用点与测试无�
     parse_price,
     parse_publish_time,
 )
+from ..reqmeter import REQ_METER
 from .base import (
     Fetcher,
     FetchError,
@@ -424,7 +425,10 @@ class MtopFetcher(Fetcher):
         request_timeout = self.timeout if timeout is None else float(timeout)
 
         last_error: BaseException | None = None
+        # v1.11.4：每一次真实出网都记账（含重试与保活），供状态页展示请求节奏
+        request_kind = "detail" if api_name == MTOP_DETAIL_API_NAME else "search"
         for attempt in range(1, self.retries + 1):
+            REQ_METER.note(request_kind)
             try:
                 response = self.session.post(
                     api_url,
