@@ -10,6 +10,7 @@ from typing import Any
 
 from xianyu_alert import gui, secure  # noqa: F401  # gui 防御性导入 tkinter，容器可 import
 from xianyu_alert.fetcher import build_fetcher
+from xianyu_alert.risk import RISK_GUARD
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,14 @@ class KeepaliveMixin:
         """
         from xianyu_alert.cookie import resolve_cookie_for_round
 
+        if RISK_GUARD.active():
+            # v1.11.3：风控冷却期内保活静默。保活本质也是一次真实抓取，
+            # 被限流时继续打点只会延长处罚（线上实测过 129 条 RGV587）。
+            logger.warning(
+                "保活跳过：风控冷却中（剩余 %d 秒），冷却结束后自动恢复",
+                int(RISK_GUARD.remaining()),
+            )
+            return False
         config = self.config
         cookie = resolve_cookie_for_round(config.monitor, 0)
         if not cookie:
