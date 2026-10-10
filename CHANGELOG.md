@@ -2,6 +2,23 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.11.5] - 2026-10-10
+
+### 修复（部署 v1.11.4 时从线上日志抓到的两处）
+- **monitor 侧保活仍在打停用词 + 抓满 3 页**：v1.11.2 只修了 Web 侧的保活探针，
+  `Monitor.keepalive_once`（监控线程每轮调用的那个）依旧用 `keywords[0]` 且沿用
+  `fetcher.pages`。线上日志实证：启用词是「光威 3200 64G 32G×2」，保活却对着**已停用**的
+  「4080S 32G」抓了 3 页。现在同样「优先启用词 + 只抓 1 页」（调用后还原 pages）。
+- **风控冷却重启即清零**：`RISK_GUARD` 原本只在内存里，容器一重启冷却就没了 ——
+  而 `monitor.autostart` 会立刻再打一次，等于把刚被限流的账号又捅一下。
+  现在冷却状态落盘到 `state/risk_cooldown.json`（Web / Tk / Qt 三端启动时启用），
+  重启后自动恢复剩余冷却并打日志。
+
+### 测试
+- `tests/test_account_safety.py` 13 → 17 例：新增冷却落盘恢复、坏文件容错、
+  reset 清盘，以及 monitor 保活「优先启用词 + 只抓 1 页 + 还原 pages」。
+- 测试总数 1385 → **1389**。
+
 ## [1.11.4] - 2026-10-10
 
 ### 新增

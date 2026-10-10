@@ -678,10 +678,13 @@ class Monitor:
         Returns:
             True 表示本次请求成功（令牌已续期）。
         """
-        keywords = [str(getattr(r, "keyword", "")) for r in self.config.keywords]
-        keywords = [k for k in keywords if k]
-        if not keywords:
+        rules = [r for r in self.config.keywords if str(getattr(r, "keyword", "") or "")]
+        if not rules:
             return False
+        # v1.11.5：优先挑**启用中**的关键词（此前固定 keywords[0]，若它被用户停用，
+        # 保活就等于对着"明确不想抓"的商品猛抓 —— 线上日志实测到 4080S 32G 被反复探测）。
+        enabled = [r for r in rules if bool(getattr(r, "enabled", True))]
+        keyword = str(getattr((enabled or rules)[0], "keyword", "") or "")
         if RISK_GUARD.active():
             # v1.11.3：风控冷却期内保活也静默（保活本质也是一次真实抓取，
             # 在被限流时继续打点只会延长处罚）。
@@ -692,13 +695,22 @@ class Monitor:
             logger.warning("Cookie 保活跳过：当前没有可用的 Cookie")
             return False
         self._apply_cookie(cookie)
+        # v1.11.5：保活只为续期令牌，**只抓 1 页**（此前沿用 fetcher.pages，默认 3 页，
+        # 等于每次保活都多发 2 个请求）。单线程调用，临时覆盖后 finally 还原。
+        pages_backup = getattr(self.fetcher, "pages", None)
         try:
-            self.fetcher.fetch(keywords[0])
+            if pages_backup is not None:
+                # 只有多页抓取器（mtop / web）才有 pages 属性
+                self.fetcher.pages = 1  # type: ignore[attr-defined]
+            self.fetcher.fetch(keyword)
         except Exception as exc:  # noqa: BLE001 - 保活失败不影响主流程
             logger.warning("Cookie 保活请求失败：%s", exc)
             return False
+        finally:
+            if pages_backup is not None:
+                self.fetcher.pages = pages_backup  # type: ignore[attr-defined]
         self._last_auth_at = time.time()
-        logger.info("Cookie 保活成功（%s），令牌已滑动续期", keywords[0])
+        logger.info("Cookie 保活成功（%s），令牌已滑动续期", keyword)
         return True
 
     def auth_snapshot(self) -> dict[str, float | int | bool]:
