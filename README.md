@@ -47,7 +47,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.10.13` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.10.14` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -61,7 +61,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.10.13
+  17funnyway8/xianyu-alert:1.10.14
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -70,7 +70,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.10.13   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.10.14   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -187,6 +187,37 @@ curl -s http://127.0.0.1:8899/healthz | python3 -c "import json,sys; d=json.load
 docker pull 17funnyway8/xianyu-alert@sha256:<digest>
 # digest 可在 Docker Hub 的 tags 页面，或 docker inspect 的输出中找到
 ```
+
+### 升级到新版本（日常）
+
+**compose 里的镜像 tag 是钉死的**（便于复现部署），因此 `docker compose up -d` **不会**把服务升到新版本 ——
+这也是「明明发了新版本，NAS 上却还是旧版」的常见原因。升级必须显式改 tag：
+
+```bash
+cd <你的部署目录>
+
+# 1) 备份数据（config.yaml + secret.key + state/ 都要，三件套缺一不可）
+cp -a data data.bak-$(date +%Y%m%d-%H%M)
+
+# 2) 把 tag 改成目标版本（版本号从 Releases 页复制，这里用变量避免写死）
+TARGET=<最新版本>
+#   macOS 用： sed -i '' -e "s|17funnyway8/xianyu-alert:.*|17funnyway8/xianyu-alert:$TARGET|" docker-compose.yml
+sed -i "s|17funnyway8/xianyu-alert:.*|17funnyway8/xianyu-alert:$TARGET|" docker-compose.yml
+grep image: docker-compose.yml          # 确认改对了
+
+# 3) 拉新镜像并**强制重建**容器
+docker compose pull && docker compose up -d --force-recreate
+
+# 4) 确认版本（/healthz 会回显当前版本与数据目录）
+curl -s http://127.0.0.1:8899/healthz | python3 -m json.tool | head -6
+```
+
+> **为什么要 `--force-recreate`**：只改 tag 时 `up -d` 可能判定「配置未变」而复用旧容器，
+> 强制重建最稳妥（镜像 tag 变了本来就该换容器）。
+
+> **升级不需要手改配置**：新版本会给旧配置补齐默认值（如 `notify.quiet_hours`）、
+> 给数据库**幂等补列**；`state/` 与 `secret.key` 原样保留，历史提醒记录不丢。
+> 升级后 `/healthz` 的 `deployment` 字段可直接看到识别到的部署形态与数据目录。
 
 ---
 
