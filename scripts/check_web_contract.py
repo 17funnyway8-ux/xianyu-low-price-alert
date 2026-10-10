@@ -365,11 +365,22 @@ def main() -> int:
 
     # 提交键 ⊆ 返回键 + 关键词结构
     kw_keys = set(probe["form"]["keywordKeys"])
-    expect_kw = {"keyword", "max_price", "enabled", "exclude_keywords", "required_keywords"}
+    # v1.11：spec_filter = 规格语义过滤开关（缺省 true，仅显式关闭时写盘）
+    expect_kw = {
+        "keyword",
+        "max_price",
+        "enabled",
+        "exclude_keywords",
+        "required_keywords",
+        "spec_filter",
+    }
     if kw_keys != expect_kw:
         note("P0", f"关键词表单结构不一致：前端 {sorted(kw_keys)} vs 后端期望 {sorted(expect_kw)}")
     else:
-        note("OK", "关键词表单项（keyword/max_price/enabled/exclude_keywords/required_keywords）一致")
+        note(
+            "OK",
+            "关键词表单项（keyword/max_price/enabled/exclude_keywords/required_keywords/spec_filter）一致",
+        )
 
     report["form"] = {
         "front_keys": sorted(front_keys),
