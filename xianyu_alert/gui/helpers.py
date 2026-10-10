@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - 无 tkinter 环境
     TK_AVAILABLE = False
 from ..config import (
     DEFAULT_PRESET_EXCLUDE_KEYWORDS,
+    MIN_INTERVAL_SECONDS,
     VALID_FETCHER_TYPES,
     serialize_cookie_pool,
 )
@@ -366,7 +367,7 @@ def validate_interval(text: Any) -> int:
         正整数秒数。
 
     Raises:
-        ValueError: 为空 / 非整数 / 非正数。
+        ValueError: 为空 / 非整数 / 非正数 / 低于安全下限（v1.11.3）。
     """
     raw = str(text or "").strip()
     if not raw:
@@ -377,6 +378,13 @@ def validate_interval(text: Any) -> int:
         raise ValueError(f"监测间隔必须是整数秒，当前输入：{raw}") from exc
     if seconds <= 0:
         raise ValueError(f"监测间隔必须大于 0，当前输入：{raw}")
+    if seconds < MIN_INTERVAL_SECONDS:
+        # v1.11.3：界面上不允许保存低于安全下限的值 —— 秒级轮询会把请求量
+        # 放大到十万量级，是账号被风控的首要人为原因。
+        raise ValueError(
+            f"监测间隔不能小于 {MIN_INTERVAL_SECONDS} 秒（当前 {seconds} 秒）："
+            "频率过高会显著提高账号被风控的概率"
+        )
     return seconds
 
 

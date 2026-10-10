@@ -272,6 +272,22 @@ class TestQaMtopMultiPage(unittest.TestCase):
         )
 
     def test_page2_failure_keeps_page1(self) -> None:
+        """第 2 页**非风控**失败 → 页级容错，保留第 1 页结果。"""
+        session = self.FakeSession([
+            self._ok([self._item("1001")]),
+            self.FakeResp({"ret": ["FAIL_SYS_SESSION_EXPIRED::Session过期"]}),
+        ])
+        fetcher = MtopFetcher(
+            cookies=VALID_COOKIE, pages=2, retries=1,
+            session=session, sleep_func=lambda _s: None,
+        )
+        with self.assertLogs("xianyu_alert.fetcher", level="WARNING"):
+            products = fetcher.fetch("Switch")
+        self.assertEqual([p.product_id for p in products], ["1001"])
+        self.assertEqual(len(session.calls), 2)
+
+    def test_page2_risk_aborts_whole_round(self) -> None:
+        """v1.11.3：命中风控 → 不再抓剩余页、不返回部分结果，改抛 risk 让上层熔断。"""
         session = self.FakeSession([
             self._ok([self._item("1001")]),
             self.FakeResp({"ret": ["RGV587_ERROR::SM::被挤爆"]}),
@@ -281,8 +297,9 @@ class TestQaMtopMultiPage(unittest.TestCase):
             session=session, sleep_func=lambda _s: None,
         )
         with self.assertLogs("xianyu_alert.fetcher", level="WARNING"):
-            products = fetcher.fetch("Switch")
-        self.assertEqual([p.product_id for p in products], ["1001"])
+            with self.assertRaises(FetchError) as ctx:
+                fetcher.fetch("Switch")
+        self.assertEqual(getattr(ctx.exception, "kind", ""), "risk")
         self.assertEqual(len(session.calls), 2)
 
     def test_pages2_calls_post_twice(self) -> None:

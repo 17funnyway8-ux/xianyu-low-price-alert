@@ -23,6 +23,7 @@ from xianyu_alert.config import (
 from xianyu_alert.fetcher import build_fetcher
 from xianyu_alert.monitor import Monitor
 from xianyu_alert.notifier import build_notifiers
+from xianyu_alert.risk import RISK_GUARD
 from xianyu_alert.storage import Storage
 
 from .constants import (
@@ -332,6 +333,8 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
                 "keyword_count": len(self._config.keywords) if self._config else 0,
                 "storage_path": self._config.storage.path if self._config else "",
                 "detail_only": bool(self._detail_only),
+                # v1.11.3：风控熔断状态（active/remaining_seconds/hits/last_detail）
+                "risk": RISK_GUARD.snapshot(),
             }
 
     def shutdown(self) -> None:

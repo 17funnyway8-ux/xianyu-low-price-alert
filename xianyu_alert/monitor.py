@@ -31,6 +31,7 @@ from .filters import (
 from .models import Product
 from .notifier import Notifier
 from .notify_policy import NotificationBuffer, NotificationPolicy
+from .risk import RISK_GUARD
 from .spec_match import build_spec, match_spec
 from .storage import Storage
 
@@ -112,6 +113,10 @@ class RoundResult:
     duration_ms: float = 0.0
     #: 被过滤商品的原因分布（v1.10）：missing_required / excluded -> 条数
     filtered_reasons: dict[str, int] = field(default_factory=dict)
+    #: 本轮是否因**风控冷却**被整体跳过（v1.11.3）
+    risk_skipped: bool = False
+    #: 跳过的剩余冷却秒数（v1.11.3，仅 risk_skipped=True 时有意义）
+    risk_remaining_seconds: int = 0
 
 
 class Monitor:
@@ -131,6 +136,7 @@ class Monitor:
         storage: Storage,
         notifiers: list[Notifier],
         config_path: str | None = None,
+        sleep_func: Callable[[float], None] | None = None,
     ) -> None:
         """初始化监测器。
 
@@ -139,9 +145,12 @@ class Monitor:
             fetcher: 抓取器实例。
             storage: 存储实例。
             notifiers: 通知器列表（可为空列表，此时只记录不通知）。
+            config_path: 配置文件路径（热更用）。
+            sleep_func: 关键词间限速用的 sleep 实现（测试注入 no-op，v1.11.3）。
         """
         self.config: Config = config
         self.fetcher: Fetcher = fetcher
+        self._sleep: Callable[[float], None] = sleep_func or time.sleep
         self.storage: Storage = storage
         self.notifiers: list[Notifier] = list(notifiers or [])
         self._stop: bool = False
@@ -374,6 +383,21 @@ class Monitor:
         """
         ts = round_ts or datetime.now()
         started_at = time.monotonic()
+        # v1.11.3：风控熔断 —— 冷却期内本轮**一个请求都不发**，直接跳过。
+        # 这是"风控时它自己知道安静"的最后一道闸门（保活 / 校验在架也看同一状态）。
+        if RISK_GUARD.active():
+            remaining = int(RISK_GUARD.remaining())
+            logger.warning(
+                "⛔ 风控冷却中（剩余 %d 秒），本轮不发任何请求，直接跳过；"
+                "冷却结束后会自动恢复",
+                remaining,
+            )
+            result = RoundResult(round_no=self._round_no + 1)
+            result.risk_skipped = True
+            result.risk_remaining_seconds = remaining
+            result.duration_ms = 0.0
+            self.last_result = result
+            return 0
         # 轮换：本轮使用池中的第 self._round_no 条 Cookie（池为空则用单值）
         cookie = self._resolve_cookie(self._round_no)
         self._apply_cookie(cookie)
@@ -385,13 +409,23 @@ class Monitor:
 
         result = RoundResult()
 
+        processed_any = False
         for rule in self.config.keywords:
             if not rule.enabled:
                 # v3.7：停用的关键词不抓取、不计数、不打命中日志，
                 # 只打一行「已停用跳过」便于用户核对当前生效范围。
                 logger.info("⏸ 关键词「%s」已停用，本轮跳过（如需恢复请在配置中启用）", rule.keyword)
                 continue
+            if processed_any:
+                # v1.11.3：关键词之间也限速。此前只有"页间 sleep"，多个关键词
+                # 是背靠背请求 —— 关键词一多就是把请求堆在一起。
+                self._sleep_between_keywords()
             self._process_keyword(rule, ts, result, log_item_details=log_item_details)
+            processed_any = True
+            if RISK_GUARD.active():
+                # 命中风控后**不再碰下一个关键词**（冷却期由 run_once 开头统一拦截）
+                logger.warning("⛔ 关键词「%s」命中风控，本轮不再抓取剩余关键词", rule.keyword)
+                break
 
         # 轮末刷新：静默时段结束或聚合窗口到期后，把攒下的命中发出去（v1.10.2）
         flushed = self.flush_notifications(ts)
@@ -483,6 +517,14 @@ class Monitor:
             hint = _FETCH_FAILURE_HINTS.get(getattr(exc, "kind", ""), "")
             logger.warning("关键词「%s」抓取失败%s：%s", keyword, hint, exc)
             result.failed_keywords.append(keyword)
+            if getattr(exc, "kind", "") == "risk":
+                until = RISK_GUARD.note_risk(self.config.monitor.interval_seconds, str(exc))
+                logger.warning(
+                    "⛔ 观测到闲鱼风控：熔断已开启，冷却 %d 秒（到 %s）；"
+                    "冷却期内监控 / 保活 / 校验在架一律静默",
+                    int(RISK_GUARD.remaining()),
+                    datetime.fromtimestamp(until).strftime("%H:%M:%S"),
+                )
             return
         except Exception as exc:  # noqa: BLE001 - 任何抓取异常都不应中断其它关键词
             logger.warning("关键词「%s」抓取时发生未预期错误：%s", keyword, exc)
@@ -495,6 +537,8 @@ class Monitor:
                 product.keyword = keyword
 
         result.fetched += len(products)
+        # 抓取成功 → 连续风控计数清零（v1.11.3）
+        RISK_GUARD.note_success()
 
         # 1.5) 关键词过滤（v3.1）：必含词缺失 / 排除词命中 → 跳过。
         #      过滤是业务规则，发生在 fetcher 返回后、阈值检查前；
@@ -638,6 +682,11 @@ class Monitor:
         keywords = [k for k in keywords if k]
         if not keywords:
             return False
+        if RISK_GUARD.active():
+            # v1.11.3：风控冷却期内保活也静默（保活本质也是一次真实抓取，
+            # 在被限流时继续打点只会延长处罚）。
+            logger.info("Cookie 保活跳过：风控冷却中（剩余 %d 秒）", int(RISK_GUARD.remaining()))
+            return False
         cookie = self._resolve_cookie(0)
         if not cookie:
             logger.warning("Cookie 保活跳过：当前没有可用的 Cookie")
@@ -718,6 +767,25 @@ class Monitor:
             return False
         return self.keepalive_once()
 
+    def _sleep_between_keywords(self) -> None:
+        """关键词之间的限速（v1.11.3）。
+
+        页间限速（fetcher.page_sleep）只覆盖「同一个关键词的多页」；多个关键词之间
+        原本是背靠背请求 —— 关键词一多，请求就被堆在同一瞬间。这里补上同一档限速，
+        并把单次等待限幅到 5 秒，避免拖长 monitor 线程的停止响应时间。
+
+        注意：只有真正打闲鱼的抓取器（mtop / web）才需要限速 —— mock / stub 是
+        离线假数据，限速只是白白拖慢测试与演示。
+        """
+        if str(getattr(self.fetcher, "name", "")) not in ("mtop", "web"):
+            return
+        pause = float(getattr(self.config.fetcher, "page_sleep", 0.0) or 0.0)
+        pause = min(max(pause, 0.0), 5.0)
+        if pause <= 0:
+            return
+        logger.debug("关键词间限速：%.1fs", pause)
+        self._sleep(pause)
+
     def _interruptible_sleep(self, seconds: float, stop_event: Any | None = None) -> bool:
         """分片睡眠：期间响应停止信号（含外部 stop_event）并做保活检查。
 
@@ -735,7 +803,8 @@ class Monitor:
                 if stop_event.wait(slice_seconds):
                     break
             else:
-                time.sleep(slice_seconds)
+                # v1.11.3：走可注入的 sleep 实现，便于测试免等待（与关键词间限速同一入口）
+                self._sleep(slice_seconds)
             remaining -= slice_seconds
             self._maybe_keepalive()
         return not self._stop and not _stopped(stop_event)

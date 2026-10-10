@@ -236,6 +236,8 @@ def healthz(service: MonitorService = Depends(get_service)) -> Any:  # noqa: ANN
         "last_round_at": st["last_round_at"],
         "round_count": st["round_count"],
         "notified_count": st["notified_count"],
+        # v1.11.3：风控熔断状态 —— 一条 curl 就能看出"它是否在自我禁足"
+        "risk": st.get("risk", {}),
     }
 
 

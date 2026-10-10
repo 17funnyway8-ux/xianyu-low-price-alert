@@ -300,8 +300,15 @@ class TestMonitor(unittest.TestCase):
 
     def test_run_forever_with_max_rounds(self) -> None:
         """run_forever 应在 max_rounds 后退出且不 sleep 最后一轮。"""
+        # interval 会被收敛到安全下限 120s；注入 no-op sleep 让用例免等待
         config = make_config(interval=1)
-        monitor = Monitor(config, MockFetcher(products_per_round=5), self.storage, [self.recorder])
+        monitor = Monitor(
+            config,
+            MockFetcher(products_per_round=5),
+            self.storage,
+            [self.recorder],
+            sleep_func=lambda _seconds: None,
+        )
         total = monitor.run_forever(max_rounds=2)
         self.assertGreaterEqual(total, 1)
         self.assertEqual(self.storage.count_notified(KEYWORD), total)

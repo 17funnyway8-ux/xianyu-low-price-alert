@@ -47,7 +47,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.2` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.3` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -61,7 +61,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.11.2
+  17funnyway8/xianyu-alert:1.11.3
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -70,7 +70,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.11.2   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.11.3   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -389,7 +389,13 @@ CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
 
 ## ⚠️ 注意事项
 
-- **风控**：闲鱼是强反爬站点，接口带签名且需要登录态。请合理控制频率（间隔 ≥ 300 秒）、优先使用多 Cookie 池轮换；页面结构 / 签名随时可能变动，遇到 `RGV587` 或 `FAIL_SYS_*` 错误说明请求过频或 Cookie 失效，稍后再试 / 刷新 Cookie 即可。程序对抓取异常做了优雅降级（单轮失败不中断、不崩溃）。
+- **风控**：闲鱼是强反爬站点，接口带签名且需要登录态。请合理控制频率（**间隔硬下限 120 秒**，生产建议 600~900 秒）、优先使用多 Cookie 池轮换；页面结构 / 签名随时可能变动，遇到 `RGV587` 或 `FAIL_SYS_*` 错误说明请求过频或 Cookie 失效。
+- **v1.11.3 起的四道账号保护**（都是实测踩坑后的补丁）：
+  1. **间隔下限**：`monitor.interval_seconds` 低于 120 会被收敛到 120 并告警，Web / GUI 直接禁止保存更小的值 —— 秒级轮询会把请求量放大到十万量级；
+  2. **风控熔断**：一旦命中 `RGV587`，本轮**立即停止抓取剩余页与剩余关键词**，并进入冷却（首次 `间隔 × 3`，连续命中翻倍，上限 6 小时）；冷却期内**监控 / 保活 / 校验在架一律静默**；
+  3. **保活退避**：保活探测固定只抓 1 页、只挑启用中的关键词，失败后至少安静 `max(间隔, 300s)`；
+  4. **关键词间限速**：多个关键词之间按 `fetcher.page_sleep` 间隔，不再背靠背请求。
+  熔断状态可在「通知与系统」页看到，也可一条命令查看：`curl -s localhost:8899/healthz`（`risk.active` / `risk.remaining_seconds`）。
 - **备份三件套**：`config.yaml`（配置 + 密文 Cookie）+ `secret.key`（Fernet 密钥，**缺失则存量 Cookie 无法解密**）+ `state/xianyu_alert.db`（提醒记录）必须**一起备份**。SQLite 热备示例见 `docker-compose.yml` 注释 / [docs/v1.8_Docker化增量研判与执行方案.md](docs/dev/v1.8_Docker化增量研判与执行方案.md)。
 - **免责声明**：本工具仅供个人学习与自用监测。请遵守目标站点 robots 协议与服务条款，合理控制请求频率，勿用于商业爬取或对站点造成压力；因使用本工具产生的账号风险由使用者自行承担。
 
@@ -401,7 +407,8 @@ CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
 
 | 项 | 说明 |
 | --- | --- |
-| **默认无 Web 认证** | compose 默认只绑 `127.0.0.1`，且不启用认证。**一旦把端口暴露到公网，必须设置 `XY_WEB_TOKEN`**，否则任何人都能读写你的配置与 Cookie |
+| **默认无 Web 认证** | compose 默认只绑 `127.0.0.1`，且不启用认证。**一旦把端口暴露到公网（或端口绑定为 0.0.0.0），必须设置 `XY_WEB_TOKEN`**，否则同一网段内任何人都能改你的关键词 / 间隔、随时触发抓取 —— 这是把请求量放大、进而导致账号被风控的最短路径 |
+| **控制面即油门** | 无认证时，能把 `interval_seconds` 改成 1、能加任意多关键词；v1.11.3 已给间隔加硬下限，但**访问面仍应由你自己收口**（token 或仅绑内网） |
 | **Cookie 加密落盘** | 落盘为 Fernet 密文（`fernet1:`），接口返回统一脱敏；但 `secret.key` 与 `config.yaml` 同卷，**密钥泄漏等同 Cookie 泄漏** |
 | **备份三件套** | `config.yaml` + `secret.key` + `state/` 必须一起备份 / 迁移，缺一不可 |
 | **容器运行身份** | 镜像以非 root（uid 1000）运行；挂载宿主目录前请先 `chown -R 1000:1000 ./xianyu-data` |
