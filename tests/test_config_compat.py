@@ -360,7 +360,7 @@ class TestVersion(unittest.TestCase):
 
         # v1.9.9 更新项：fetcher.py 拆为 fetcher/ 包
         # （由 1.9.8 升级到 1.9.9，故旧断言同步更新）
-        self.assertEqual(__version__, "1.11.1")
+        self.assertEqual(__version__, "1.11.2")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG

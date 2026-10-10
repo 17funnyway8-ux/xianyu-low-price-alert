@@ -16,15 +16,142 @@ import os
 import sys
 import time
 import unittest
+from typing import Any
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from web.monitor_service import keepalive as keepalive_service  # noqa: E402
+from xianyu_alert import cookie as cookie_module  # noqa: E402
+from xianyu_alert.config import config_from_dict  # noqa: E402
 from xianyu_alert.keepalive import (  # noqa: E402
     DEFAULT_KEEPALIVE_INTERVAL,
     MIN_KEEPALIVE_INTERVAL,
     CookieKeeper,
     keepalive_due,
 )
+
+
+class TestFailureCooldown(unittest.TestCase):
+    """v1.11.2：保活失败后必须冷却，否则 30s 巡检会变成对闲鱼的重试风暴。
+
+    线上实证：被 RGV587 风控后，探针每 30s 重试一次、每次抓 3 页 —— 越撞越紧。
+    """
+
+    def _keeper(self, outcomes: list[bool]) -> CookieKeeper:
+        queue = list(outcomes)
+
+        def probe() -> bool:
+            return queue.pop(0) if queue else False
+
+        settings = {
+            "enabled": True,
+            "interval": MIN_KEEPALIVE_INTERVAL,
+            "last_auth_at": 0.0,  # 从未鉴权 → 第一次即到期
+        }
+        return CookieKeeper(probe=probe, settings=lambda: dict(settings), tick=0.01)
+
+    def test_failure_blocks_next_tick(self) -> None:
+        keeper = self._keeper([False, True])
+        self.assertTrue(keeper.tick_once())  # 第一次尝试 → 失败
+        self.assertEqual(keeper.failure_count, 1)
+        # 冷却期内（间隔 300s）不应再打一次
+        self.assertFalse(keeper.tick_once())
+        self.assertEqual(keeper.failure_count, 1)
+        self.assertEqual(keeper.success_count, 0)
+
+    def test_success_does_not_arm_cooldown(self) -> None:
+        keeper = self._keeper([True])
+        self.assertTrue(keeper.tick_once())
+        self.assertEqual(keeper.success_count, 1)
+        self.assertEqual(keeper._cooldown_until, 0.0)
+
+    def test_cooldown_expires_after_interval(self) -> None:
+        keeper = self._keeper([False, True])
+        keeper.tick_once()
+        keeper._cooldown_until = time.time() - 1  # 冷却结束
+        self.assertTrue(keeper.tick_once())
+        self.assertEqual(keeper.success_count, 1)
+
+
+class TestProbeTarget(unittest.TestCase):
+    """v1.11.2：保活只挑启用中的关键词、且只抓 1 页。"""
+
+    def _probe(self, keyword: str, fetcher_spy: dict) -> Any:
+        from web.monitor_service.keepalive import KeepaliveMixin
+
+        config = config_from_dict(
+            {
+                "keywords": [
+                    {"keyword": "停用的词", "max_price": 100, "enabled": False},
+                    {"keyword": keyword, "max_price": 200, "enabled": True},
+                ],
+                "notify": {"channels": [{"type": "console"}]},
+            }
+        )
+
+        class _Service(KeepaliveMixin):
+            pass
+
+        service = _Service()
+        service.config = config
+        service._last_auth_at = 0.0
+        service._persist_refreshed_token = lambda fetcher: None
+
+        class _Fetcher:
+            def set_cookies(self, cookie: str) -> None:
+                fetcher_spy["cookie"] = cookie
+
+            def fetch(self, kw: str) -> list:
+                fetcher_spy["keyword"] = kw
+                return []
+
+        def _build(cfg: Any) -> Any:
+            fetcher_spy["pages"] = cfg.fetcher.pages
+            return _Fetcher()
+
+        with mock.patch.object(keepalive_service, "build_fetcher", _build), mock.patch.object(
+            cookie_module, "resolve_cookie_for_round", lambda monitor, index: "cookie2=x"
+        ):
+            return service.keepalive_probe()
+
+    def test_prefers_enabled_keyword_and_probes_single_page(self) -> None:
+        spy: dict = {}
+        self.assertTrue(self._probe("启用的词", spy))
+        self.assertEqual(spy["keyword"], "启用的词")
+        self.assertEqual(spy["pages"], 1)
+
+    def test_falls_back_when_all_disabled(self) -> None:
+        """全部停用时仍要保活（否则令牌过期），但不能崩。"""
+        from web.monitor_service.keepalive import KeepaliveMixin
+
+        config = config_from_dict(
+            {
+                "keywords": [{"keyword": "只有停用的", "max_price": 100, "enabled": False}],
+                "notify": {"channels": [{"type": "console"}]},
+            }
+        )
+
+        class _Service(KeepaliveMixin):
+            pass
+
+        service = _Service()
+        service.config = config
+        service._last_auth_at = 0.0
+        service._persist_refreshed_token = lambda fetcher: None
+        seen: dict = {}
+
+        class _Fetcher:
+            def set_cookies(self, cookie: str) -> None:
+                pass
+
+            def fetch(self, kw: str) -> list:
+                seen["keyword"] = kw
+                return []
+
+        with mock.patch.object(keepalive_service, "build_fetcher", lambda cfg: _Fetcher()),                 mock.patch.object(cookie_module, "resolve_cookie_for_round", lambda m, i: "c=1"):
+            self.assertTrue(service.keepalive_probe())
+        self.assertEqual(seen["keyword"], "只有停用的")
 
 
 class TestKeepaliveDue(unittest.TestCase):
