@@ -182,11 +182,21 @@ class TestShelfCheckThrottle(unittest.TestCase):
         self.assertLessEqual(SOLD_CHECK_MAX_ITEMS, 20)
 
     def test_qt_worker_matches_gui_constants(self) -> None:
-        """Qt 版此前是**另一份复制**，必须与 gui.constants 同步。"""
-        from xianyu_alert.gui_qt import workers
+        """Qt 版此前是**另一份硬编码副本**，必须与 gui.constants 同步。
 
-        self.assertEqual(workers.SOLD_CHECK_INTERVAL, SOLD_CHECK_INTERVAL)
-        self.assertEqual(workers.SOLD_CHECK_MAX_ITEMS, SOLD_CHECK_MAX_ITEMS)
+        这里**解析源码文本**而不是 import：主测试矩阵（ubuntu / macos / windows）
+        没有装 PySide6，import 会在 CI 直接炸（本地因为装了 Qt 反而看不出来）。
+        """
+        import re
+        from pathlib import Path
+
+        import xianyu_alert.gui_qt as gui_qt_pkg
+
+        source = (Path(gui_qt_pkg.__file__).parent / "workers.py").read_text(encoding="utf-8")
+        interval = float(re.search(r"^SOLD_CHECK_INTERVAL = ([0-9.]+)", source, re.M).group(1))
+        items = int(re.search(r"^SOLD_CHECK_MAX_ITEMS = ([0-9]+)", source, re.M).group(1))
+        self.assertEqual(interval, SOLD_CHECK_INTERVAL)
+        self.assertEqual(items, SOLD_CHECK_MAX_ITEMS)
 
 
 if __name__ == "__main__":
