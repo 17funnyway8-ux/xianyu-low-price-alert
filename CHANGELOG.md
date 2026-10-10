@@ -2,6 +2,24 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.14] - 2026-10-10
+
+### 文档
+- **README 新增「升级到新版本（日常）」**：四步升级命令（备份 → 改 tag → `pull` + `up -d --force-recreate` → 用 `/healthz` 确认版本），
+  并解释两个关键点：
+  - compose 的镜像 tag 是**钉死**的，所以 `docker compose up -d` **不会**自动升级 ——
+    这正是「发了新版本但机器上还是旧版」的根因；
+  - 只改 tag 必须配 `--force-recreate`，否则 `up -d` 可能判定"配置未变"而复用旧容器。
+- 同时说明升级**不需要手改配置**：新版本会补齐默认值、给数据库幂等补列，
+  `state/` 与 `secret.key` 原样保留。
+
+### 说明（现场处置记录）
+- 本次据此把一台 NAS 上的部署从 **1.9.4 升到 1.10.13**：备份数据 → 改 compose tag →
+  `docker compose pull && up -d --force-recreate` → `/healthz` 回显 1.10.13 且 healthy；
+  83 条提醒记录 / 59 条已提醒完整保留、日志 0 ERROR。
+- 该实例日志里还观察到 v1.9+ 的令牌自愈在生产环境生效：
+  `FAIL_SYS_TOKEN_EXOIRED` → 自动用新 token 重算签名并重试成功。
+
 ## [1.10.13] - 2026-10-10
 
 ### 文档
