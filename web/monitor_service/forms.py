@@ -44,6 +44,8 @@ def web_form_from_config(data: dict[str, Any]) -> dict[str, Any]:
                 ),
                 "exclude_keywords": list(filters.get("exclude_keywords") or []),
                 "required_keywords": list(filters.get("required_keywords") or []),
+                # v1.11：规格语义过滤开关（缺省 true），前端原样回传
+                "spec_filter": filters.get("spec_filter", True) is not False,
             }
         )
 
@@ -108,7 +110,7 @@ def config_from_web_form(form: dict[str, Any], base: dict[str, Any]) -> dict[str
     """
     keywords_raw = form.get("keywords") or []
     keywords: list[tuple[str, float]] = []
-    keyword_filters: dict[str, dict[str, list[str]]] = {}
+    keyword_filters: dict[str, dict[str, Any]] = {}
     keyword_enabled: dict[str, bool] = {}
     for item in keywords_raw:
         if not isinstance(item, dict):
@@ -126,6 +128,8 @@ def config_from_web_form(form: dict[str, Any], base: dict[str, Any]) -> dict[str
         keyword_filters[kw] = {
             "exclude_keywords": [str(x) for x in (item.get("exclude_keywords") or [])],
             "required_keywords": [str(x) for x in (item.get("required_keywords") or [])],
+            # v1.11：规格语义过滤开关（表单未带该字段时按缺省 true）
+            "spec_filter": item.get("spec_filter", True) is not False,
         }
         keyword_enabled[kw] = gui.parse_enabled_flag(item.get("enabled"), default=True)
 
