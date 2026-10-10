@@ -121,6 +121,91 @@ class TestRequestMeter(unittest.TestCase):
         reqmeter_mod.REQ_METER.reset()
 
 
+class TestRiskCooldownPersistence(unittest.TestCase):
+    """v1.11.5：风控冷却必须**跨重启恢复** —— 否则重启等于把刚被限流的账号再捅一下。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp(prefix="xy-risk-")
+        self.path = os.path.join(self.tmp, "risk_cooldown.json")
+
+    def test_cooldown_survives_restart(self) -> None:
+        from xianyu_alert.risk import RiskGuard
+
+        first = RiskGuard()
+        first.enable_persistence(self.path)
+        first.note_risk(interval_seconds=600, detail="RGV587")
+        self.assertTrue(os.path.isfile(self.path))
+
+        # 模拟进程重启：新的 Guard 从同一份文件恢复
+        second = RiskGuard()
+        second.enable_persistence(self.path)
+        self.assertTrue(second.active())
+        self.assertGreater(second.remaining(), 0)
+        self.assertGreaterEqual(second.hits, 1)
+        self.assertIn("RGV587", str(second.snapshot()["last_detail"]))
+
+    def test_missing_or_broken_file_is_ignored(self) -> None:
+        from xianyu_alert.risk import RiskGuard
+
+        guard = RiskGuard()
+        guard.enable_persistence(self.path)  # 文件不存在
+        self.assertFalse(guard.active())
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write("{ 这不是 JSON")
+        broken = RiskGuard()
+        broken.enable_persistence(self.path)
+        self.assertFalse(broken.active())
+
+    def test_reset_clears_persisted_state(self) -> None:
+        from xianyu_alert.risk import RiskGuard
+
+        guard = RiskGuard()
+        guard.enable_persistence(self.path)
+        guard.note_risk(600)
+        guard.reset()
+        revived = RiskGuard()
+        revived.enable_persistence(self.path)
+        self.assertFalse(revived.active())
+
+
+class TestMonitorKeepaliveProbe(unittest.TestCase):
+    """v1.11.5：monitor 侧保活也要"优先启用词 + 只抓 1 页"。"""
+
+    class _Fetcher:
+        """记录每次 fetch 的关键词与当时的 pages。"""
+
+        name = "mtop"
+
+        def __init__(self) -> None:
+            self.pages = 3
+            self.calls: list[tuple[str, int]] = []
+
+        def fetch(self, keyword: str) -> list:
+            self.calls.append((keyword, self.pages))
+            return []
+
+        def set_cookies(self, cookie: str) -> None:
+            pass
+
+    def _monitor(self, fetcher: object):
+        from xianyu_alert.monitor import Monitor
+        from xianyu_alert.storage import Storage
+
+        storage = Storage(":memory:")
+        self.addCleanup(storage.close)
+        config = config_from_dict(make_config())
+        config.keywords[0].enabled = False          # 第一个词停用
+        config.monitor.cookies = "cookie2=x; _m_h5_tk=abc_1700000000000"
+        return Monitor(config, fetcher, storage, [])
+
+    def test_prefers_enabled_keyword_and_fetches_one_page(self) -> None:
+        fetcher = self._Fetcher()
+        monitor = self._monitor(fetcher)
+        self.assertTrue(monitor.keepalive_once())
+        self.assertEqual(fetcher.calls, [("Switch", 1)])
+        self.assertEqual(fetcher.pages, 3, "调用结束后必须还原 pages")
+
+
 class TestAutostart(unittest.TestCase):
     """monitor.autostart：配置为 true 时服务启动即接上监控。"""
 
