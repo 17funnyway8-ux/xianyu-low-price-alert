@@ -83,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     # 跑在临时实例上，而 /api/cookie/status 读的是单例 → 状态误报"保活未运行"。
     service = get_service()
     service.start_keepalive()   # v1.9.1：空闲保活，避免长时间空闲后令牌过期
+    # v1.11.4：配置里打开 monitor.autostart 时，服务启动即自动开始监控
+    # （重启后不再"静默不监控"；默认关闭，保持存量行为）
+    service.autostart_if_configured()
     logger.info("Web 服务启动：数据目录 %s，配置 %s", paths.data_dir(), service.config_path)
 
     # 6. 信号处理：SIGTERM / SIGINT → 优雅退出

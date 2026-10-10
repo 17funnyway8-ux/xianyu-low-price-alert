@@ -268,6 +268,17 @@ window.XY.ViewSystem = (function () {
     return "冷却中（剩 " + minutes + " 分钟 · 命中 " + (risk.hits || 0) + " 次）";
   }
 
+  /** v1.11.4：请求节奏文案（近 10 分钟 / 近 1 小时 / 累计）。 */
+  function requestText(stt) {
+    const req = stt.requests || {};
+    if (req.total === undefined) return "—";
+    return (
+      "近10分钟 " + (req.last_10min || 0) +
+      " · 近1小时 " + (req.last_hour || 0) +
+      " · 累计 " + (req.total || 0)
+    );
+  }
+
   function renderSysInfo() {
     const box = U.$("#sysInfo");
     if (!box) return;
@@ -286,6 +297,7 @@ window.XY.ViewSystem = (function () {
       ["最近轮次", stt.last_round_at || "—"],
       ["监控状态", stt.running ? "运行中" : "未运行"],
       ["风控熔断", riskText(stt)],
+      ["请求节奏", requestText(stt)],
     ];
     box.innerHTML = rows
       .map(([k, v]) => '<div class="kv"><span>' + esc(k) + "</span><span>" + esc(v) + "</span></div>")
