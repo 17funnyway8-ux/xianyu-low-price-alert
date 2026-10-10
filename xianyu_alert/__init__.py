@@ -12,11 +12,12 @@
     storage   : SQLite 去重与状态持久化
     notifier  : 多通道通知（控制台 / Server酱 / 邮件 / Telegram / Bark / Webhook）
     monitor   : 核心监测循环
+    spec_match: 关键词规格语义匹配（品牌 / 代际 / 频率 / 容量，v1.11）
     shortcut  : 桌面快捷方式创建（安全转义）
     cli       : 命令行入口
 """
 
 from __future__ import annotations
 
-__version__ = "1.10.14"
+__version__ = "1.11.0"
 __all__ = ["__version__"]

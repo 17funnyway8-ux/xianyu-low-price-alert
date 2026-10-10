@@ -38,7 +38,7 @@ from ..cookie import (
     cookie_prefers_rotation,
 )
 from ..fetcher import MTOP_TOKEN_COOKIE
-from ..filters import extract_required_keywords, normalize_keywords
+from ..filters import normalize_keywords, required_keywords_default
 from ..models import Product
 from ..storage import Storage
 from .constants import (
@@ -468,6 +468,8 @@ def config_to_form(data: Any) -> dict[str, Any]:
     keyword_enabled: dict[str, bool] = {}
     #: 关键词 -> {exclude_keywords, required_keywords}（v3.1 过滤规则）
     keyword_filters: dict[str, dict[str, list[str]]] = {}
+    #: v1.11：规格语义过滤的全局默认（单条关键词可用 spec_filter 覆盖）
+    global_spec_filter = parse_enabled_flag(root.get("spec_filter"), default=True)
     raw_keywords = root.get("keywords")
     if isinstance(raw_keywords, list):
         for item in raw_keywords:
@@ -488,10 +490,11 @@ def config_to_form(data: Any) -> dict[str, Any]:
             # 过滤规则：排除词原样读取；必含词未显式配置时按主关键词自动提取，
             # 与 config 解析保持一致（保证界面展示的就是实际生效的规则）。
             exclude_keywords = _parse_str_list(item.get("exclude_keywords"))
+            spec_on = parse_enabled_flag(item.get("spec_filter"), default=global_spec_filter)
             if "required_keywords" in item:
                 required_keywords = _parse_str_list(item.get("required_keywords"))
             else:
-                required_keywords = extract_required_keywords(kw)
+                required_keywords = required_keywords_default(kw, spec_on)
             keyword_filters[kw] = {
                 "exclude_keywords": exclude_keywords,
                 "required_keywords": required_keywords,

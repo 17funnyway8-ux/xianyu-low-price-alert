@@ -7,8 +7,13 @@
     2. 排除词命中 → 跳过（exclude_keywords 非空时，商品文本命中任一即跳过）。
 二者可叠加：任一条件不满足即跳过。
 
-匹配方式：商品文本（标题 + 关键词 + 可选的 seller/location 等字段）统一
-lowercase 后做子串匹配，大小写不敏感（`16G` / `16g` 等价；中文不受影响）。
+匹配方式：商品文本（标题 + 可选的 seller/location 等字段）做 **token 匹配**，
+大小写不敏感（`16G` / `16g` 等价；中文不受影响），且**容忍 token 内部被插入
+的空白** —— 闲鱼标题里会出现 `DDR4  32 00`，字面子串会漏判（v1.11 修复）。
+
+规格过滤（v1.11）：除「必含词 / 排除词」外，还可用 `spec_match.build_spec`
+把搜索词本身当规格（品牌 / 代际 / 频率 / 容量），解决「搜 64G 却提醒 8G、
+搜光威却混进金士顿」的问题。规格过滤是**可选**的：`spec=None` 时行为与旧版完全一致。
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .models import Product
+from .spec_match import KeywordSpec, is_capacity_token, match_spec, token_present
 
 #: 从主关键词提取「数字 + 字母」组合片段的匹配模式。
 #:   [A-Za-z]*\d+[A-Za-z]*  -> DDR4 / 16G / 8GB / 3200 / RTX3060 / usb3
@@ -76,6 +82,27 @@ def extract_required_keywords(keyword: str) -> list[str]:
     return tokens
 
 
+def required_keywords_default(keyword: str, spec_filter: bool) -> list[str]:
+    """未显式配置 required_keywords 时的默认必含词（v1.11）。
+
+    - `spec_filter=False` → 沿用旧行为：提取全部「数字 + 可选单位」片段；
+    - `spec_filter=True`  → 剔除**容量 token**（如 "64G"）。容量改由容量算式判定，
+      因为真 64G 的标题常写「32G×2」「4根16G」而**不出现字面 "64G"**，留着会误杀。
+      其余数字片段（"3200" / "4080S"）照旧要求出现 —— 它们没有等价写法。
+
+    Args:
+        keyword: 主搜索关键词。
+        spec_filter: 该关键词是否启用规格语义过滤。
+
+    Returns:
+        默认必含词列表（已去重保序）。
+    """
+    tokens = extract_required_keywords(keyword)
+    if not spec_filter:
+        return tokens
+    return [token for token in tokens if not is_capacity_token(token)]
+
+
 def product_search_text(product: Product) -> str:
     """拼接商品的搜索文本并统一小写。
 
@@ -112,8 +139,7 @@ def matches_required_keywords(text: str, required_keywords: Iterable[str]) -> bo
     Returns:
         True 表示全部命中（或必含词为空）。
     """
-    lowered = str(text or "").lower()
-    return all(token.lower() in lowered for token in normalize_keywords(required_keywords))
+    return all(token_present(text, token) for token in normalize_keywords(required_keywords))
 
 
 def hits_exclude_keywords(text: str, exclude_keywords: Iterable[str]) -> bool:
@@ -126,8 +152,7 @@ def hits_exclude_keywords(text: str, exclude_keywords: Iterable[str]) -> bool:
     Returns:
         True 表示命中任一排除词（应跳过该商品）。
     """
-    lowered = str(text or "").lower()
-    return any(token.lower() in lowered for token in normalize_keywords(exclude_keywords))
+    return any(token_present(text, token) for token in normalize_keywords(exclude_keywords))
 
 
 @dataclass(frozen=True)
@@ -140,7 +165,8 @@ class FilterDecision:
     """
 
     passed: bool
-    #: ok / missing_required / excluded
+    #: ok / missing_required / excluded / spec_brand / spec_generation /
+    #: spec_frequency / spec_capacity / spec_word
     reason: str
     #: 人类可读说明（含命中的具体词）
     detail: str = ""
@@ -154,6 +180,7 @@ def filter_decision(
     product: Product,
     required_keywords: Iterable[str],
     exclude_keywords: Iterable[str],
+    spec: KeywordSpec | None = None,
 ) -> FilterDecision:
     """给出过滤判定**及其原因**（v1.10）。
 
@@ -164,6 +191,8 @@ def filter_decision(
         product: 商品对象。
         required_keywords: 必含词列表（空 = 不强制）。
         exclude_keywords: 排除词列表（空 = 不排除）。
+        spec: 规格要求（v1.11；None 或空规格 = 不做规格过滤）。由
+            `spec_match.build_spec` 从关键词解析，判定品牌锚定 / 代际 / 频率 / 容量。
 
     Returns:
         FilterDecision；passed=True 时 reason 为 ok。
@@ -171,13 +200,16 @@ def filter_decision(
     text = product_search_text(product)
     # 判定一律复用既有 helpers —— 它们定义了"大小写不敏感 + 归一化"的语义；
     # 自己再写一遍 str(k) in text 会悄悄丢掉这些语义（本轮真的踩过）。
-    lowered = str(text or "").lower()
     if not matches_required_keywords(text, required_keywords):
-        missing = [tk for tk in normalize_keywords(required_keywords) if tk not in lowered]
+        missing = [tk for tk in normalize_keywords(required_keywords) if not token_present(text, tk)]
         return FilterDecision(False, "missing_required", "缺少必含词：" + "、".join(missing[:3]))
     if hits_exclude_keywords(text, exclude_keywords):
-        hit = [tk for tk in normalize_keywords(exclude_keywords) if tk in lowered]
+        hit = [tk for tk in normalize_keywords(exclude_keywords) if token_present(text, tk)]
         return FilterDecision(False, "excluded", "命中排除词：" + "、".join(hit[:3]))
+    if spec is not None and not spec.empty:
+        decision = match_spec(text, spec)
+        if not decision.passed:
+            return FilterDecision(False, decision.reason, decision.detail)
     return FilterDecision(True, "ok")
 
 
@@ -185,6 +217,7 @@ def product_passes_filter(
     product: Product,
     required_keywords: Iterable[str],
     exclude_keywords: Iterable[str],
+    spec: KeywordSpec | None = None,
 ) -> bool:
     """综合过滤：必含词缺失或排除词命中任一 → False（应跳过）。
 
@@ -192,8 +225,9 @@ def product_passes_filter(
         product: 商品对象。
         required_keywords: 必含词列表（空 = 不强制）。
         exclude_keywords: 排除词列表（空 = 不排除）。
+        spec: 规格要求（v1.11；None = 不做规格过滤）。
 
     Returns:
         True 表示通过过滤（应继续参与价格阈值检查）。
     """
-    return filter_decision(product, required_keywords, exclude_keywords).passed
+    return filter_decision(product, required_keywords, exclude_keywords, spec).passed
