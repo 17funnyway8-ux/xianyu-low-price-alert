@@ -10,6 +10,7 @@ from typing import Any
 
 from xianyu_alert import gui, secure  # noqa: F401  # gui 防御性导入 tkinter，容器可 import
 from xianyu_alert.fetcher import build_fetcher
+from xianyu_alert.risk import RISK_GUARD
 
 from .constants import (
     CHECK_SHELF_ITEM_TIMEOUT,
@@ -61,6 +62,14 @@ class ShelfCheckMixin:
             return {"ok": False, "message": "监测正在运行中，请先停止后再校验在架状态", "code": 409}
         if fetcher_type != "mtop":
             return {"ok": False, "message": "校验在架仅支持 mtop 抓取方式", "code": 400}
+        if RISK_GUARD.active():
+            # v1.11.3：风控冷却期拒绝执行 —— 校验在架是"最多 30 次连发"的批量请求，
+            # 在被限流时执行只会加重处罚。
+            return {
+                "ok": False,
+                "message": f"风控冷却中（剩余 {int(RISK_GUARD.remaining())} 秒），已暂停一切闲鱼请求，请稍后再试",
+                "code": 409,
+            }
 
         if len(ids) > SOLD_CHECK_MAX_ITEMS:
             logger.info(

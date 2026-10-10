@@ -260,6 +260,14 @@ window.XY.ViewSystem = (function () {
    * 系统信息
    * ------------------------------------------------------------------ */
 
+  /** v1.11.3：风控熔断状态文案（正常 / 冷却中 + 剩余分钟 + 累计命中）。 */
+  function riskText(stt) {
+    const risk = stt.risk || {};
+    if (!risk.active) return "正常";
+    const minutes = Math.max(1, Math.ceil(Number(risk.remaining_seconds || 0) / 60));
+    return "冷却中（剩 " + minutes + " 分钟 · 命中 " + (risk.hits || 0) + " 次）";
+  }
+
   function renderSysInfo() {
     const box = U.$("#sysInfo");
     if (!box) return;
@@ -277,6 +285,7 @@ window.XY.ViewSystem = (function () {
       ["累计提醒", String(stt.notified_count || 0)],
       ["最近轮次", stt.last_round_at || "—"],
       ["监控状态", stt.running ? "运行中" : "未运行"],
+      ["风控熔断", riskText(stt)],
     ];
     box.innerHTML = rows
       .map(([k, v]) => '<div class="kv"><span>' + esc(k) + "</span><span>" + esc(v) + "</span></div>")

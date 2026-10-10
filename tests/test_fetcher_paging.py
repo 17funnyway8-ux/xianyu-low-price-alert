@@ -193,7 +193,24 @@ class TestMtopMultiPage(unittest.TestCase):
         self.assertEqual(len(fetcher.session.calls), 2)  # type: ignore[attr-defined]
 
     def test_fetch_error_on_second_page_tolerated(self) -> None:
-        """第 2 页命中风控（FetchError）→ 仍保留第 1 页结果。"""
+        """第 2 页遭遇**非风控**失败（如会话失效）→ 仍保留第 1 页结果。"""
+        page1 = [make_item(item_id="3001")]
+        failure = FakeResponse({"ret": ["FAIL_SYS_SESSION_EXPIRED::Session过期"]})
+        fetcher = make_fetcher(
+            [success_response(page1), failure],
+            pages=2, retries=1,
+            sleep_func=lambda _s: None,
+        )
+        with self.assertLogs("xianyu_alert.fetcher", level="WARNING"):
+            products = fetcher.fetch("Switch")
+        self.assertEqual([p.product_id for p in products], ["3001"])
+
+    def test_risk_on_second_page_aborts_whole_round(self) -> None:
+        """v1.11.3：命中风控 → 整轮中止（不再返回部分结果），交由上层熔断。
+
+        被限流时"继续试探 + 继续消费数据"没有意义：停止剩余页、把风控向上抛，
+        让 monitor 开启冷却期，才是保护账号的做法。
+        """
         page1 = [make_item(item_id="3001")]
         risk = FakeResponse({"ret": ["RGV587_ERROR::SM::被挤爆"]})
         fetcher = make_fetcher(
@@ -202,8 +219,9 @@ class TestMtopMultiPage(unittest.TestCase):
             sleep_func=lambda _s: None,
         )
         with self.assertLogs("xianyu_alert.fetcher", level="WARNING"):
-            products = fetcher.fetch("Switch")
-        self.assertEqual([p.product_id for p in products], ["3001"])
+            with self.assertRaises(FetchError) as ctx:
+                fetcher.fetch("Switch")
+        self.assertEqual(getattr(ctx.exception, "kind", ""), "risk")
 
     def test_all_pages_fail_raises(self) -> None:
         """全部页失败 → 抛 FetchError（含最后错误详情）。"""

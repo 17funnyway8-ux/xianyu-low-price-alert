@@ -197,7 +197,10 @@ window.XY.ViewTargets = (function () {
       if (!isFinite(p) || p <= 0) return "关键词「" + k.keyword + "」的价格阈值必须为正数";
     }
     const interval = num("#intervalInput", 600);
-    if (!isFinite(interval) || interval < 1) return "监测间隔必须 ≥ 1 秒";
+    // v1.11.3：与后端 config.MIN_INTERVAL_SECONDS 保持一致的安全下限
+    if (!isFinite(interval) || interval < 120) {
+      return "监测间隔必须 ≥ 120 秒：频率过高会显著提高闲鱼风控（甚至封号）概率";
+    }
     const pages = num("#pagesInput", 1);
     if (!isFinite(pages) || pages < 1) return "抓取页数必须 ≥ 1";
     const size = num("#pageSizeInput", 30);

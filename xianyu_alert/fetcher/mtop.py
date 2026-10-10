@@ -551,6 +551,10 @@ class MtopFetcher(Fetcher):
         seen: set = set()
         failed_pages = 0
         last_error: BaseException | None = None
+        #: v1.11.3：首个风控异常。命中风控必须**整轮中止并向上抛**，
+        #: 而不是像普通页失败那样"跳过该页"——否则上层（monitor）收不到
+        #: 风控信号，也就无法开启熔断冷却。
+        risk_error: FetchError | None = None
 
         for page in range(1, self.pages + 1):
             try:
@@ -575,8 +579,20 @@ class MtopFetcher(Fetcher):
                     "[mtop] 第 %d/%d 页抓取失败：%s（已跳过该页，继续抓取其余页）",
                     page, self.pages, exc,
                 )
+                if getattr(exc, "kind", "") == "risk":
+                    # v1.11.3：命中风控就别再打剩余页了 —— 被限流时"继续试探"
+                    # 只会把风控越撞越紧（线上实测：一小时内 129 条 RGV587）。
+                    logger.warning(
+                        "[mtop] 命中风控，**停止抓取剩余 %d 页**（v1.11.3 熔断）",
+                        self.pages - page,
+                    )
+                    risk_error = exc
+                    break
             if page < self.pages:
                 self._sleep(self.page_sleep)
+
+        if risk_error is not None:
+            raise FetchError(f"[mtop] 命中闲鱼风控，本轮抓取中止：{risk_error}", kind="risk")
 
         if failed_pages == self.pages:
             detail = f"（最后错误：{last_error}）" if last_error is not None else ""

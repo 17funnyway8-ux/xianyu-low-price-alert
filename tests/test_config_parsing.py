@@ -26,7 +26,8 @@ from xianyu_alert.config import ConfigError, config_from_dict, load_config  # no
 
 BASE = {
     "keywords": [{"keyword": "Switch", "max_price": 1000}],
-    "monitor": {"interval_seconds": 60},
+    # v1.11.3：间隔有安全下限 MIN_INTERVAL_SECONDS=120，正常配置请用 ≥120 的值
+    "monitor": {"interval_seconds": 600},
 }
 
 
@@ -64,8 +65,8 @@ class TestStrictValidation(unittest.TestCase):
 
     def test_unknown_keys_are_ignored(self) -> None:
         """未知字段不报错（向前兼容：老版本读新配置不能崩）。"""
-        cfg = config_with(monitor={"interval_seconds": 90, "未来字段": 1})
-        self.assertEqual(cfg.monitor.interval_seconds, 90)
+        cfg = config_with(monitor={"interval_seconds": 300, "未来字段": 1})
+        self.assertEqual(cfg.monitor.interval_seconds, 300)
 
 
 class TestDocumentedFallbacks(unittest.TestCase):
@@ -128,7 +129,7 @@ class TestLoadConfigFile(unittest.TestCase):
 
     def test_valid_file_loads(self) -> None:
         cfg = load_config(self._write(yaml.safe_dump(BASE, allow_unicode=True)))
-        self.assertEqual(cfg.monitor.interval_seconds, 60)
+        self.assertEqual(cfg.monitor.interval_seconds, 600)
 
     def test_v0_config_is_migrated(self) -> None:
         """老配置（无 config_version）应被迁移到当前版本。"""
