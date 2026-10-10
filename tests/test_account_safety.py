@@ -205,6 +205,47 @@ class TestMonitorKeepaliveProbe(unittest.TestCase):
         self.assertEqual(fetcher.calls, [("Switch", 1)])
         self.assertEqual(fetcher.pages, 3, "调用结束后必须还原 pages")
 
+    def test_failed_keepalive_does_not_become_one_request_per_second(self) -> None:
+        """v1.11.7 热修：保活失败后不得"每秒一次请求"。
+
+        线上事故：保活判断挂在 1 秒分片睡眠上，失败时不更新 last_auth_at →
+        keepalive_due 恒为真 → **每秒一次真实请求**（实测 80 秒 83 次），
+        而且保活失败没有 arm 熔断，等于裸奔重试。
+        """
+        import time as time_mod
+
+        from xianyu_alert.fetcher.base import FetchError
+        from xianyu_alert.keepalive import keepalive_due
+        from xianyu_alert.risk import RISK_GUARD
+
+        class _FailFetcher(self._Fetcher):
+            def fetch(self, keyword: str) -> list:
+                self.calls.append((keyword, self.pages))
+                raise FetchError("命中闲鱼风控", kind="risk")
+
+        RISK_GUARD.reset()
+        self.addCleanup(RISK_GUARD.reset)
+        fetcher = _FailFetcher()
+        monitor = self._monitor(fetcher)
+
+        self.assertFalse(monitor.keepalive_once())
+        self.assertEqual(len(fetcher.calls), 1)
+        # 1) 熔断被 arm（保活也要 arm，否则其它入口继续裸奔）
+        self.assertTrue(RISK_GUARD.active())
+        self.assertGreaterEqual(RISK_GUARD.remaining(), 300)
+        # 2) 即使没有熔断，间隔判定也必须把重试钉死在 keepalive_interval 上
+        snapshot = monitor.auth_snapshot()
+        self.assertGreater(float(snapshot["last_auth_at"]), 0.0)
+        self.assertFalse(
+            keepalive_due(
+                now=time_mod.time(),
+                last_auth_at=float(snapshot["last_auth_at"]),
+                interval=int(snapshot["interval"]),
+                enabled=True,
+            ),
+            "刚尝试过就不该立刻再试（否则 1 秒分片睡眠会变成每秒一次请求）",
+        )
+
     def test_risk_skip_log_is_throttled(self) -> None:
         """v1.11.6：冷却期跳过日志每 5 分钟最多一条。
 
