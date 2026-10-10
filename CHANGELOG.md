@@ -2,6 +2,27 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)，条目按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 归类。
 
+## [1.10.13] - 2026-10-10
+
+### 文档
+- **README 全面刷新**（内容此前滞后于实际能力近 10 轮）：
+  - 配置要点表**补 6 个真实存在的配置项**：`monitor.keepalive_enabled` /
+    `monitor.keepalive_interval_seconds`、`notify.quiet_hours` /
+    `notify.aggregate_seconds` / `notify.retry_attempts`，并注明"静默与聚合默认关闭，
+    升级后行为与之前一致"。
+  - 测试数 **934 → 1299**；CI 描述改为 **7 项必过检查**表格
+    （Lint/类型 · 三平台矩阵 · Qt offscreen + 覆盖率门禁 · Web 契约 + 86 项冒烟 + 62 项 DOM e2e · 覆盖率门槛）。
+  - 新增「**免扫码自动续期**」一节：持久化浏览器 profile 的三步做法，
+    以及 v1.9 四层凭据模型为何不会把"可自愈的令牌过期"误报成"需要重新登录"。
+  - 新增「**密钥轮换**」一节：`secure status` / `secure rotate` 的用法与安全语义
+    （先用旧密钥解密，失败即整体中止，自动备份）。
+  - 核心价值补两条：**通知可控**（静默/聚合/重试）与**凭据可轮换**；命中记录补卖家 / 地区 / 原价。
+
+### 修复（运维补推）
+- v1.10.10 ~ v1.10.12 的 **Docker Hub 与 GHCR 镜像**在 Docker Hub 429 限额恢复后**全部补推成功**。
+  澄清：`release.yml:build-docker`（推 GHCR）与 `docker-publish.yml`（推 Docker Hub）**不是重复构建**，
+  而是双注册表发布；两者同时失败只是因为都要从 Docker Hub 拉基础镜像。
+
 ## [1.10.12] - 2026-10-10
 
 ### 测试（M16 Qt worker + M15 Tk 守卫）
