@@ -24,6 +24,9 @@ MIN_KEEPALIVE_INTERVAL = 300
 DEFAULT_KEEPALIVE_INTERVAL = 1800
 #: 保活线程的巡检间隔（秒）
 DEFAULT_TICK = 30.0
+#: 保活失败后的冷却倍数：失败（多半是风控 / 网络）后至少等
+#: max(interval, MIN_KEEPALIVE_INTERVAL) 再试，避免 30s 巡检变成重试风暴。
+FAILURE_COOLDOWN_FACTOR = 1.0
 
 
 def keepalive_due(
@@ -84,6 +87,10 @@ class CookieKeeper:
         self.success_count = 0
         self.failure_count = 0
         self.last_attempt_at: float = 0.0
+        #: v1.11.2：失败冷却截止时间戳。保活失败通常意味着闲鱼风控（RGV587）或断网，
+        #: 此时按 30s 巡检节奏立刻重试只会把风控越撞越紧 —— 线上实测过：
+        #: 被打进风控后每 30s 重试一次、每次抓 3 页，等于自己制造请求风暴。
+        self._cooldown_until: float = 0.0
 
     @property
     def running(self) -> bool:
@@ -114,14 +121,19 @@ class CookieKeeper:
         except Exception as exc:  # noqa: BLE001 - 配置读取异常不应打断线程
             logger.warning("保活读取配置失败：%s", exc)
             return False
+        now = time.time()
+        interval = int(cfg.get("interval", 0) or 0)
+        if now < self._cooldown_until:
+            # v1.11.2：失败后的冷却期内**不再尝试**（避免风控期重试风暴）
+            return False
         if not keepalive_due(
-            now=time.time(),
+            now=now,
             last_auth_at=float(cfg.get("last_auth_at", 0.0) or 0.0),
-            interval=int(cfg.get("interval", 0) or 0),
+            interval=interval,
             enabled=bool(cfg.get("enabled", True)),
         ):
             return False
-        self.last_attempt_at = time.time()
+        self.last_attempt_at = now
         try:
             ok = bool(self._probe())
         except Exception as exc:  # noqa: BLE001 - 保活失败不影响主流程
@@ -129,8 +141,12 @@ class CookieKeeper:
             ok = False
         if ok:
             self.success_count += 1
+            self._cooldown_until = 0.0
         else:
             self.failure_count += 1
+            cooldown = max(interval, MIN_KEEPALIVE_INTERVAL) * FAILURE_COOLDOWN_FACTOR
+            self._cooldown_until = now + cooldown
+            logger.warning("保活失败，%.0f 秒内不再重试（避免在风控期制造重试风暴）", cooldown)
         return True
 
     def _loop(self) -> None:
