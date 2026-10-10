@@ -47,7 +47,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.7` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.8` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -61,7 +61,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.11.7
+  17funnyway8/xianyu-alert:1.11.8
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -70,7 +70,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.11.7   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.11.8   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -306,6 +306,7 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 | `spec_filter`（顶层） | `true` | 上者的全局默认值，单个关键词可覆盖 |
 | `monitor.interval_seconds` | 600 | 监测间隔秒数，生产建议 **600~900**；**v1.11.3 起硬下限 120**（更低会被收敛并告警） |
 | `monitor.autostart` | `false` | **v1.11.4**：服务启动后是否自动开始监控。`true` = 容器/进程重启后自己接着盯盘，不再"以为它在盯、其实早就停了" |
+| `monitor.max_requests_per_hour` | 120 | **v1.11.8**：每小时请求**硬上限**（0 = 关闭）。账号安全的最后一道兜底 —— 触发时本轮跳过并告警，1 小时窗口滑出后自动恢复 |
 | `monitor.user_agent` | 内置 Chrome | 浏览器 UA。**v1.11.4 起强调与环境一致**：建议填你拿 Cookie 那个浏览器的 `navigator.userAgent`（指纹与声明别自相矛盾） |
 | `monitor.cookies` | `""` | 闲鱼 Cookie，保存时自动 Fernet 加密（`fernet1:`） |
 | `monitor.cookie_pool` | `[]` | 多账号池：`[{name, cookie, enabled}]` 按轮次轮换（池优先、单值兜底） |
@@ -367,7 +368,7 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 python -m unittest discover -s tests
 ```
 
-**1391 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
+**1395 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
 
 CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
 
