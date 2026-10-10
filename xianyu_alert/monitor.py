@@ -87,7 +87,9 @@ FILTER_REASON_LABELS = {
     "spec_generation": "代际不符",
     "spec_frequency": "频率/型号不符",
     "spec_capacity": "容量不足",
-    "spec_word": "缺限定词",
+    # v1.11.1：模块规格（单条容量 / 条数）——「64G 其实想买两根 32G」
+    "spec_module": "单条容量不足",
+    "spec_module_count": "条数不足",
 }
 
 
