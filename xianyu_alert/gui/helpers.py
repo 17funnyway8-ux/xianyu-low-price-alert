@@ -324,7 +324,7 @@ def apply_filter_edit(
     return result
 
 
-def keyword_filter_summary(filters: dict[str, list[str]] | None) -> str:
+def keyword_filter_summary(filters: dict[str, Any] | None) -> str:
     """把过滤规则字典格式化为表格摘要文案。
 
     Args:
@@ -341,6 +341,8 @@ def keyword_filter_summary(filters: dict[str, list[str]] | None) -> str:
         parts.append("排除:" + ",".join(excludes))
     if required:
         parts.append("必含:" + ",".join(required))
+    if state.get("spec_filter") is False:
+        parts.append("规格过滤:关")
     return " ".join(parts) if parts else "—"
 
 
@@ -467,7 +469,7 @@ def config_to_form(data: Any) -> dict[str, Any]:
     #: 关键词 -> 是否启用（v3.7；缺省 True，停用不删除）
     keyword_enabled: dict[str, bool] = {}
     #: 关键词 -> {exclude_keywords, required_keywords}（v3.1 过滤规则）
-    keyword_filters: dict[str, dict[str, list[str]]] = {}
+    keyword_filters: dict[str, dict[str, Any]] = {}
     #: v1.11：规格语义过滤的全局默认（单条关键词可用 spec_filter 覆盖）
     global_spec_filter = parse_enabled_flag(root.get("spec_filter"), default=True)
     raw_keywords = root.get("keywords")
@@ -498,6 +500,8 @@ def config_to_form(data: Any) -> dict[str, Any]:
             keyword_filters[kw] = {
                 "exclude_keywords": exclude_keywords,
                 "required_keywords": required_keywords,
+                # v1.11：规格语义过滤开关随表单往返（缺省 true；false = 退回字面匹配）
+                "spec_filter": spec_on,
             }
 
     # ---- monitor ----
@@ -685,6 +689,9 @@ def build_config_dict(
             state = filters.get(str(kw)) or {}
             entry["exclude_keywords"] = normalize_keywords(state.get("exclude_keywords"))
             entry["required_keywords"] = normalize_keywords(state.get("required_keywords"))
+            if state.get("spec_filter") is False:
+                # v1.11：只有"显式关闭"才写盘（缺省 true 不落盘，保持配置干净）
+                entry["spec_filter"] = False
         if keyword_enabled is not None:
             # v3.7：保存启用状态；停用关键词写 enabled: false
             entry["enabled"] = parse_enabled_flag(enabled_map.get(str(kw)), default=True)

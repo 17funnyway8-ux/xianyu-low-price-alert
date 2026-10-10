@@ -546,8 +546,64 @@ class TestGuiFilterFunctions(unittest.TestCase):
         self.assertEqual(form["keywords"], [("光威 笔记本DDR4 3200 16G", 300.0)])
         self.assertEqual(
             form["keyword_filters"]["光威 笔记本DDR4 3200 16G"],
-            {"exclude_keywords": ["回收", "置换"], "required_keywords": ["16G", "DDR4"]},
+            {
+                "exclude_keywords": ["回收", "置换"],
+                "required_keywords": ["16G", "DDR4"],
+                # v1.11：规格过滤开关随表单往返（缺省 true）
+                "spec_filter": True,
+            },
         )
+
+    def test_spec_filter_false_survives_round_trip(self) -> None:
+        """v1.11：显式 spec_filter: false 必须保真往返，且缺省 true 不落盘。"""
+        data = {
+            "keywords": [
+                {
+                    "keyword": "光威 3200 64G",
+                    "max_price": 2100,
+                    "exclude_keywords": ["回收"],
+                    "required_keywords": ["光威"],
+                    "spec_filter": False,
+                }
+            ]
+        }
+        state = config_to_form(data)["keyword_filters"]["光威 3200 64G"]
+        self.assertIs(state["spec_filter"], False)
+        rebuilt = build_config_dict(
+            keywords=[("光威 3200 64G", 2100.0)],
+            interval_seconds=600,
+            fetcher_type="mock",
+            cookies="",
+            storage_path="state/x.db",
+            channels={"console": {"enabled": True, "options": {}}},
+            keyword_filters={"光威 3200 64G": state},
+        )
+        self.assertIs(rebuilt["keywords"][0]["spec_filter"], False)
+        # 缺省（true）不写盘，避免每次保存都往配置里塞冗余字段
+        plain = build_config_dict(
+            keywords=[("光威 3200 64G", 2100.0)],
+            interval_seconds=600,
+            fetcher_type="mock",
+            cookies="",
+            storage_path="state/x.db",
+            channels={"console": {"enabled": True, "options": {}}},
+            keyword_filters={
+                "光威 3200 64G": {
+                    "exclude_keywords": [],
+                    "required_keywords": [],
+                    "spec_filter": True,
+                }
+            },
+        )
+        self.assertNotIn("spec_filter", plain["keywords"][0])
+
+    def test_spec_filter_summary_shows_disabled(self) -> None:
+        """表格摘要要能看出「这个关键词关了规格过滤」。"""
+        summary = keyword_filter_summary(
+            {"exclude_keywords": ["回收"], "required_keywords": [], "spec_filter": False}
+        )
+        self.assertIn("规格过滤:关", summary)
+        self.assertNotIn("规格过滤:关", keyword_filter_summary({"exclude_keywords": ["回收"]}))
 
     def test_config_to_form_auto_extract_for_display(self) -> None:
         """未显式配置 required_keywords 时，界面展示自动提取结果（与生效规则一致）。"""

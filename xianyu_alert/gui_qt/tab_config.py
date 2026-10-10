@@ -47,6 +47,24 @@ from .widgets import KeywordTable, StatusLight
 logger = logging.getLogger(__name__)
 
 
+def _with_spec_filter(state: dict[str, Any], previous: dict[str, Any] | None) -> dict[str, Any]:
+    """把 v1.11 的「规格语义过滤关闭开关」从旧状态带过来。
+
+    关键词编辑弹窗不编辑该开关（它是 config.yaml 里的高级选项），但保存时
+    必须**保真往返** —— 否则用户显式写的 spec_filter: false 会被 GUI 悄悄重置成 true。
+
+    Args:
+        state: 弹窗生成的新过滤规则（exclude / required）。
+        previous: 该关键词此前的过滤规则字典。
+
+    Returns:
+        state（在需要时补上 spec_filter: false）。
+    """
+    if (previous or {}).get("spec_filter") is False:
+        state["spec_filter"] = False
+    return state
+
+
 class MonitorConfigTab(QWidget):
     """监控配置页签（Qt 版）。
 
@@ -243,10 +261,10 @@ class MonitorConfigTab(QWidget):
             return
         self._keywords = [(kw, price) if k == selected else (k, p) for k, p in self._keywords]
         self._keyword_enabled[kw] = self._keyword_enabled.pop(selected, True)
-        self._keyword_filters[kw] = {
-            "exclude_keywords": excludes,
-            "required_keywords": requireds,
-        }
+        self._keyword_filters[kw] = _with_spec_filter(
+            {"exclude_keywords": excludes, "required_keywords": requireds},
+            old_filters,
+        )
         self._keyword_filters.pop(selected, None)
         self.table_keywords.update_row(
             selected, kw, price,
@@ -299,10 +317,10 @@ class MonitorConfigTab(QWidget):
             return
         kw, price, excludes, requireds = dlg.result()
         # 编辑过滤词仅更新过滤规则；关键词/价格保持不变
-        self._keyword_filters[kw] = {
-            "exclude_keywords": excludes,
-            "required_keywords": requireds,
-        }
+        self._keyword_filters[kw] = _with_spec_filter(
+            {"exclude_keywords": excludes, "required_keywords": requireds},
+            current,
+        )
         # v1.10.9 修：这里此前只传了 (kw, price)，与 update_row(old, new, price, ...) 的
         # 形参错位，调用即抛 TypeError —— Qt 版「编辑筛选」按钮**点了就崩**。
         # 编辑筛选不改关键词名，故 new_keyword 与 old_keyword 同为 kw。
