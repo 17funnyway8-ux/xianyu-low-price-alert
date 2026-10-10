@@ -18,10 +18,14 @@ from .notify_policy import parse_quiet_hours
 
 logger = logging.getLogger(__name__)
 
-# 默认浏览器 UA（尽量贴近真实浏览器，降低被风控概率）
+#: 默认浏览器 UA（尽量贴近真实浏览器，降低被风控概率）。
+#: v1.11.4 起同步到当前 Chrome 主版本；**更重要的原则**：UA 应与「拿 Cookie 的
+#: 那个浏览器」保持一致 —— Cookie 里的风控指纹（tfstk/x5sec/isg/cna）由具体
+#: 浏览器环境生成，UA 却声明另一个系统/浏览器，会构成一处环境矛盾。
+#: 想对齐就把 monitor.user_agent 设成你浏览器的 navigator.userAgent。
 DEFAULT_USER_AGENT: str = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
 )
 
 # 允许的抓取器类型 / 通知通道类型
@@ -121,6 +125,10 @@ class MonitorConfig:
     """
 
     interval_seconds: int = 600
+    #: v1.11.4：进程启动后是否**自动开始监控**。
+    #: 默认 False（保持"启动后停在未运行、由用户点开始"的旧行为，避免惊扰存量用户）；
+    #: 想让它"重启后自己接着盯"就设为 true —— 可用性缺口（重启后静默不监控）的正解。
+    autostart: bool = False
     user_agent: str = DEFAULT_USER_AGENT
     cookies: str = ""
     #: cookies 是否以 DPAPI 密文（dpapi1: 前缀）存储；加载时自动解密
@@ -520,6 +528,9 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
         )
         interval = MIN_INTERVAL_SECONDS
 
+    # v1.11.4：启动后是否自动开始监控（缺省 False = 保持旧行为）
+    autostart = _parse_bool_flag(data.get("autostart"), default=False)
+
     user_agent = str(data.get("user_agent") or DEFAULT_USER_AGENT).strip()
     cookies_raw = str(data.get("cookies") or "").strip()
     cookies_encrypted = bool(data.get("cookies_encrypted", False))
@@ -558,6 +569,7 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
 
     return MonitorConfig(
         interval_seconds=interval,
+        autostart=autostart,
         user_agent=user_agent,
         cookies=cookies,
         cookies_encrypted=cookies_encrypted,

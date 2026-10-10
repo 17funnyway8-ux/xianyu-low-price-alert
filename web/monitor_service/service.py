@@ -23,6 +23,7 @@ from xianyu_alert.config import (
 from xianyu_alert.fetcher import build_fetcher
 from xianyu_alert.monitor import Monitor
 from xianyu_alert.notifier import build_notifiers
+from xianyu_alert.reqmeter import REQ_METER
 from xianyu_alert.risk import RISK_GUARD
 from xianyu_alert.storage import Storage
 
@@ -241,6 +242,32 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
             )
             return {"ok": True, "message": "监测已启动"}
 
+    def autostart_if_configured(self) -> bool:
+        """按配置自动开始监控（v1.11.4）。
+
+        背景（可用性缺口）：容器 / 进程重启后 monitor 线程**不会**自己恢复 ——
+        页面上显示"未运行"，而用户往往以为它还在盯盘，等发现时已经漏了好几个小时。
+        配置里打开 monitor.autostart: true 即可让它在服务启动时自己接上。
+
+        默认关闭，保持存量用户「启动后手动开始」的行为不变。
+
+        Returns:
+            True 表示本次真的启动了监控。
+        """
+        with self._lock:
+            config = self._config
+            already = self._thread is not None and self._thread.is_alive()
+        if already:
+            return False
+        if config is None or not bool(getattr(config.monitor, "autostart", False)):
+            return False
+        result = self.start()
+        if result.get("ok"):
+            logger.info("monitor.autostart=true：服务启动后已自动开始监控")
+            return True
+        logger.warning("monitor.autostart=true，但自动启动失败：%s", result.get("message"))
+        return False
+
     def stop(self) -> dict[str, Any]:
         """停止 monitor 后台线程并关闭本轮 fetcher（幂等）。
 
@@ -335,6 +362,8 @@ class MonitorService(CookiePoolMixin, ShelfCheckMixin, KeepaliveMixin):
                 "detail_only": bool(self._detail_only),
                 # v1.11.3：风控熔断状态（active/remaining_seconds/hits/last_detail）
                 "risk": RISK_GUARD.snapshot(),
+                # v1.11.4：请求节奏（累计 / 近 10 分钟 / 近 1 小时 / 最近一次时间）
+                "requests": REQ_METER.snapshot(),
             }
 
     def shutdown(self) -> None:

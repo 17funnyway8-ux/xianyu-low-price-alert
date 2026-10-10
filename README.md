@@ -47,7 +47,7 @@ Docker Web 版（下面的截图来自真实运行的实例，mock 数据）：
 
 Docker 版 = **FastAPI Web 界面（:8080）+ monitor 后台线程 + CLI 调试**三合一，一键常驻运行，数据全部落在宿主机卷，删容器不丢数据。
 
-镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.3` / `sha-<commit>`）
+镜像地址：`17funnyway8/xianyu-alert`（标签 `latest` / `1.11.4` / `sha-<commit>`）
 
 ### 1. 部署（二选一）
 
@@ -61,7 +61,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.11.3
+  17funnyway8/xianyu-alert:1.11.4
 ```
 
 **方式 B：用 docker compose（含健康检查与资源限制，推荐长期使用）**
@@ -70,7 +70,7 @@ docker run -d --name xianyu-alert \
 # docker-compose.yml（精简可部署版；完整注释版见仓库根目录 docker-compose.yml）
 services:
   xianyu-alert:
-    image: 17funnyway8/xianyu-alert:1.11.3   # 想自己构建：保留下面这行并加 --build
+    image: 17funnyway8/xianyu-alert:1.11.4   # 想自己构建：保留下面这行并加 --build
     # build: .
     container_name: xianyu-alert
     restart: unless-stopped          # 宿主机重启 / 崩溃自动拉起
@@ -304,7 +304,9 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 | `keywords[].required_keywords` | 自动提取 | 必含词：标题必须**全部包含**（如 `DDR4`）；`[]` = 不强制。v1.11 起自动提取**不再包含容量 token**（容量交给规格过滤） |
 | `keywords[].spec_filter` | `true` | 规格语义过滤：把搜索词当规格判定（品牌锚定 / 代际 / 频率 / 容量）；`false` = 退回字面匹配 |
 | `spec_filter`（顶层） | `true` | 上者的全局默认值，单个关键词可覆盖 |
-| `monitor.interval_seconds` | 600 | 监测间隔秒数，生产建议 **600~900**（过短易触发风控） |
+| `monitor.interval_seconds` | 600 | 监测间隔秒数，生产建议 **600~900**；**v1.11.3 起硬下限 120**（更低会被收敛并告警） |
+| `monitor.autostart` | `false` | **v1.11.4**：服务启动后是否自动开始监控。`true` = 容器/进程重启后自己接着盯盘，不再"以为它在盯、其实早就停了" |
+| `monitor.user_agent` | 内置 Chrome | 浏览器 UA。**v1.11.4 起强调与环境一致**：建议填你拿 Cookie 那个浏览器的 `navigator.userAgent`（指纹与声明别自相矛盾） |
 | `monitor.cookies` | `""` | 闲鱼 Cookie，保存时自动 Fernet 加密（`fernet1:`） |
 | `monitor.cookie_pool` | `[]` | 多账号池：`[{name, cookie, enabled}]` 按轮次轮换（池优先、单值兜底） |
 | `monitor.keepalive_enabled` | `true` | 空闲保活：长时间没有鉴权请求时定期续期，避免挂机掉线 |
@@ -365,7 +367,7 @@ python -m xianyu_alert.cli secure rotate --config config.yaml   # 轮换密钥�
 python -m unittest discover -s tests
 ```
 
-**1350 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
+**1385 个测试**覆盖模型校验、SQLite 去重持久化、通知构造、监控调度、Cookie 加密 / 分层诊断 / 密钥轮换、多页抓取与网页兜底解析、路径与部署形态、Tk / Qt 两套界面、CLI 子命令、脚本治理。
 
 CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
 
@@ -396,6 +398,11 @@ CI 的 **7 项必过检查**（PR 上全部绿色才可合并）：
   3. **保活退避**：保活探测固定只抓 1 页、只挑启用中的关键词，失败后至少安静 `max(间隔, 300s)`；
   4. **关键词间限速**：多个关键词之间按 `fetcher.page_sleep` 间隔，不再背靠背请求。
   熔断状态可在「通知与系统」页看到，也可一条命令查看：`curl -s localhost:8899/healthz`（`risk.active` / `risk.remaining_seconds`）。
+- **v1.11.4 的可用性与可观测性补强**：
+  1. **`monitor.autostart: true`**：重启后自动接着监控（默认 false，行为不变）；
+  2. **请求节奏可见**：`/healthz` 与状态接口新增 `requests`（累计 / 近 10 分钟 / 近 1 小时 / 最近一次时间），系统页新增「请求节奏」一行；
+  3. **UA 与环境一致**：默认 UA 跟随当前 Chrome 主版本，并支持按你的浏览器对齐；
+  4. **校验在架限流收紧**：单次上限 30 → **20 条**、间隔 1.5 → **3 秒**（唯一会连发请求的手动操作）。
 - **备份三件套**：`config.yaml`（配置 + 密文 Cookie）+ `secret.key`（Fernet 密钥，**缺失则存量 Cookie 无法解密**）+ `state/xianyu_alert.db`（提醒记录）必须**一起备份**。SQLite 热备示例见 `docker-compose.yml` 注释 / [docs/v1.8_Docker化增量研判与执行方案.md](docs/dev/v1.8_Docker化增量研判与执行方案.md)。
 - **免责声明**：本工具仅供个人学习与自用监测。请遵守目标站点 robots 协议与服务条款，合理控制请求频率，勿用于商业爬取或对站点造成压力；因使用本工具产生的账号风险由使用者自行承担。
 

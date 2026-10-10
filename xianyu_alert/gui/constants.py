@@ -63,9 +63,9 @@ CLOSE_JOIN_TIMEOUT = 5.0
 #: 「校验在架」批量检查时相邻两次详情接口请求的最小间隔秒数（v3.7）。
 #: 详情接口与搜索接口共用同一套 mtop 签名与风控策略，批量校验必须限速，
 #: 避免短时间内高频请求触发风控。
-SOLD_CHECK_INTERVAL = 1.5
+SOLD_CHECK_INTERVAL = 3.0
 #: 单次「校验在架」最多检查的提醒记录条数（防止一次点按钮请求过猛）。
-SOLD_CHECK_MAX_ITEMS = 30
+SOLD_CHECK_MAX_ITEMS = 20
 #: 「标记已售出 / 校验在架」的默认原因文案（写回 product.sold_reason）。
 SOLD_REASON_MANUAL = "人工标记"
 SOLD_REASON_DETAIL = "详情接口判定"
