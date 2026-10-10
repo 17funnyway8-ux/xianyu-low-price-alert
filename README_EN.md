@@ -41,7 +41,7 @@ docker run -d --name xianyu-alert \
   -e XY_DATA_DIR=/app/data -e TZ=Asia/Shanghai \
   -v "$PWD/xianyu-data:/app/data" \
   --restart unless-stopped \
-  17funnyway8/xianyu-alert:1.11.3
+  17funnyway8/xianyu-alert:1.11.4
 ```
 
 **Option B — docker compose (adds healthcheck & resource limits):**
@@ -86,7 +86,7 @@ See [`config.example.yaml`](config.example.yaml) for every option with comments.
 
 ```bash
 pip install -r requirements.txt -r requirements-web.txt -r requirements-dev.txt
-python -m unittest discover -s tests      # 1350 tests, all mocked, no network
+python -m unittest discover -s tests      # 1385 tests, all mocked, no network
 scripts/quality_audit.sh                  # ruff + mypy + tests + coverage in one shot
 ```
 

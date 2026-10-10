@@ -328,8 +328,9 @@ class TestChannelWorker(QThread):
 
 
 #: 「校验在架」限速间隔（秒，防风控）与单次上限（对齐 gui.py 常量）
-SOLD_CHECK_INTERVAL = 1.5
-SOLD_CHECK_MAX_ITEMS = 30
+# 与 xianyu_alert/gui/constants.py 保持一致（v1.11.4：1.5→3 秒、30→20 条）
+SOLD_CHECK_INTERVAL = 3.0
+SOLD_CHECK_MAX_ITEMS = 20
 #: 「标记已售出 / 校验在架」写回 product.sold_reason 的原因文案
 SOLD_REASON_MANUAL = "人工标记"
 SOLD_REASON_DETAIL = "详情接口判定"
