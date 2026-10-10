@@ -95,6 +95,7 @@ def make_config(
     max_price: float = 300.0,
     exclude_keywords: list[str] | None = None,
     required_keywords: list[str] | None = None,
+    spec_filter: bool | None = None,
 ) -> Config:
     """构造带过滤规则的测试配置。
 
@@ -102,12 +103,17 @@ def make_config(
         - required_keywords=None → 触发 config 的自动提取默认值；
         - required_keywords=[]   → 显式关闭强制必含；
     exclude_keywords=None / []   → 等价（不排除）。
+    spec_filter 为 None 时不写该字段（继承 v1.11 默认 True）。只验证「必含词 /
+    排除词」字面语义的用例应显式传 False，否则会被规格过滤（品牌 / 代际 /
+    频率 / 容量）一起拦掉；规格过滤本身由 test_spec_match.py 覆盖。
     """
     entry: dict = {"keyword": keyword, "max_price": max_price}
     if exclude_keywords is not None:
         entry["exclude_keywords"] = exclude_keywords
     if required_keywords is not None:
         entry["required_keywords"] = required_keywords
+    if spec_filter is not None:
+        entry["spec_filter"] = spec_filter
     return config_from_dict(
         {
             "keywords": [entry],
@@ -290,7 +296,7 @@ class TestMonitorFiltering(unittest.TestCase):
     def test_exclude_empty_noop(self) -> None:
         """空排除词 = 等同无过滤（兼容旧配置）。"""
         products = [make_product("1", "高价回收 光威", price=200)]
-        config = make_config(exclude_keywords=[], required_keywords=[])
+        config = make_config(exclude_keywords=[], required_keywords=[], spec_filter=False)
         recorder = self._run(config, products)
         self.assertEqual([p.product_id for p in recorder.received], ["1"])
 
@@ -333,7 +339,7 @@ class TestMonitorFiltering(unittest.TestCase):
     def test_required_empty_noop(self) -> None:
         """空必含词 = 不强制要求（等同关闭功能）。"""
         products = [make_product("1", "金百达 DDR4 8G", price=200)]
-        config = make_config(required_keywords=[])
+        config = make_config(required_keywords=[], spec_filter=False)
         recorder = self._run(config, products)
         self.assertEqual([p.product_id for p in recorder.received], ["1"])
 
@@ -386,7 +392,7 @@ class TestMonitorFiltering(unittest.TestCase):
             make_product("1", "高价回收 光威 16G", price=200),
             make_product("2", "光威 16G 自用", price=200),
         ]
-        config = make_config(exclude_keywords=["回收"], required_keywords=[])
+        config = make_config(exclude_keywords=["回收"], required_keywords=[], spec_filter=False)
         monitor = Monitor(config, StubFetcher(products), self.storage, [])
         monitor.run_once()
         self.assertEqual(monitor.last_result.fetched, 2)
@@ -410,6 +416,23 @@ class TestConfigParsing(unittest.TestCase):
         )
         rule = config.keywords[0]
         self.assertEqual(rule.exclude_keywords, [])
+        # v1.11：规格过滤默认开启 → 容量 token（16G）交给容量算式判定，不进必含词
+        # （真 64G 的标题常写「32G×2」，字面必含 64G 会误杀）
+        self.assertTrue(rule.spec_filter)
+        self.assertEqual(rule.required_keywords, ["DDR4", "3200"])
+
+    def test_auto_extract_legacy_when_spec_filter_off(self) -> None:
+        """关闭规格过滤 → 保持 v1.10 行为（自动提取含容量 token）。"""
+        config = config_from_dict(
+            {
+                "keywords": [
+                    {"keyword": "光威 笔记本DDR4 3200 16G", "max_price": 300, "spec_filter": False}
+                ],
+                "notify": {"channels": [{"type": "console"}]},
+            }
+        )
+        rule = config.keywords[0]
+        self.assertFalse(rule.spec_filter)
         self.assertEqual(rule.required_keywords, ["DDR4", "3200", "16G"])
 
     def test_explicit_empty_disables(self) -> None:
@@ -533,7 +556,8 @@ class TestGuiFilterFunctions(unittest.TestCase):
         )
         state = form["keyword_filters"]["光威 笔记本DDR4 3200 16G"]
         self.assertEqual(state["exclude_keywords"], [])
-        self.assertEqual(state["required_keywords"], ["DDR4", "3200", "16G"])
+        # v1.11：与 config 生效规则一致 —— 容量 token 不进必含词
+        self.assertEqual(state["required_keywords"], ["DDR4", "3200"])
 
     def test_build_config_dict_writes_filters(self) -> None:
         data = build_config_dict(

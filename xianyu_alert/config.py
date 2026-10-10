@@ -13,7 +13,7 @@ from typing import Any
 import yaml
 
 from . import paths, secure
-from .filters import extract_required_keywords
+from .filters import required_keywords_default
 from .notify_policy import parse_quiet_hours
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,17 @@ class KeywordRule:
         exclude_keywords: 排除词列表（v3.1）。商品文本命中任一排除词即跳过。
         required_keywords: 必含词列表（v3.1）。商品文本必须包含全部；
             为空表示不强制要求（等同关闭该过滤）。未显式配置时
-            由 `filters.extract_required_keywords` 从主关键词自动提取默认值。
+            由 `filters.required_keywords_default` 决定默认值（v1.11 起：
+            规格过滤开启时剔除容量 token，容量交给容量算式判定）。
         enabled: 是否启用（v3.7）。停用的关键词在 GUI 中仍可见可编辑，
             保存后写回 config，但 `monitor.run_once` 会跳过它（不抓取、
             不计数、不打命中日志），用于「临时不想监控的商品，停用而不删除」。
             缺省 True，向后兼容旧 config 不写该字段的配置。
+        spec_filter: 是否启用「规格语义过滤」（v1.11，缺省 True）。
+            开启时由 `spec_match.build_spec` 从主关键词解析规格并逐条判定，
+            未显式配置时继承顶层 `spec_filter`。理由见 filters 模块文档：
+            字面必含词无法处理"32G×2 就是 64G"，也无法挡住标题里的
+            「关联 金士顿 芝奇…」关键词堆砌。
     """
 
     keyword: str
@@ -72,6 +78,9 @@ class KeywordRule:
     exclude_keywords: list[str] = field(default_factory=list)
     required_keywords: list[str] = field(default_factory=list)
     enabled: bool = True
+    #: v1.11 规格语义过滤：把搜索关键词本身当规格（品牌 / 代际 / 频率 / 容量），
+    #: 由 `spec_match` 判定；关闭后退回「必含词 + 排除词」的字面匹配。
+    spec_filter: bool = True
 
 
 @dataclass
@@ -190,6 +199,7 @@ class Config:
         preset_exclude_keywords: 预置排除词模板（v3.5）。
             添加新关键词时自动写入该关键词的 exclude_keywords；
             缺省时回退 `DEFAULT_PRESET_EXCLUDE_KEYWORDS`（向后兼容）。
+        spec_filter: 规格语义过滤的全局默认值（v1.11，缺省 True）。
     """
 
     keywords: list[KeywordRule] = field(default_factory=list)
@@ -200,6 +210,9 @@ class Config:
     preset_exclude_keywords: list[str] = field(
         default_factory=lambda: list(DEFAULT_PRESET_EXCLUDE_KEYWORDS)
     )
+    #: 全局默认的规格语义过滤开关（v1.11，缺省 True）；
+    #: 单个关键词可用 `keywords[].spec_filter` 覆盖。
+    spec_filter: bool = True
     #: 配置结构版本（v1.10.1）：便于识别"这份配置是按哪一版结构写的"
     config_version: int = CONFIG_VERSION
 
@@ -248,8 +261,43 @@ def _parse_string_list(value: Any, name: str) -> list[str]:
     return result
 
 
-def _parse_keywords(raw: Any) -> list[KeywordRule]:
-    """解析并校验 keywords 列表。"""
+def _parse_bool_flag(value: Any, default: bool) -> bool:
+    """把配置里的布尔开关解析为 bool；缺省/脏数据回退 default（v1.11）。
+
+    与 v3.7 `enabled` 的容错口径保持一致：YAML 里的 `"false"` 是字符串，
+    直接 bool() 会变 True，必须显式识别。
+
+    Args:
+        value: 原始值（bool / 字符串 / None / 其它类型）。
+        default: 字段缺省（None）或无法识别时的回退值。
+
+    Returns:
+        解析后的布尔值。
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("0", "false", "no", "off", ""):
+            return False
+        if text in ("1", "true", "yes", "on"):
+            return True
+        return default
+    return bool(value)
+
+
+def _parse_keywords(raw: Any, spec_filter_default: bool = True) -> list[KeywordRule]:
+    """解析并校验 keywords 列表。
+
+    Args:
+        raw: YAML 里的 keywords 节点。
+        spec_filter_default: 顶层 `spec_filter` 的值；单个关键词未显式配置时继承。
+
+    Returns:
+        校验通过的 KeywordRule 列表。
+    """
     if not raw:
         raise ConfigError("`keywords` 不能为空，至少需要配置一个关键词")
     if not isinstance(raw, list):
@@ -280,30 +328,20 @@ def _parse_keywords(raw: Any) -> list[KeywordRule]:
         exclude_keywords = _parse_string_list(
             item.get("exclude_keywords"), f"keywords[{index}].exclude_keywords"
         )
+        # v1.11：规格语义过滤开关（单条关键词可覆盖全局默认）
+        spec_filter = _parse_bool_flag(item.get("spec_filter"), default=spec_filter_default)
         if "required_keywords" in item:
             # 显式配置（含空列表 = 关闭强制必含）→ 原样使用
             required_keywords = _parse_string_list(
                 item.get("required_keywords"), f"keywords[{index}].required_keywords"
             )
         else:
-            # 未显式配置 → 从主关键词自动提取「数字 + 可选单位」片段作为默认必含词
-            required_keywords = extract_required_keywords(keyword)
+            # 未显式配置 → 走统一默认（v1.11：规格过滤开启时剔除容量 token）
+            required_keywords = required_keywords_default(keyword, spec_filter)
 
         # v3.7：启用/停用标记。缺省 True（旧 config 不写该字段 → 默认启用）；
         # 对脏数据（非布尔 / 字符串 "false" 等）做容错，绝不抛异常。
-        raw_enabled = item.get("enabled", True)
-        if isinstance(raw_enabled, str):
-            # YAML 解析出的 `enabled: "false"` 是字符串，直接 bool() 会变 True
-            enabled = raw_enabled.strip().lower() not in ("0", "false", "no", "off", "")
-        elif isinstance(raw_enabled, bool):
-            enabled = raw_enabled
-        elif raw_enabled is None:
-            enabled = True
-        else:
-            try:
-                enabled = bool(raw_enabled)
-            except Exception:  # noqa: BLE001 - 脏数据容错
-                enabled = True
+        enabled = _parse_bool_flag(item.get("enabled"), default=True)
 
         rules.append(
             KeywordRule(
@@ -312,6 +350,7 @@ def _parse_keywords(raw: Any) -> list[KeywordRule]:
                 exclude_keywords=exclude_keywords,
                 required_keywords=required_keywords,
                 enabled=enabled,
+                spec_filter=spec_filter,
             )
         )
     return rules
@@ -622,6 +661,21 @@ def _parse_notify(raw: Any) -> NotifyConfig:
     )
 
 
+def _parse_spec_filter(data: dict[str, Any]) -> bool:
+    """解析顶层 `spec_filter`（v1.11 规格语义过滤全局开关）。
+
+    - 显式配置 → 按布尔解析（容忍 `"false"` 这类字符串）；
+    - 缺省 → True（新版本默认启用，旧的「必含词 + 排除词」仍然生效）。
+
+    Args:
+        data: 配置根字典。
+
+    Returns:
+        规格过滤的全局默认值。
+    """
+    return _parse_bool_flag(data.get("spec_filter"), default=True)
+
+
 def _parse_preset_exclude_keywords(data: dict[str, Any]) -> list[str]:
     """解析顶层 `preset_exclude_keywords`（v3.5 预置排除词模板）。
 
@@ -686,14 +740,16 @@ def config_from_dict(data: dict[str, Any]) -> Config:
         logger.warning("配置迁移：%s", _note)
 
     data = _as_dict(data, "<root>")
+    spec_filter = _parse_spec_filter(data)
     return Config(
         config_version=int(data.get("config_version", CONFIG_VERSION) or CONFIG_VERSION),
-        keywords=_parse_keywords(data.get("keywords")),
+        keywords=_parse_keywords(data.get("keywords"), spec_filter_default=spec_filter),
         monitor=_parse_monitor(data.get("monitor")),
         fetcher=_parse_fetcher(data.get("fetcher")),
         storage=_parse_storage(data.get("storage")),
         notify=_parse_notify(data.get("notify")),
         preset_exclude_keywords=_parse_preset_exclude_keywords(data),
+        spec_filter=spec_filter,
     )
 
 
