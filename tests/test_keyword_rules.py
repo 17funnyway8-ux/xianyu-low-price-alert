@@ -284,7 +284,8 @@ class TestGuiRoundtripExtra(unittest.TestCase):
         data = {"keywords": [{"keyword": "光威 笔记本DDR4 3200 16G", "max_price": 300}]}
         form = config_to_form(data)
         state = form["keyword_filters"]["光威 笔记本DDR4 3200 16G"]
-        self.assertEqual(state["required_keywords"], ["DDR4", "3200", "16G"])
+        # v1.11：规格过滤默认开启，容量 token（16G）由容量算式判定，不进必含词
+        self.assertEqual(state["required_keywords"], ["DDR4", "3200"])
 
 
 # ---------------------------------------------------------------------- #
