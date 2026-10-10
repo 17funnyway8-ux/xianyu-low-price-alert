@@ -11,14 +11,22 @@
 
 本模块给出**进程级**熔断器：一旦观测到风控，冷却期内所有出网入口一律静默跳过，
 冷却时长按「连续命中次数」指数增长（首次 interval x 3，之后翻倍，上限 6 小时）。
-它只维护本地状态，**不发任何请求**；纯内存，重启即失效（重启后先观察一轮即可）。
+它只维护本地状态，**不发任何请求**。
+
+v1.11.5：冷却状态可**落盘恢复**（`enable_persistence`）。原因是重启会清零内存状态，
+而重启后 autostart 会立刻再打一次 —— 等于把刚被限流的账号又捅一下。
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 #: 冷却下限（秒）：即使 monitor 间隔配得很短，风控后也至少安静这么久
 MIN_COOLDOWN_SECONDS = 300.0
@@ -46,6 +54,58 @@ class RiskGuard:
         self._until: float = 0.0
         self.hits: int = 0
         self.last_detail: str = ""
+        #: 持久化路径（v1.11.5）。默认 None = 不落盘；由 enable_persistence 显式开启。
+        #: 为什么要落盘：冷却状态原本只在内存里，**重启即清零** —— 而重启后
+        #: autostart 会立刻再打一次，等于把刚被限流的账号又捅一下。
+        self._store: Path | None = None
+
+    def enable_persistence(self, path: str | Path) -> None:
+        """开启冷却状态落盘，并尝试恢复上次的冷却。
+
+        Args:
+            path: 状态文件路径（通常是 data_dir/state/risk_cooldown.json）。
+        """
+        self._store = Path(path)
+        self.restore()
+
+    def restore(self) -> None:
+        """从磁盘恢复冷却状态（不存在 / 损坏时静默跳过）。"""
+        store = self._store
+        if store is None:
+            return
+        try:
+            data = json.loads(store.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        with self._lock:
+            until = float(data.get("until", 0.0) or 0.0)
+            if until > self._until:
+                self._until = until
+            self.hits = max(self.hits, int(data.get("hits", 0) or 0))
+            detail = str(data.get("last_detail", "") or "")
+            if detail:
+                self.last_detail = detail
+        if until > self._clock():
+            logger.warning(
+                "恢复上次的风控冷却：剩余 %d 秒（重启不再重置冷却）", int(max(0.0, until - self._clock()))
+            )
+
+    def _persist(self) -> None:
+        """把当前冷却写盘（失败只记 debug，不影响主流程）。"""
+        store = self._store
+        if store is None:
+            return
+        try:
+            store.parent.mkdir(parents=True, exist_ok=True)
+            store.write_text(
+                json.dumps(
+                    {"until": self._until, "hits": self.hits, "last_detail": self.last_detail},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:  # pragma: no cover - 磁盘异常不影响熔断本身
+            logger.debug("风控冷却落盘失败：%s", exc)
 
     # ------------------------------------------------------------------ #
     def note_risk(self, interval_seconds: float = 0.0, detail: str = "") -> float:
@@ -65,7 +125,8 @@ class RiskGuard:
             cooldown = min(cooldown, MAX_COOLDOWN_SECONDS)
             self._until = max(self._until, self._clock() + cooldown)
             self.last_detail = str(detail or "")[:200]
-            return self._until
+        self._persist()
+        return self._until
 
     def note_success(self) -> None:
         """一轮抓取成功 → 连续命中计数清零（不提前解除已有冷却）。"""
@@ -99,6 +160,7 @@ class RiskGuard:
             self._until = 0.0
             self.hits = 0
             self.last_detail = ""
+        self._persist()
 
 
 #: 进程级单例：监控轮次 / 保活 / 校验在架共享同一份熔断状态

@@ -24,6 +24,7 @@ import sys
 import time
 import webbrowser
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QTimer
@@ -48,6 +49,7 @@ from ..gui import (
     save_raw_config,
 )
 from ..notifier import build_notifier
+from ..risk import RISK_GUARD
 from ..storage import Storage
 from .state import form_to_config_dict, load_form
 from .tab_config import MonitorConfigTab
@@ -78,6 +80,8 @@ class XianyuAlertQtApp(QMainWindow):
         self.config_path: str = str(config_path or "") or paths.default_config_path()
         #: 数据目录（macOS .app 落 ~/Library/Application Support/闲鱼低价提醒工具/）
         paths.ensure_data_dir()
+        # v1.11.5：风控冷却跨重启恢复（否则重启会把刚被限流的账号又捅一下）
+        RISK_GUARD.enable_persistence(Path(paths.data_dir()) / "state" / "risk_cooldown.json")
 
         # ---- 运行时状态 ----
         self._raw_config: dict[str, Any] = {}
