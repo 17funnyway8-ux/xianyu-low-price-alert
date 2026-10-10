@@ -454,9 +454,6 @@ class CookiePoolMixin:
         checker = getattr(target, "token_refreshed", None)
         if not callable(checker) or not checker():
             return False
-        now = time.monotonic()
-        if now - self._last_token_persist_at < TOKEN_PERSIST_MIN_INTERVAL:
-            return False
         getter = getattr(target, "refreshed_cookie_string", None)
         cookie = ""
         if callable(getter):
@@ -465,6 +462,13 @@ class CookiePoolMixin:
             except Exception:  # noqa: BLE001 - 取值失败按无内容处理
                 cookie = ""
         if not cookie:
+            return False
+        # v1.11.8：**先同步内存**（磁盘写入仍按间隔节流）。
+        # 此前节流期内连内存都不更新 → 保活探测每次都用旧令牌 → 每次多付一次
+        # "令牌过期重算签名"的重试（线上日志：14:28/14:58 两次探测各 2 个请求）。
+        self._sync_cookie_to_memory(cookie)
+        now = time.monotonic()
+        if now - self._last_token_persist_at < TOKEN_PERSIST_MIN_INTERVAL:
             return False
         try:
             self._write_single_cookie_encrypted(cookie)
@@ -479,6 +483,21 @@ class CookiePoolMixin:
             self.reload_if_external_changed()
         logger.info("已将服务端刷新的登录令牌写回配置（下次重启无需重新登录）")
         return True
+
+    def _sync_cookie_to_memory(self, cookie: str) -> None:
+        """把刷新后的 Cookie 同步进**内存** Config（v1.11.8）。
+
+        为什么不能只靠落盘节流：节流是为了少写盘（重建 Config 有成本），但内存态
+        必须立刻生效 —— 否则紧接着的保活探测会用旧令牌，每次白付一个"令牌过期重试"。
+
+        Args:
+            cookie: 刷新后的 Cookie 请求头字符串（明文）。
+        """
+        config = self._config
+        if config is None or not cookie:
+            return
+        with contextlib.suppress(Exception):
+            config.monitor.cookies = cookie
 
     def _cookie_expire_text(self, cookie: str, enabled: bool = True) -> str:
         """计算 Cookie 过期时间展示文本（未知 → 「未知」；停用/空 → 「—」）。"""

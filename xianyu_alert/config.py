@@ -15,6 +15,7 @@ import yaml
 from . import paths, secure
 from .filters import required_keywords_default
 from .notify_policy import parse_quiet_hours
+from .reqmeter import DEFAULT_MAX_REQUESTS_PER_HOUR
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,9 @@ class MonitorConfig:
     #: 默认 False（保持"启动后停在未运行、由用户点开始"的旧行为，避免惊扰存量用户）；
     #: 想让它"重启后自己接着盯"就设为 true —— 可用性缺口（重启后静默不监控）的正解。
     autostart: bool = False
+    #: v1.11.8：每小时请求数**硬上限**（0 = 关闭，默认 120）。
+    #: 这是最后一道兜底：任何失控循环（实例：保活失败每秒重试）都会在这里被拦住。
+    max_requests_per_hour: int = DEFAULT_MAX_REQUESTS_PER_HOUR
     user_agent: str = DEFAULT_USER_AGENT
     cookies: str = ""
     #: cookies 是否以 DPAPI 密文（dpapi1: 前缀）存储；加载时自动解密
@@ -530,6 +534,13 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
 
     # v1.11.4：启动后是否自动开始监控（缺省 False = 保持旧行为）
     autostart = _parse_bool_flag(data.get("autostart"), default=False)
+    # v1.11.8：每小时请求硬上限（0 = 关闭；脏数据回退默认）
+    try:
+        max_requests_per_hour = int(data.get("max_requests_per_hour", DEFAULT_MAX_REQUESTS_PER_HOUR))
+    except (TypeError, ValueError):
+        max_requests_per_hour = DEFAULT_MAX_REQUESTS_PER_HOUR
+    if max_requests_per_hour < 0:
+        max_requests_per_hour = DEFAULT_MAX_REQUESTS_PER_HOUR
 
     user_agent = str(data.get("user_agent") or DEFAULT_USER_AGENT).strip()
     cookies_raw = str(data.get("cookies") or "").strip()
@@ -570,6 +581,7 @@ def _parse_monitor(raw: Any) -> MonitorConfig:
     return MonitorConfig(
         interval_seconds=interval,
         autostart=autostart,
+        max_requests_per_hour=max_requests_per_hour,
         user_agent=user_agent,
         cookies=cookies,
         cookies_encrypted=cookies_encrypted,

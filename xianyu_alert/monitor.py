@@ -31,6 +31,7 @@ from .filters import (
 from .models import Product
 from .notifier import Notifier
 from .notify_policy import NotificationBuffer, NotificationPolicy
+from .reqmeter import REQ_METER
 from .risk import RISK_GUARD
 from .spec_match import build_spec, match_spec
 from .storage import Storage
@@ -121,6 +122,10 @@ class RoundResult:
     risk_skipped: bool = False
     #: 跳过的剩余冷却秒数（v1.11.3，仅 risk_skipped=True 时有意义）
     risk_remaining_seconds: int = 0
+    #: 本轮是否因**每小时请求硬上限**被跳过（v1.11.8）
+    rate_limited: bool = False
+    #: 触发上限时的近 1 小时请求数（v1.11.8）
+    requests_last_hour: int = 0
 
 
 class Monitor:
@@ -391,6 +396,24 @@ class Monitor:
         """
         ts = round_ts or datetime.now()
         started_at = time.monotonic()
+        # v1.11.8：每小时请求**硬上限**（最后一道兜底）。任何失控循环都会在这里被拦住：
+        # 实例：保活失败每秒重试 → 1 小时 3600 次。默认上限 120（常规用量约 18/小时）。
+        limit = int(getattr(self.config.monitor, "max_requests_per_hour", 0) or 0)
+        if limit > 0:
+            used = int(REQ_METER.snapshot()["last_hour"])
+            if used >= limit:
+                logger.warning(
+                    "⛔ 近 1 小时请求数 %d 已达上限 %d（monitor.max_requests_per_hour），"
+                    "本轮跳过（硬保护，等窗口滑出后自动恢复）",
+                    used,
+                    limit,
+                )
+                result = RoundResult(round_no=self._round_no + 1)
+                result.rate_limited = True
+                result.requests_last_hour = used
+                self.last_result = result
+                return 0
+
         # v1.11.3：风控熔断 —— 冷却期内本轮**一个请求都不发**，直接跳过。
         # 这是"风控时它自己知道安静"的最后一道闸门（保活 / 校验在架也看同一状态）。
         if RISK_GUARD.active():
@@ -693,6 +716,11 @@ class Monitor:
         # 保活就等于对着"明确不想抓"的商品猛抓 —— 线上日志实测到 4080S 32G 被反复探测）。
         enabled = [r for r in rules if bool(getattr(r, "enabled", True))]
         keyword = str(getattr((enabled or rules)[0], "keyword", "") or "")
+        limit = int(getattr(self.config.monitor, "max_requests_per_hour", 0) or 0)
+        if limit > 0 and int(REQ_METER.snapshot()["last_hour"]) >= limit:
+            # v1.11.8：小时请求上限同样约束保活
+            logger.warning("Cookie 保活跳过：近 1 小时请求数已达上限 %d", limit)
+            return False
         if RISK_GUARD.active():
             # v1.11.3：风控冷却期内保活也静默（保活本质也是一次真实抓取，
             # 在被限流时继续打点只会延长处罚）。

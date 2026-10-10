@@ -14,12 +14,18 @@ import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 #: 时间戳环形缓冲上限（足够覆盖 1 小时窗口，内存开销可忽略）
 DEFAULT_MAXLEN = 5000
 #: 统计窗口（秒）
 WINDOW_SHORT = 600.0    # 10 分钟
 WINDOW_LONG = 3600.0    # 1 小时
+
+#: 每小时的请求硬上限（v1.11.8）。默认 120 —— 按"1 关键词 × 3 页 × 6 轮/小时 = 18"
+#: 的常规用量留了 6 倍余量，但足以拦住任何"失控循环"（如 v1.11.6 那个 1 请求/秒的风暴，
+#: 一小时就是 3600 次）。设为 0 可关闭。
+DEFAULT_MAX_REQUESTS_PER_HOUR = 120
 
 
 class RequestMeter:
@@ -61,7 +67,7 @@ class RequestMeter:
         cutoff = now - window
         return sum(1 for stamp in self._stamps if stamp >= cutoff)
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self) -> dict[str, Any]:
         """状态快照（供 /healthz 与状态接口）。"""
         now = self._clock()
         with self._lock:
