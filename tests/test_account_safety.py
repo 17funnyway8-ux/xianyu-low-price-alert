@@ -121,6 +121,75 @@ class TestRequestMeter(unittest.TestCase):
         reqmeter_mod.REQ_METER.reset()
 
 
+class TestHourlyRequestCap(unittest.TestCase):
+    """v1.11.8：每小时请求硬上限 —— 拦住任何"失控循环"的最后一道兜底。"""
+
+    def setUp(self) -> None:
+        from xianyu_alert.risk import RISK_GUARD
+
+        RISK_GUARD.reset()
+        reqmeter_mod.REQ_METER.reset()
+        self.addCleanup(RISK_GUARD.reset)
+        self.addCleanup(reqmeter_mod.REQ_METER.reset)
+        from xianyu_alert.storage import Storage
+
+        self.storage = Storage(":memory:")
+        self.addCleanup(self.storage.close)
+
+    def _monitor(self, limit: int):
+        from xianyu_alert.monitor import Monitor
+
+        config = config_from_dict(make_config(max_requests_per_hour=limit))
+        return Monitor(config, _NullFetcher(), self.storage, [])
+
+    def test_round_skipped_when_hourly_cap_reached(self) -> None:
+        monitor = self._monitor(limit=3)
+        for _ in range(3):
+            reqmeter_mod.REQ_METER.note("search")
+        self.assertEqual(monitor.run_once(), 0)
+        self.assertTrue(monitor.last_result.rate_limited)
+        self.assertEqual(monitor.last_result.requests_last_hour, 3)
+        self.assertEqual(monitor.fetcher.calls, [], "触发上限时不得发起任何请求")
+
+    def test_round_runs_below_cap(self) -> None:
+        monitor = self._monitor(limit=10)
+        reqmeter_mod.REQ_METER.note("search")
+        monitor.run_once()
+        self.assertFalse(monitor.last_result.rate_limited)
+        self.assertEqual(len(monitor.fetcher.calls), 1)
+
+    def test_cap_can_be_disabled(self) -> None:
+        monitor = self._monitor(limit=0)
+        for _ in range(500):
+            reqmeter_mod.REQ_METER.note("search")
+        monitor.run_once()
+        self.assertFalse(monitor.last_result.rate_limited)
+
+    def test_keepalive_respects_cap(self) -> None:
+        monitor = self._monitor(limit=2)
+        for _ in range(2):
+            reqmeter_mod.REQ_METER.note("search")
+        config = config_from_dict(make_config(max_requests_per_hour=2))
+        config.monitor.cookies = "cookie2=x; _m_h5_tk=abc_1700000000000"
+        monitor.config = config
+        self.assertFalse(monitor.keepalive_once())
+        self.assertEqual(monitor.fetcher.calls, [])
+
+
+class _NullFetcher:
+    """记录调用、永不返回商品的假抓取器（mock 类型 → 不触发关键词间限速）。"""
+
+    name = "mock"
+
+    def __init__(self) -> None:
+        self.pages = 1
+        self.calls: list[str] = []
+
+    def fetch(self, keyword: str) -> list:
+        self.calls.append(keyword)
+        return []
+
+
 class TestRiskCooldownPersistence(unittest.TestCase):
     """v1.11.5：风控冷却必须**跨重启恢复** —— 否则重启等于把刚被限流的账号再捅一下。"""
 
