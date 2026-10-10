@@ -377,7 +377,9 @@ class TestFetchFailureTolerance(unittest.TestCase):
             def fetch(self, keyword: str) -> list[Product]:
                 if keyword == "Switch":
                     raise FetchError("模拟抓取失败")
-                return [make_product("200001", 88.0, keyword=keyword)]
+                # 标题带上关键词：真实 fetcher 的搜索结果都包含搜索词本身，
+                # 规格过滤（v1.11 品牌锚定）会据此判定品牌
+                return [make_product("200001", 88.0, keyword=keyword, title=f"{keyword} 测试商品")]
 
         monitor = Monitor(
             config=make_config(1000.0, keywords=["Switch", "iPhone"]),

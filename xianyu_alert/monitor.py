@@ -31,6 +31,7 @@ from .filters import (
 from .models import Product
 from .notifier import Notifier
 from .notify_policy import NotificationBuffer, NotificationPolicy
+from .spec_match import build_spec, match_spec
 from .storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,12 @@ _FETCH_FAILURE_HINTS = {
 FILTER_REASON_LABELS = {
     "missing_required": "缺必含词",
     "excluded": "命中排除词",
+    # v1.11 规格语义过滤（把搜索词当规格：品牌锚定 / 代际 / 频率 / 容量）
+    "spec_brand": "品牌不符（或竞品先出现）",
+    "spec_generation": "代际不符",
+    "spec_frequency": "频率/型号不符",
+    "spec_capacity": "容量不足",
+    "spec_word": "缺限定词",
 }
 
 
@@ -490,9 +497,11 @@ class Monitor:
         # 1.5) 关键词过滤（v3.1）：必含词缺失 / 排除词命中 → 跳过。
         #      过滤是业务规则，发生在 fetcher 返回后、阈值检查前；
         #      被过滤的商品不进入「新商品」判定与已见记录。
+        # v1.11：规格语义过滤（把搜索词本身当规格）。关闭时不构造 spec，行为与旧版一致。
+        spec = build_spec(keyword) if rule.spec_filter else None
         filtered_products: list[Product] = []
         for product in products:
-            decision = filter_decision(product, rule.required_keywords, rule.exclude_keywords)
+            decision = filter_decision(product, rule.required_keywords, rule.exclude_keywords, spec)
             if decision.passed:
                 filtered_products.append(product)
             else:
@@ -594,6 +603,13 @@ class Monitor:
             return "⛔ 必含词缺失"
         if rule.exclude_keywords and hits_exclude_keywords(text, rule.exclude_keywords):
             return "⛔ 排除词命中"
+        # v1.11：规格语义过滤（与 _process_keyword 同一套判定，保证日志口径一致）
+        if rule.spec_filter:
+            spec = build_spec(rule.keyword)
+            if not spec.empty:
+                spec_decision = match_spec(text, spec)
+                if not spec_decision.passed:
+                    return "⛔ 规格不符：" + spec_decision.detail
         if product.price >= rule.max_price:
             return "⏭ 超阈值"
         if product.product_id in previous_ids:
