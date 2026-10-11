@@ -225,6 +225,31 @@ class TestRiskCooldownPersistence(unittest.TestCase):
         broken.enable_persistence(self.path)
         self.assertFalse(broken.active())
 
+    def test_success_resets_persisted_hit_count(self) -> None:
+        """v1.11.9：成功一轮后，落盘的**连续命中计数**必须一起归零。
+
+        线上实测（2026-10-11）：白天 52 轮成功后内存 hits 已是 0，但
+        risk_cooldown.json 里仍留着预置的 3 —— 重启读回来会把下一次真实风控的
+        冷却放大到 4 小时（应为 30 分钟）。
+        """
+        from xianyu_alert.risk import RiskGuard
+
+        now = [1000.0]
+        first = RiskGuard(clock=lambda: now[0])
+        first.enable_persistence(self.path)
+        first.note_risk(600)
+        now[0] += 700                      # 冷却过期
+        first.note_risk(600)
+        self.assertEqual(first.snapshot()["hits"], 2)
+        now[0] += 4000                     # 第二次冷却（3600s）也过期 —— 真实场景里
+        first.note_success()               # 成功轮次只会在冷却结束后发生
+        self.assertEqual(first.snapshot()["hits"], 0)
+
+        revived = RiskGuard(clock=lambda: now[0])
+        revived.enable_persistence(self.path)
+        self.assertEqual(revived.snapshot()["hits"], 0, "重启后不得恢复已归零的命中计数")
+        self.assertFalse(revived.active())
+
     def test_reset_clears_persisted_state(self) -> None:
         from xianyu_alert.risk import RiskGuard
 
