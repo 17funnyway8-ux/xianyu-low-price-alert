@@ -129,9 +129,15 @@ class RiskGuard:
         return self._until
 
     def note_success(self) -> None:
-        """一轮抓取成功 → 连续命中计数清零（不提前解除已有冷却）。"""
+        """一轮抓取成功 → 连续命中计数清零（不提前解除已有冷却）。
+
+        v1.11.9：**必须落盘**。此前只清内存不写文件 —— 线上实测：白天 52 轮成功后
+        内存里 hits 已是 0，但 risk_cooldown.json 里还留着夜间预置的 3；一旦重启就会
+        把这 3 读回来，**下一次真实风控的冷却会被放大到 4 小时**（应为 30 分钟）。
+        """
         with self._lock:
             self.hits = 0
+        self._persist()
 
     def active(self) -> bool:
         """当前是否处于冷却期（冷却期内不应发起任何闲鱼请求）。"""
