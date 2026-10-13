@@ -12,7 +12,8 @@ v1.11.10 的教训是一个测试夹具把真实 Cookie 里的用户 ID 字段�
     判定方式：只认「真实凭据的形状」，不认具体值 —— 守卫自己绝不能变成新的泄漏点；
     失败输出：只给 文件:行号 + 字段名 + 脱敏前缀 + 长度，绝不把命中的值再写进公开日志。
 
-夹具（tests/ 下的一切假 Cookie）请一律使用 abc / xyz / 1 / 2 / 9 / 123 这类明显占位值。
+夹具（tests/ 下的一切假 Cookie）请一律使用 abc / xyz / 1 / 2 / 9 / 123 这类明显占位值；
+    文档 / 脚本里的示例地址一律用 192.0.2.10（内网地址同样属于「不该公开的信息」）。
 """
 
 from __future__ import annotations
@@ -41,10 +42,28 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+#: 内网地址（RFC1918）不应出现在公开文档 / 脚本里 —— 那等于把你的内网拓扑写进公开仓库，
+#: 再配上「这里没开认证」之类的描述，就成了「内网控制面入口地图」。
+#: 文档示例请统一用保留地址 192.0.2.10（RFC 5737 TEST-NET-1）。
+#: 必须四个八位组（"10.6.0" 这种三段版本号不算）—— package-lock.json 里全是这类版本号。
+PRIVATE_IP = re.compile(
+    r"\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b"
+)
+
+#: 单元测试允许用内网地址做纯逻辑样本（不指向真实主机），故豁免。
+PRIVATE_IP_EXEMPT_PREFIXES = ("tests/",)
+
+
 def tracked_files() -> list[str]:
     """git 跟踪的文件列表（即所有会被推送到公开仓库的路径）。"""
+    # core.quotepath=false 很关键：默认 git 会把非 ASCII 路径转义成 "docs/dev/\345..."，
+    # 那样中文名文件会被 os.path.join 找不着而**静默跳过** —— 守卫会漏掉一整个文件族。
     out = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", "-c", "core.quotepath=false", "ls-files"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return [line for line in out.splitlines() if line.strip()]
 
@@ -71,7 +90,8 @@ def scan_tracked_files() -> list[str]:
     for rel in tracked_files():
         path = os.path.join(ROOT, rel)
         try:
-            raw = open(path, "rb").read()
+            with open(path, "rb") as fp:
+                raw = fp.read()
         except OSError:
             continue
         if b"\x00" in raw[:4096]:  # 二进制（图片 / 图标）不参与文本扫描
@@ -81,6 +101,9 @@ def scan_tracked_files() -> list[str]:
             for label, pattern in PATTERNS:
                 for match in pattern.finditer(line):
                     findings.append(f"{rel}:{lineno} {label} -> {mask(hit_value(match))}")
+            if not rel.startswith(PRIVATE_IP_EXEMPT_PREFIXES):
+                for match in PRIVATE_IP.finditer(line):
+                    findings.append(f"{rel}:{lineno} 内网地址 -> {mask(match.group(0))}")
     return findings
 
 
@@ -127,6 +150,25 @@ class TestPublicPrivacyGuard(unittest.TestCase):
                 assert found is not None
                 # 命中值必须取得到 —— 否则扫描到真实凭据时会先抛异常（守卫失效）
                 self.assertTrue(hit_value(found), f"规则「{label}」取不出命中值")
+
+    def test_scan_covers_non_ascii_paths(self) -> None:
+        """非 ASCII 路径必须真的被读到（曾因 git 路径转义而整族静默跳过）。"""
+        files = tracked_files()
+        non_ascii = [p for p in files if not p.isascii()]
+        self.assertTrue(non_ascii, "本仓库必然有中文名文件；没有说明列文件就出错了")
+        for rel in non_ascii[:20]:
+            self.assertFalse(rel.startswith('"'), f"路径不该带 git 的引号转义：{rel}")
+            self.assertTrue(
+                os.path.isfile(os.path.join(ROOT, rel)), f"跟踪文件应能在工作区读到：{rel}"
+            )
+
+    def test_no_private_network_addresses_outside_tests(self) -> None:
+        """公开文档 / 脚本里不得出现 RFC1918 地址（示例请用 192.0.2.10）。"""
+        self.assertIsNotNone(PRIVATE_IP.search("10." + "0.0.26"), "内网地址规则必须能匹配")
+        self.assertIsNotNone(PRIVATE_IP.search("http://192.168." + "1.20:8080"))
+        self.assertIsNone(PRIVATE_IP.search("192.0." + "2.10"), "保留示例地址不算内网地址")
+        self.assertIsNone(PRIVATE_IP.search("127.0.0.1"), "回环不算")
+        self.assertTrue(all(p.startswith("tests/") for p in PRIVATE_IP_EXEMPT_PREFIXES))
 
     def test_mask_never_reveals_full_value(self) -> None:
         self.assertEqual(mask("ab"), "**")

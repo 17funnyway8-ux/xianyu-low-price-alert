@@ -361,7 +361,8 @@ class TestVersion(unittest.TestCase):
         # v1.9.9 更新项：fetcher.py 拆为 fetcher/ 包
         # （由 1.9.8 升级到 1.9.9，故旧断言同步更新）
         # v1.11.10：公开仓库隐私加固（真实账号 ID 移出测试夹具 + 新增形状守卫）
-        self.assertEqual(__version__, "1.11.10")
+        # v1.11.11：内网地址移出公开文档 / 脚本（示例统一用 192.0.2.10）
+        self.assertEqual(__version__, "1.11.11")
 
     def test_update_log_has_v183(self) -> None:
         from xianyu_alert.gui import UPDATE_LOG

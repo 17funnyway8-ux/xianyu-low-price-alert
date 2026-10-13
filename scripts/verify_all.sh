@@ -14,7 +14,7 @@
 #
 # 用法：
 #   scripts/verify_all.sh                    # 默认验证 http://127.0.0.1:8080
-#   scripts/verify_all.sh --base http://10.0.0.26:8080
+#   scripts/verify_all.sh --base http://192.0.2.10:8080
 #   scripts/verify_all.sh --skip-live        # 跳过 L4（实例没起时）
 # 退出码：0 = 四层全绿；1 = 有失败
 # ===========================================================

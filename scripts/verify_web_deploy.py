@@ -13,7 +13,7 @@
 #
 # 用法：
 #   python scripts/verify_web_deploy.py                       # 默认 :8080
-#   python scripts/verify_web_deploy.py --base http://10.0.0.26:8080
+#   python scripts/verify_web_deploy.py --base http://192.0.2.10:8080
 #   python scripts/verify_web_deploy.py --token <XY_WEB_TOKEN>  # 开了认证时
 # 退出码：0 = 全绿；1 = 有失败；2 = 连不上
 # ===========================================================

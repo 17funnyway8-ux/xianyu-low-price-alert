@@ -14,7 +14,7 @@
  *
  * 用法：
  *   NODE_PATH=<jsdom> node scripts/e2e_web_dom_live.js
- *   NODE_PATH=<jsdom> node scripts/e2e_web_dom_live.js --base http://10.0.0.26:8080
+ *   NODE_PATH=<jsdom> node scripts/e2e_web_dom_live.js --base http://192.0.2.10:8080
  * 退出码：0 = 全绿；1 = 有失败；2 = 缺 jsdom
  * =========================================================== */
 "use strict";
