@@ -58,11 +58,14 @@ def tracked_files() -> list[str]:
     """git 跟踪的文件列表（即所有会被推送到公开仓库的路径）。"""
     # core.quotepath=false 很关键：默认 git 会把非 ASCII 路径转义成 "docs/dev/\345..."，
     # 那样中文名文件会被 os.path.join 找不着而**静默跳过** —— 守卫会漏掉一整个文件族。
+    # encoding 必须显式给 utf-8：Windows 上 text=True 会用 cp1252 解，中文路径直接
+    # UnicodeDecodeError（CI 的 windows-latest 就是这么把这条抓出来的）。
     out = subprocess.run(
         ["git", "-c", "core.quotepath=false", "ls-files"],
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     ).stdout
     return [line for line in out.splitlines() if line.strip()]
