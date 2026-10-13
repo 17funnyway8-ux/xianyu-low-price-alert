@@ -233,6 +233,8 @@ class TestKeyRotation(unittest.TestCase):
         self.config_path = os.path.join(self.tmp, "config.yaml")
         self.original_key_file = secure._KEY_FILE
         secure.set_key_file(self.key_path)
+        # unb 用占位值：真实用户 ID 曾被写进这里（v1.10.2 ~ v1.11.10）并随公开仓库外泄，
+        # 现在由 tests/test_public_privacy.py 机械守卫（真实形状一旦出现即测试失败）。
         self.plain = "cookie2=abc; unb=1; _m_h5_tk=tok_1791559226130"
 
     def tearDown(self) -> None:
